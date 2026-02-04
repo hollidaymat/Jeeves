@@ -9,8 +9,8 @@
     "silent_deny": true
   },
   "claude": {
-    "model": "claude-sonnet-4-20250514",
-    "haiku_model": "claude-haiku-3-5-20241022",
+    "model": "anthropic/claude-sonnet-4.5",
+    "haiku_model": "anthropic/claude-haiku-4",
     "max_tokens": 500
   },
   "projects": {

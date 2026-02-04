@@ -1,17 +1,18 @@
 /**
  * Intent Parser
- * Uses Claude to convert natural language to structured commands
+ * Uses Claude via Vercel AI SDK to convert natural language to structured commands
  */
 
-import Anthropic from '@anthropic-ai/sdk';
+import { generateText } from 'ai';
+import { createAnthropic } from '@ai-sdk/anthropic';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { findProject, listProjects, getProjectIndex } from './project-scanner.js';
-import type { ParsedIntent, ActionType } from '../types/index.js';
+import type { ParsedIntent } from '../types/index.js';
 
-// Initialize Anthropic client
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY
+// Create Anthropic provider - API key from environment
+const anthropic = createAnthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY || ''
 });
 
 /**
@@ -139,23 +140,20 @@ export async function parseIntent(message: string): Promise<ParsedIntent> {
   try {
     logger.debug('Sending to Claude for parsing', { message });
     
-    const response = await anthropic.messages.create({
-      model: config.claude.model,
-      max_tokens: config.claude.max_tokens,
+    // Use Anthropic provider with model from config
+    // Config model format: 'anthropic/claude-sonnet-4.5' -> extract 'claude-sonnet-4.5'
+    const modelName = config.claude.model.replace('anthropic/', '');
+    
+    const { text } = await generateText({
+      model: anthropic(modelName),
       system: buildSystemPrompt(),
-      messages: [
-        { role: 'user', content: message }
-      ]
+      prompt: message,
+      maxTokens: config.claude.max_tokens
     });
     
-    const content = response.content[0];
-    if (content.type !== 'text') {
-      throw new Error('Unexpected response type from Claude');
-    }
-    
     // Parse JSON response
-    const parsed = JSON.parse(content.text) as ParsedIntent;
-    parsed.raw_response = content.text;
+    const parsed = JSON.parse(text) as ParsedIntent;
+    parsed.raw_response = text;
     
     logger.debug('Claude parsed intent', { action: parsed.action, confidence: parsed.confidence });
     

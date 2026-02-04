@@ -26,13 +26,14 @@ cp config.example.json config.json
 cp .env.example .env
 
 # Edit .env with your Anthropic API key
-# Edit config.json with your settings
+# Edit config.json with your project directories
 ```
 
 **config.json settings:**
 - `projects.directories`: Array of paths to scan for projects
 - `security.allowed_numbers`: Phone numbers that can send commands
 - `commands.cursor`: Path to your Cursor CLI executable
+- `claude.model`: Model to use (e.g., `anthropic/claude-sonnet-4.5`)
 
 **Windows Cursor CLI path:**
 ```
@@ -117,8 +118,10 @@ npm start
 ## Requirements
 
 - Node.js 18+
-- Anthropic API key
 - Cursor IDE installed
+- Anthropic API key (for local development)
+
+Note: Uses Vercel AI SDK (`ai` + `@ai-sdk/anthropic`) for cleaner integration. When deployed to Vercel, the AI Gateway handles keys automatically.
 
 ## License
 

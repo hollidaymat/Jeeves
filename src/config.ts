@@ -28,8 +28,8 @@ const defaultConfig: Config = {
     silent_deny: true
   },
   claude: {
-    model: 'claude-sonnet-4-20250514',
-    haiku_model: 'claude-haiku-3-5-20241022',
+    model: 'anthropic/claude-sonnet-4.5',
+    haiku_model: 'anthropic/claude-haiku-4',
     max_tokens: 500
   },
   projects: {
@@ -95,6 +95,7 @@ export const config = loadConfig();
 export function validateConfig(): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
+  // API key required for local development (Vercel AI Gateway handles it in prod)
   if (!process.env.ANTHROPIC_API_KEY) {
     errors.push('ANTHROPIC_API_KEY environment variable is required');
   }

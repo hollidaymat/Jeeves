@@ -51,6 +51,13 @@ const defaultConfig: Config = {
     allowed_git_commands: ['status', 'pull', 'fetch', 'diff', 'log', 'branch', 'stash', 'checkout'],
     custom_commands: {}
   },
+  memory: {
+    enabled: true,
+    max_conversations_per_project: 100,
+    max_messages_per_conversation: 50,
+    storage_path: './data/memory.json',
+    auto_summarize: false
+  },
   server: {
     host: process.env.HOST || '127.0.0.1',
     port: parseInt(process.env.PORT || '3847', 10)
@@ -86,6 +93,7 @@ function loadConfig(): Config {
       projects: { ...defaultConfig.projects, ...fileConfig.projects },
       commands: { ...defaultConfig.commands, ...fileConfig.commands },
       terminal: { ...defaultConfig.terminal, ...fileConfig.terminal },
+      memory: { ...defaultConfig.memory, ...fileConfig.memory },
       server: { ...defaultConfig.server, ...fileConfig.server },
       rate_limits: { ...defaultConfig.rate_limits, ...fileConfig.rate_limits }
     };

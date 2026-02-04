@@ -347,15 +347,40 @@ class CommandCenter {
     const messageSpan = document.createElement('span');
     messageSpan.className = 'message';
     
+    // Extract thinking section if present
+    let processedMessage = message;
+    let thinkingContent = null;
+    
+    const thinkingMatch = message.match(/\[Thinking\]\s*(.*?)(?=\n\n|$)/s);
+    if (thinkingMatch) {
+      thinkingContent = thinkingMatch[1].trim();
+      processedMessage = message.replace(thinkingMatch[0], '').trim();
+    }
+    
+    // Check for task labels and highlight them
+    processedMessage = this.processTaskLabels(processedMessage);
+    
     // Render markdown for AI responses (long messages with markdown syntax)
     const isMarkdown = type === 'response' && 
-      (message.includes('##') || message.includes('**') || message.includes('```') || message.length > 200);
+      (processedMessage.includes('##') || processedMessage.includes('**') || 
+       processedMessage.includes('```') || processedMessage.length > 200);
+    
+    if (thinkingContent) {
+      const thinkingDiv = document.createElement('div');
+      thinkingDiv.className = 'thinking-block';
+      thinkingDiv.innerHTML = `<span class="thinking-icon">💭</span> ${this.escapeHtml(thinkingContent)}`;
+      messageSpan.appendChild(thinkingDiv);
+    }
     
     if (isMarkdown && typeof marked !== 'undefined') {
-      messageSpan.innerHTML = marked.parse(message);
-      messageSpan.classList.add('markdown-content');
+      const contentDiv = document.createElement('div');
+      contentDiv.innerHTML = marked.parse(processedMessage);
+      contentDiv.classList.add('markdown-content');
+      messageSpan.appendChild(contentDiv);
     } else {
-      messageSpan.textContent = message;
+      const contentDiv = document.createElement('div');
+      contentDiv.innerHTML = processedMessage; // Already escaped via processTaskLabels
+      messageSpan.appendChild(contentDiv);
     }
     
     line.appendChild(timestamp);
@@ -370,6 +395,26 @@ class CommandCenter {
     while (this.elements.consoleOutput.children.length > 100) {
       this.elements.consoleOutput.removeChild(this.elements.consoleOutput.firstChild);
     }
+  }
+  
+  processTaskLabels(text) {
+    // Escape HTML first
+    text = this.escapeHtml(text);
+    
+    // Replace task status labels with styled badges
+    // Active task: taskNameActive or [Active: taskName]
+    text = text.replace(/\[(Active|In Progress):\s*([^\]]+)\]/gi, 
+      '<span class="task-badge task-active">🔄 $2</span>');
+    
+    // Completed task: taskNameComplete or [Complete: taskName]  
+    text = text.replace(/\[(Complete|Done):\s*([^\]]+)\]/gi,
+      '<span class="task-badge task-complete">✅ $2</span>');
+    
+    // Change markers: <CHANGE> comments
+    text = text.replace(/&lt;CHANGE&gt;\s*([^<\n]+)/gi,
+      '<span class="change-marker">📝 $1</span>');
+    
+    return text;
   }
   
   startUptimeTimer() {

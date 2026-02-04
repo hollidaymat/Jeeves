@@ -10,6 +10,7 @@ import { registerInterface, handleMessage, sendResponse } from './core/handler.j
 import { webInterface } from './interfaces/web.js';
 import { mockInterface } from './interfaces/mock.js';
 import { signalInterface } from './interfaces/signal.js';
+import { initMemory } from './core/memory.js';
 
 async function main() {
   console.log(`
@@ -42,6 +43,9 @@ async function main() {
   logger.info('Initializing...');
   const projectIndex = scanProjects();
   logger.info(`Loaded ${projectIndex.projects.size} projects`);
+
+  // Initialize memory system
+  initMemory();
 
   // Set up message handling
   const messageHandler = async (message: Parameters<typeof handleMessage>[0]) => {

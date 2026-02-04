@@ -8,6 +8,7 @@ Your AI employee. Analyze codebases, make code changes, and control your develop
 - **AI-Powered Analysis**: Ask questions about your codebase, get status reports, understand architecture
 - **Code Editing**: Ask for changes, review diffs, apply or reject with one click
 - **Terminal Commands**: Run npm scripts, git commands with whitelisted safety
+- **Context & Memory**: Remembers conversation history per project, understands "that file we discussed"
 - **Project Auto-Discovery**: Scans directories for projects with fuzzy name matching
 - **Sci-Fi Command Center UI**: Beautiful dark-themed dashboard with real-time updates
 - **Secure by Design**: Localhost only, command whitelist, no shell injection
@@ -105,6 +106,16 @@ git status           → Check git status
 git pull             → Pull latest changes
 git log              → View recent commits
 stop                 → Kill running process
+```
+
+**Memory & Context:**
+```
+history              → View conversation history
+clear history        → Clear project history
+summary              → Project work summary
+preferences          → View your settings
+set verbose on       → Enable verbose mode
+set auto-apply on    → Auto-apply code changes
 ```
 
 **System:**
@@ -236,6 +247,9 @@ Signal interface is not available on Windows. Use the web UI instead at http://1
 | `terminal.allowed_npm_scripts` | Whitelisted npm run scripts |
 | `terminal.allowed_git_commands` | Whitelisted git subcommands |
 | `terminal.custom_commands` | Custom command aliases (name → command) |
+| `memory.enabled` | Enable conversation memory (default: true) |
+| `memory.max_messages_per_conversation` | Messages to keep per project |
+| `memory.storage_path` | Path to memory JSON file |
 | `server.host` | Server bind address (use `127.0.0.1`) |
 | `server.port` | Server port (default: 3847) |
 | `security.allowed_numbers` | Phone numbers for Signal auth |
@@ -266,8 +280,8 @@ npm start
 - [x] **Phase 1.5**: AI Assistant - Claude-powered analysis and code editing
 - [x] **Phase 2**: Signal Integration - signal-cli daemon on Linux (wired, pending test)
 - [x] **Phase 3**: Terminal Commands - npm, git with whitelist and safety
-- [ ] **Phase 4**: Context + Memory - Remember preferences
-- [ ] **Phase 5**: PRD Execution - Autonomous building
+- [x] **Phase 4**: Context + Memory - Conversation history, preferences, project context
+- [ ] **Phase 5**: PRD Execution - Autonomous building from specs
 - [ ] **Phase 6+**: Trust escalation, budget management, and more
 
 ## Requirements

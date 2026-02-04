@@ -11,6 +11,12 @@ import { join, extname } from 'path';
 import { existsSync } from 'fs';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
+import { 
+  getProjectMemory, 
+  addMessage, 
+  buildContextForAI,
+  extractFilesFromMessage 
+} from './memory.js';
 
 interface FileChange {
   filePath: string;
@@ -116,6 +122,12 @@ export async function startAgentSession(projectPath: string): Promise<{ success:
   try {
     // Scan project for context
     const projectContext = await scanProjectContext(projectPath);
+    const projectName = projectPath.split(/[\\/]/).pop() || 'unknown';
+    
+    // Initialize memory for this project
+    if (config.memory.enabled) {
+      getProjectMemory(projectPath, projectName);
+    }
     
     activeSession = {
       workingDir: projectPath,
@@ -130,7 +142,7 @@ export async function startAgentSession(projectPath: string): Promise<{ success:
 
     return {
       success: true,
-      message: `AI assistant ready for ${projectPath.split(/[\\/]/).pop()}. Loaded ${contextSize}KB of project context. Send questions with "ask <prompt>"`
+      message: `AI assistant ready for ${projectName}. Loaded ${contextSize}KB of project context. Send questions with "ask <prompt>"`
     };
   } catch (error) {
     logger.error('Failed to start AI session', { error: String(error) });
@@ -155,43 +167,82 @@ export async function sendToAgent(prompt: string): Promise<string> {
   // Check if this is a request for code changes
   const isEditRequest = /\b(fix|add|update|change|modify|create|remove|delete|refactor|implement|write)\b/i.test(prompt);
 
+  // Build conversation context from memory
+  let conversationContext = '';
+  if (config.memory.enabled) {
+    conversationContext = buildContextForAI(activeSession.workingDir);
+    
+    // Store user message in memory
+    const filesInPrompt = extractFilesFromMessage(prompt);
+    addMessage(activeSession.workingDir, 'user', prompt, filesInPrompt);
+  }
+
   try {
     const anthropic = createAnthropic({
       apiKey: process.env.ANTHROPIC_API_KEY
     });
 
-    const systemPrompt = `You are an AI coding assistant with FULL ACCESS to this project's source code.
+    const systemPrompt = `You are Jeeves, an AI coding assistant with FULL ACCESS to this project's source code.
 
-IMPORTANT RULES:
+## THINKING
+Start your response with a brief [Thinking] section (1-3 sentences) explaining your reasoning:
+- What you're looking for in the codebase
+- What approach you'll take
+- Any decisions you're making
+
+Example: "[Thinking] Looking for authentication-related files. Found auth.ts and middleware.ts. Will modify the middleware to add the new check."
+
+## RULES
 1. You have ALL the project files loaded below - SEARCH THEM before asking for clarification
 2. When the user mentions something vague like "the scan function", search the code for matches
 3. If you find multiple matches, pick the most likely one based on context OR list the options
 4. NEVER say "I don't have access" - you DO have access, the files are below
 5. Be proactive - if asked to modify "the auth code", find auth-related files and suggest changes
+6. Use the previous conversation context to understand references like "that file" or "what we discussed"
 
 ${isEditRequest ? `
-WHEN MAKING CHANGES - Format edits like this:
+## CODE CHANGES
+Format edits using ONE of these formats:
 
+### Format 1: ORIGINAL/MODIFIED (for precise replacements)
 \`\`\`edit:relative/path/to/file.ts
 <<<<<<< ORIGINAL
-// paste the exact original code here (include enough context to be unique)
+// paste the exact original code here
 =======
 // paste the modified code here
 >>>>>>> MODIFIED
 \`\`\`
 
-Rules for edits:
-- Use relative paths from project root (e.g., lib/scanners/ssl.ts not full paths)
-- Include 3-5 lines of context around the change so it can be matched
+### Format 2: Partial Edit (for quick changes)
+\`\`\`edit:relative/path/to/file.ts
+// ... existing code ...
+const newFunction = () => {
+  // <CHANGE> Added new authentication check
+  return authenticated;
+}
+// ... existing code ...
+\`\`\`
+
+Rules:
+- Use relative paths from project root (e.g., lib/scanners/ssl.ts)
+- Include 3-5 lines of context around changes
+- Add <CHANGE> comments to explain non-obvious edits
 - You can include multiple edit blocks for multiple files
-- The ORIGINAL section must match the file EXACTLY (including whitespace)
 ` : ''}
 
-Be concise. When discussing code, reference specific file paths. Don't ask for clarification if you can reasonably infer from context.
+## DESIGN GUIDELINES (when working on frontend)
+- Use 3-5 colors max: 1 primary + 2-3 neutrals + 1-2 accents
+- Max 2 font families (headings + body)
+- Mobile-first, then enhance for larger screens
+- Use semantic HTML and proper ARIA attributes
+- Prefer Tailwind spacing scale over arbitrary values
+
+Be concise. Reference specific file paths. Don't ask for clarification if you can infer from context.
 
 PROJECT: ${activeSession.workingDir.split(/[\\/]/).pop()}
 PROJECT ROOT: ${activeSession.workingDir}
 
+${conversationContext}
 === PROJECT FILES ===
 ${activeSession.projectContext}
 === END FILES ===`;
@@ -208,6 +259,12 @@ ${activeSession.projectContext}
       isEditRequest,
       hasEditMarkers: text.includes('<<<') || text.includes('ORIGINAL')
     });
+
+    // Store assistant response in memory
+    if (config.memory.enabled) {
+      const filesInResponse = extractFilesFromMessage(text);
+      addMessage(activeSession.workingDir, 'assistant', text, filesInResponse);
+    }
 
     // Parse any edit blocks from the response
     if (isEditRequest) {
@@ -230,26 +287,29 @@ ${activeSession.projectContext}
 
 /**
  * Parse edit blocks from AI response
- * Supports multiple formats that Claude might use
+ * Supports multiple formats:
+ * 1. ORIGINAL/MODIFIED markers (full replacement)
+ * 2. // ... existing code ... markers (partial edit, v0-style)
+ * 3. Simple file path + code block
  */
 function parseEditBlocks(text: string, workingDir: string): FileChange[] {
   const changes: FileChange[] = [];
   
-  // Format 1: ```edit:filepath with ORIGINAL/MODIFIED markers
+  // Format 1: ```edit:filepath with ORIGINAL/MODIFIED markers (full replacement)
   const editBlockRegex1 = /```edit:([^\n]+)\n<<<<<<<?[^\n]*\n([\s\S]*?)\n======*\n([\s\S]*?)\n>>>>>>>[^\n]*\n```/gi;
   
-  // Format 2: ```diff or ```typescript with file path in comment
-  const editBlockRegex2 = /```(?:diff|typescript|javascript|ts|js)\n\/\/\s*(?:File:|Path:)?\s*([^\n]+)\n([\s\S]*?)```/gi;
+  // Format 2: ```edit:filepath with // ... existing code ... markers (partial edit)
+  const editBlockRegex2 = /```(?:edit:|lang\s+file=["']?)([^\n"']+)["']?\n([\s\S]*?)```/gi;
   
   // Format 3: Just look for ORIGINAL/MODIFIED blocks anywhere
   const editBlockRegex3 = /(?:file|path)?:?\s*`?([^\n`]+\.[a-z]+)`?\n*```[a-z]*\n*<<<<<<<?[^\n]*\n([\s\S]*?)\n======*\n([\s\S]*?)\n>>>>>>>[^\n]*\n*```/gi;
   
   let match;
   
-  // Try format 1
+  // Try format 1 (ORIGINAL/MODIFIED)
   while ((match = editBlockRegex1.exec(text)) !== null) {
     const filePath = join(workingDir, match[1].trim());
-    logger.info('Parsed edit block (format 1)', { file: match[1].trim() });
+    logger.info('Parsed edit block (ORIGINAL/MODIFIED)', { file: match[1].trim() });
     changes.push({
       filePath,
       originalContent: match[2].trim(),
@@ -258,7 +318,35 @@ function parseEditBlocks(text: string, workingDir: string): FileChange[] {
     });
   }
   
-  // Try format 3 if format 1 found nothing
+  // Try format 2 (partial edit with ... existing code ...)
+  if (changes.length === 0) {
+    while ((match = editBlockRegex2.exec(text)) !== null) {
+      const filePath = join(workingDir, match[1].trim());
+      const content = match[2];
+      
+      // Check if this uses the ... existing code ... pattern
+      if (content.includes('... existing code ...') || content.includes('// ...')) {
+        logger.info('Parsed edit block (partial)', { file: match[1].trim() });
+        changes.push({
+          filePath,
+          originalContent: null,  // null indicates partial edit
+          newContent: content.trim(),
+          description: `Partial update ${match[1].trim()}`
+        });
+      } else {
+        // Full file replacement
+        logger.info('Parsed edit block (full file)', { file: match[1].trim() });
+        changes.push({
+          filePath,
+          originalContent: null,
+          newContent: content.trim(),
+          description: `Update ${match[1].trim()}`
+        });
+      }
+    }
+  }
+  
+  // Try format 3 if still nothing found
   if (changes.length === 0) {
     while ((match = editBlockRegex3.exec(text)) !== null) {
       const filePath = join(workingDir, match[1].trim());
@@ -272,9 +360,83 @@ function parseEditBlocks(text: string, workingDir: string): FileChange[] {
     }
   }
   
-  logger.info('Parsed edit blocks', { count: changes.length, hasEditMarkers: text.includes('ORIGINAL') || text.includes('=======') });
+  logger.info('Parsed edit blocks', { 
+    count: changes.length, 
+    hasEditMarkers: text.includes('ORIGINAL') || text.includes('=======') || text.includes('existing code')
+  });
   
   return changes;
+}
+
+/**
+ * Apply partial edit by expanding ... existing code ... markers
+ */
+async function applyPartialEdit(filePath: string, editContent: string): Promise<string> {
+  // Read original file
+  const original = await readFile(filePath, 'utf-8');
+  const originalLines = original.split('\n');
+  const editLines = editContent.split('\n');
+  
+  // Find the non-placeholder lines in the edit
+  const editParts: { type: 'keep' | 'change'; content: string[] }[] = [];
+  let currentPart: { type: 'keep' | 'change'; content: string[] } = { type: 'change', content: [] };
+  
+  for (const line of editLines) {
+    if (line.includes('... existing code ...') || line.trim() === '// ...') {
+      if (currentPart.content.length > 0) {
+        editParts.push(currentPart);
+      }
+      editParts.push({ type: 'keep', content: [] });
+      currentPart = { type: 'change', content: [] };
+    } else {
+      currentPart.content.push(line);
+    }
+  }
+  if (currentPart.content.length > 0) {
+    editParts.push(currentPart);
+  }
+  
+  // Find anchor points in original file to locate where changes go
+  let result = original;
+  
+  for (let i = 0; i < editParts.length; i++) {
+    const part = editParts[i];
+    if (part.type === 'change' && part.content.length > 0) {
+      // Find first line of change in original
+      const firstLine = part.content[0].trim();
+      const lastLine = part.content[part.content.length - 1].trim();
+      
+      // Try to find matching section in original
+      let startIdx = -1;
+      let endIdx = -1;
+      
+      for (let j = 0; j < originalLines.length; j++) {
+        if (originalLines[j].trim().includes(firstLine.substring(0, Math.min(30, firstLine.length)))) {
+          startIdx = j;
+          break;
+        }
+      }
+      
+      if (startIdx >= 0) {
+        // Find end by matching last line
+        for (let j = startIdx; j < originalLines.length; j++) {
+          if (originalLines[j].trim().includes(lastLine.substring(0, Math.min(30, lastLine.length)))) {
+            endIdx = j;
+            break;
+          }
+        }
+        
+        if (endIdx >= 0) {
+          // Replace the section
+          const before = originalLines.slice(0, startIdx);
+          const after = originalLines.slice(endIdx + 1);
+          result = [...before, ...part.content, ...after].join('\n');
+        }
+      }
+    }
+  }
+  
+  return result;
 }
 
 /**
@@ -299,11 +461,18 @@ export async function applyChanges(): Promise<{ success: boolean; message: strin
         currentContent = await readFile(change.filePath, 'utf-8');
       }
       
-      // If original content was specified, do a replace; otherwise write the whole file
       let newContent: string;
-      if (change.originalContent && currentContent.includes(change.originalContent)) {
+      
+      // Check if this is a partial edit (uses ... existing code ... markers)
+      if (change.newContent.includes('... existing code ...') || change.newContent.includes('// ...')) {
+        // Apply partial edit
+        newContent = await applyPartialEdit(change.filePath, change.newContent);
+        logger.info('Applied partial edit', { file: change.filePath });
+      } else if (change.originalContent && currentContent.includes(change.originalContent)) {
+        // Standard ORIGINAL/MODIFIED replacement
         newContent = currentContent.replace(change.originalContent, change.newContent);
       } else {
+        // Full file replacement
         newContent = change.newContent;
       }
       

@@ -9,6 +9,8 @@ import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { findProject, listProjects, getProjectIndex } from './project-scanner.js';
 import { parseTerminalRequest, getTerminalStatus } from './terminal.js';
+import { getFormattedHistory, getFormattedPreferences, getProjectSummary } from './memory.js';
+import { getAgentStatus } from './cursor-agent.js';
 import type { ParsedIntent } from '../types/index.js';
 
 // Create Anthropic provider - API key from environment
@@ -89,6 +91,13 @@ const PATTERNS = {
   terminalStop: /^(stop|kill|cancel|abort)\s*(?:process|command|terminal)?$/i,
   terminalStatus: /^(?:terminal|process)\s*status$/i,
   
+  // Memory patterns
+  showHistory: /^(?:show\s+)?(?:conversation\s+)?history$/i,
+  clearHistory: /^clear\s+(?:conversation\s+)?history$/i,
+  showSummary: /^(?:show\s+)?(?:project\s+)?summary$/i,
+  showPreferences: /^(?:show\s+)?(?:my\s+)?preferences$/i,
+  setPreference: /^set\s+(verbose|auto.?apply|default.?project)\s+(.+)$/i,
+  
   // Open in Cursor IDE (explicit)
   openInCursor: /^(?:open in cursor|cursor open|launch|open in ide)\s+(.+)$/i,
   
@@ -144,6 +153,12 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
 \`npm install\` \`npm test\`
 \`git status\` \`git pull\` \`git log\`
 \`stop\` → Kill running process
+
+**Memory**:
+\`history\` → View conversation history
+\`clear history\` → Clear project history
+\`summary\` → Project work summary
+\`preferences\` → View your settings
 
 **System**:
 \`list projects\` \`status\` \`stop\``
@@ -214,6 +229,63 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
       terminal_command: terminalCmd,
       confidence: 0.95,
       message: `Running: ${terminalCmd.type} ${terminalCmd.args.join(' ')}`
+    };
+  }
+  
+  // Memory commands
+  if (PATTERNS.showHistory.test(lower)) {
+    const agentStatus = getAgentStatus();
+    if (!agentStatus.active || !agentStatus.workingDir) {
+      return {
+        action: 'memory_history',
+        confidence: 1.0,
+        message: 'No active project. Load a project first to view history.'
+      };
+    }
+    return {
+      action: 'memory_history',
+      confidence: 1.0,
+      message: getFormattedHistory(agentStatus.workingDir)
+    };
+  }
+  
+  if (PATTERNS.clearHistory.test(lower)) {
+    return { action: 'memory_clear', confidence: 1.0 };
+  }
+  
+  if (PATTERNS.showSummary.test(lower)) {
+    const agentStatus = getAgentStatus();
+    if (!agentStatus.active || !agentStatus.workingDir) {
+      return {
+        action: 'memory_summary',
+        confidence: 1.0,
+        message: 'No active project. Load a project first to view summary.'
+      };
+    }
+    return {
+      action: 'memory_summary',
+      confidence: 1.0,
+      message: getProjectSummary(agentStatus.workingDir)
+    };
+  }
+  
+  if (PATTERNS.showPreferences.test(lower)) {
+    return {
+      action: 'status',
+      confidence: 1.0,
+      message: getFormattedPreferences()
+    };
+  }
+  
+  const prefMatch = trimmed.match(PATTERNS.setPreference);
+  if (prefMatch) {
+    const key = prefMatch[1].toLowerCase().replace(/\s+/g, '');
+    const value = prefMatch[2].trim();
+    return {
+      action: 'set_preference',
+      target: key,
+      prompt: value,
+      confidence: 0.95
     };
   }
   

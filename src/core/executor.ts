@@ -22,6 +22,10 @@ import {
   stopTerminalProcess,
   getTerminalStatus
 } from './terminal.js';
+import {
+  clearProjectHistory,
+  setPreference
+} from './memory.js';
 
 // Whitelisted executables
 const ALLOWED_EXECUTABLES: Record<string, string> = {
@@ -226,6 +230,73 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     return {
       success: result.stopped,
       output: result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // Handle memory commands
+  if (intent.action === 'memory_history' || intent.action === 'memory_summary') {
+    return {
+      success: true,
+      output: intent.message || 'No memory available',
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'memory_clear') {
+    const agentStatus = getAgentStatus();
+    if (!agentStatus.active || !agentStatus.workingDir) {
+      return {
+        success: false,
+        error: 'No active project. Load a project first.',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    const result = clearProjectHistory(agentStatus.workingDir);
+    return {
+      success: result.success,
+      output: result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'set_preference') {
+    const key = intent.target as 'verboseMode' | 'autoApplyChanges' | 'defaultProject';
+    const value = intent.prompt;
+    
+    if (!key || value === undefined) {
+      return {
+        success: false,
+        error: 'Invalid preference. Use: set verbose on/off, set auto-apply on/off, set default-project <name>',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    // Parse the key and value
+    let parsedKey: 'verboseMode' | 'autoApplyChanges' | 'defaultProject';
+    let parsedValue: boolean | string;
+    
+    if (key.includes('verbose')) {
+      parsedKey = 'verboseMode';
+      parsedValue = ['on', 'true', 'yes', '1'].includes(value.toLowerCase());
+    } else if (key.includes('auto')) {
+      parsedKey = 'autoApplyChanges';
+      parsedValue = ['on', 'true', 'yes', '1'].includes(value.toLowerCase());
+    } else if (key.includes('default')) {
+      parsedKey = 'defaultProject';
+      parsedValue = value;
+    } else {
+      return {
+        success: false,
+        error: `Unknown preference: ${key}`,
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    setPreference(parsedKey, parsedValue as never);
+    return {
+      success: true,
+      output: `Set ${parsedKey} = ${parsedValue}`,
       duration_ms: Date.now() - startTime
     };
   }

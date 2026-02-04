@@ -51,6 +51,10 @@ export type ActionType =
   | 'terminal_npm'      // npm commands (install, run, etc)
   | 'terminal_git'      // git commands (status, pull, etc)
   | 'terminal_stop'     // Stop running terminal process
+  | 'memory_history'    // Show conversation history
+  | 'memory_clear'      // Clear conversation history
+  | 'memory_summary'    // Show project summary
+  | 'set_preference'    // Set a user preference
   | 'unknown'
   | 'denied';
 
@@ -151,6 +155,13 @@ export interface Config {
     allowed_git_commands: string[];
     custom_commands: Record<string, string>;
   };
+  memory: {
+    enabled: boolean;
+    max_conversations_per_project: number;
+    max_messages_per_conversation: number;
+    storage_path: string;
+    auto_summarize: boolean;
+  };
   server: {
     host: string;
     port: number;
@@ -205,6 +216,40 @@ export interface SystemStatus {
     success: boolean;
   };
   agent?: AgentStatus;
+}
+
+// ============================================================================
+// Memory & Context
+// ============================================================================
+
+export interface ConversationMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+  filesDiscussed?: string[];  // Files mentioned in this message
+}
+
+export interface ProjectMemory {
+  projectPath: string;
+  projectName: string;
+  conversations: ConversationMessage[];
+  lastAccessed: string;
+  filesDiscussed: string[];  // All files ever discussed
+  summary?: string;  // AI-generated summary of work done
+}
+
+export interface UserPreferences {
+  defaultProject?: string;
+  preferredModel?: string;
+  verboseMode?: boolean;
+  autoApplyChanges?: boolean;
+}
+
+export interface MemoryStore {
+  version: number;
+  preferences: UserPreferences;
+  projects: Record<string, ProjectMemory>;  // keyed by project path
+  lastUpdated: string;
 }
 
 // ============================================================================

@@ -55,7 +55,7 @@ class CommandCenter {
     this.ws.onopen = () => {
       this.reconnectAttempts = 0;
       this.updateConnectionStatus('connected');
-      this.log('system', 'Connected to Signal Cursor Controller');
+      this.log('system', 'Connected to Jeeves');
     };
     
     this.ws.onclose = () => {

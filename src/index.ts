@@ -1,5 +1,5 @@
 /**
- * Signal Cursor Controller
+ * Jeeves - Your AI Employee
  * Main entry point
  */
 
@@ -9,20 +9,21 @@ import { scanProjects } from './core/project-scanner.js';
 import { registerInterface, handleMessage, sendResponse } from './core/handler.js';
 import { webInterface } from './interfaces/web.js';
 import { mockInterface } from './interfaces/mock.js';
+import { signalInterface } from './interfaces/signal.js';
 
 async function main() {
   console.log(`
   ╔═══════════════════════════════════════════════════════════╗
   ║                                                           ║
-  ║   ███████╗██╗ ██████╗ ███╗   ██╗ █████╗ ██╗              ║
-  ║   ██╔════╝██║██╔════╝ ████╗  ██║██╔══██╗██║              ║
-  ║   ███████╗██║██║  ███╗██╔██╗ ██║███████║██║              ║
-  ║   ╚════██║██║██║   ██║██║╚██╗██║██╔══██║██║              ║
-  ║   ███████║██║╚██████╔╝██║ ╚████║██║  ██║███████╗         ║
-  ║   ╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝         ║
+  ║        ██╗███████╗███████╗██╗   ██╗███████╗███████╗       ║
+  ║        ██║██╔════╝██╔════╝██║   ██║██╔════╝██╔════╝       ║
+  ║        ██║█████╗  █████╗  ██║   ██║█████╗  ███████╗       ║
+  ║   ██   ██║██╔══╝  ██╔══╝  ╚██╗ ██╔╝██╔══╝  ╚════██║       ║
+  ║   ╚█████╔╝███████╗███████╗ ╚████╔╝ ███████╗███████║       ║
+  ║    ╚════╝ ╚══════╝╚══════╝  ╚═══╝  ╚══════╝╚══════╝       ║
   ║                                                           ║
-  ║   CURSOR CONTROLLER v1.0.0                               ║
-  ║   Your Personal AI Employee                               ║
+  ║   JEEVES v2.0.0                                           ║
+  ║   Your AI Employee                                        ║
   ║                                                           ║
   ╚═══════════════════════════════════════════════════════════╝
   `);
@@ -60,13 +61,24 @@ async function main() {
   registerInterface(mockInterface);
   await mockInterface.start();
 
+  // Register and start Signal interface (Linux only)
+  signalInterface.onMessage(messageHandler);
+  registerInterface(signalInterface);
+  await signalInterface.start();
+
   logger.info('System ready');
   logger.info(`Open http://${config.server.host}:${config.server.port} in your browser`);
+  if (signalInterface.isAvailable()) {
+    logger.info(`Signal interface active - send messages to ${config.signal.number}`);
+  } else if (process.platform !== 'win32') {
+    logger.info('Signal interface offline - check signal-cli daemon');
+  }
   logger.info('Press Ctrl+C to stop');
 
   // Graceful shutdown
   process.on('SIGINT', async () => {
     logger.info('Shutting down...');
+    await signalInterface.stop();
     await webInterface.stop();
     await mockInterface.stop();
     process.exit(0);
@@ -74,6 +86,7 @@ async function main() {
 
   process.on('SIGTERM', async () => {
     logger.info('Shutting down...');
+    await signalInterface.stop();
     await webInterface.stop();
     await mockInterface.stop();
     process.exit(0);

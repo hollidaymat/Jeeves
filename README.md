@@ -1,6 +1,6 @@
-# Signal Cursor Controller
+# Jeeves
 
-Your personal AI coding assistant. Control projects, analyze codebases, and make code changes through natural language.
+Your AI employee. Analyze codebases, make code changes, and control your development workflow through natural language - from your browser or phone via Signal.
 
 ## Features
 
@@ -150,6 +150,50 @@ The command center has three main areas:
 └────────────────────────────────────────────────────────────────┘
 ```
 
+## Signal Integration (Linux)
+
+Jeeves can receive commands via Signal on Linux using `signal-cli`.
+
+### Setup (Linux Only)
+
+1. **Install signal-cli:**
+   ```bash
+   wget https://github.com/AsamK/signal-cli/releases/latest/download/signal-cli-0.13.4-Linux.tar.gz
+   tar xf signal-cli-*.tar.gz
+   sudo mv signal-cli-*/bin/signal-cli /usr/local/bin/
+   sudo mv signal-cli-*/lib /opt/signal-cli-lib
+   ```
+
+2. **Link to your Signal account:**
+   ```bash
+   signal-cli link -n "Jeeves"
+   # Scan the QR code with Signal app > Settings > Linked Devices
+   ```
+
+3. **Start the daemon:**
+   ```bash
+   signal-cli -u +1YOURNUMBER daemon --socket /tmp/signal-cli.sock &
+   ```
+
+4. **Update config.json:**
+   ```json
+   {
+     "signal": {
+       "number": "+1YOURNUMBER",
+       "socket": "/tmp/signal-cli.sock"
+     },
+     "security": {
+       "allowed_numbers": ["+1YOURPHONENUMBER"]
+     }
+   }
+   ```
+
+5. **Test:** Send "help" to your linked number from the Signal app.
+
+### Windows Note
+
+Signal interface is not available on Windows. Use the web UI instead at http://127.0.0.1:3847.
+
 ## Security
 
 - **Localhost Only**: Web UI binds to 127.0.0.1, never exposed to network
@@ -157,6 +201,7 @@ The command center has three main areas:
 - **No Shell Injection**: Uses `spawn()` not `exec()` - arguments are never parsed by shell
 - **Path Validation**: All file paths validated against project directories
 - **Rate Limiting**: Configurable request limits (messages per minute/hour/day)
+- **Signal Auth**: Only numbers in `allowed_numbers` can send commands via Signal
 
 ## Configuration Reference
 
@@ -198,7 +243,7 @@ npm start
 
 - [x] **Phase 1**: Foundation - Web UI, project scanner, basic commands
 - [x] **Phase 1.5**: AI Assistant - Claude-powered analysis and code editing
-- [ ] **Phase 2**: Signal Integration - Real signal-cli on Linux
+- [x] **Phase 2**: Signal Integration - signal-cli daemon on Linux (wired, pending test)
 - [ ] **Phase 3**: Terminal Commands - npm, git with whitelist
 - [ ] **Phase 4**: Context + Memory - Remember preferences
 - [ ] **Phase 5**: PRD Execution - Autonomous building

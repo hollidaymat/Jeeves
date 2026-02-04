@@ -1,5 +1,5 @@
 {
-  "name": "signal-cursor-controller",
+  "name": "jeeves",
   "version": "1.0.0",
   "description": "Control Cursor IDE via Signal messages - your personal AI employee",
   "main": "dist/index.js",

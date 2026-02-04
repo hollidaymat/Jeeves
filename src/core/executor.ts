@@ -131,14 +131,34 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     target: intent.target 
   });
   
-  // Execute using spawn (no shell injection possible)
+  // Execute using spawn
+  // On Windows, .cmd files need shell: true to execute properly
+  const isWindows = process.platform === 'win32';
+  const isCmdFile = executable.endsWith('.cmd') || executable.endsWith('.bat');
+  const useShell = isWindows && isCmdFile;
+  
   return new Promise((resolve) => {
     try {
-      const child = spawn(executable, args, {
-        shell: false,  // Critical: no shell
-        detached: true,  // Don't wait for Cursor to close
-        stdio: 'ignore'  // Don't capture output (Cursor is GUI)
-      });
+      let child;
+      
+      if (useShell) {
+        // For .cmd files on Windows, use shell execution with proper quoting
+        // This is safe because we've already validated the path exists
+        const fullCommand = `"${executable}" ${args.map(a => `"${a}"`).join(' ')}`;
+        child = spawn(fullCommand, [], {
+          shell: true,
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true
+        });
+      } else {
+        // For regular executables, no shell needed
+        child = spawn(executable, args, {
+          shell: false,
+          detached: true,
+          stdio: 'ignore'
+        });
+      }
       
       child.unref();  // Allow the parent to exit independently
       

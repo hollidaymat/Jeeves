@@ -26,14 +26,37 @@ import {
   clearProjectHistory,
   setPreference
 } from './memory.js';
-import {
-  submitPrd,
-  approvePlan,
-  pauseExecution,
-  resumeExecution,
+import { 
+  submitPrd, 
+  approvePlan, 
+  pauseExecution, 
+  resumeExecution, 
   abortExecution,
-  getExecutionStatus
+  getExecutionStatus 
 } from './prd-executor.js';
+import { 
+  requestTrustUpgrade, 
+  getTrustStatus,
+  getTrustHistory,
+  getLearnedPreferences 
+} from './trust.js';
+import {
+  browse,
+  takeScreenshot,
+  click,
+  type as browserType,
+  closeBrowser,
+  getBrowserStatus,
+  getCurrentUrl
+} from './browser.js';
+import {
+  startDevServer,
+  stopDevServer,
+  stopAllDevServers,
+  openDevPreview,
+  capturePreview,
+  getDevServerStatus
+} from './dev-server.js';
 
 // Whitelisted executables
 const ALLOWED_EXECUTABLES: Record<string, string> = {
@@ -379,6 +402,237 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     return {
       success: true,
       output: intent.message || status.summary || 'No PRD execution in progress.',
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // Handle trust system commands
+  if (intent.action === 'trust_status') {
+    return {
+      success: true,
+      output: intent.message || getTrustStatus(),
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'trust_upgrade') {
+    const result = requestTrustUpgrade();
+    return {
+      success: result.success,
+      output: result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'trust_history') {
+    return {
+      success: true,
+      output: intent.message || getTrustHistory(),
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'show_learned') {
+    return {
+      success: true,
+      output: intent.message || getLearnedPreferences(),
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // Handle personality commands (already processed in parser, just return message)
+  if (intent.action === 'remember' || intent.action === 'set_role' || intent.action === 'add_trait') {
+    return {
+      success: true,
+      output: intent.message || 'Preference saved.',
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // Handle browser actions
+  if (intent.action === 'browse') {
+    logger.info('Executing browse action', { target: intent.target });
+    if (!intent.target) {
+      // If no target, it's a status request
+      return {
+        success: true,
+        output: intent.message || getBrowserStatus(),
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    // Always capture screenshot for AI vision
+    logger.info('Calling browse function', { url: intent.target, screenshot: true });
+    const result = await browse(intent.target, { screenshot: true });
+    logger.info('Browse result', { success: result.success, error: result.error });
+    
+    let output = '';
+    if (result.success) {
+      output = `**${result.title || 'Page'}**\nURL: ${result.url}\n\n`;
+      if (result.securityWarnings?.length) {
+        output += `⚠️ Security Warnings:\n${result.securityWarnings.map(w => `  - ${w}`).join('\n')}\n\n`;
+      }
+      output += result.content || '[No content extracted]';
+      if (result.screenshotPath) {
+        output += `\n\n📸 Screenshot saved: ${result.screenshotPath}`;
+      }
+    } else {
+      output = `Failed to browse: ${result.error}`;
+    }
+    
+    return {
+      success: result.success,
+      output: result.success ? output : undefined,
+      error: result.success ? undefined : output,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'screenshot') {
+    try {
+      // If target URL provided, navigate first
+      if (intent.target) {
+        const browseResult = await browse(intent.target);
+        if (!browseResult.success) {
+          return {
+            success: false,
+            error: `Failed to navigate: ${browseResult.error}`,
+            duration_ms: Date.now() - startTime
+          };
+        }
+      }
+      
+      const screenshotPath = await takeScreenshot();
+      return {
+        success: true,
+        output: `📸 Screenshot saved: ${screenshotPath}`,
+        duration_ms: Date.now() - startTime
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: `Screenshot failed: ${error instanceof Error ? error.message : String(error)}`,
+        duration_ms: Date.now() - startTime
+      };
+    }
+  }
+  
+  if (intent.action === 'browser_click') {
+    if (!intent.target) {
+      return {
+        success: false,
+        error: 'No selector specified for click',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    const result = await click(intent.target);
+    return {
+      success: result.success,
+      output: result.success 
+        ? `Clicked "${intent.target}". Now at: ${result.url}` 
+        : undefined,
+      error: result.success ? undefined : result.error,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'browser_type') {
+    if (!intent.target || !intent.data?.text) {
+      return {
+        success: false,
+        error: 'Selector and text required for type action',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    const result = await browserType(intent.target, intent.data.text as string);
+    return {
+      success: result.success,
+      output: result.success ? `Typed text into "${intent.target}"` : undefined,
+      error: result.success ? undefined : result.error,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'browser_close') {
+    await closeBrowser();
+    return {
+      success: true,
+      output: 'Browser closed.',
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // Handle dev server actions
+  if (intent.action === 'dev_start') {
+    // Need active project context
+    const agentStatus = getAgentStatus();
+    if (!agentStatus.active || !agentStatus.workingDir) {
+      return {
+        success: false,
+        error: 'No active project. Open a project first with "open <project>"',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    const result = await startDevServer(agentStatus.workingDir, { openBrowser: true });
+    return {
+      success: result.success,
+      output: result.success ? result.message : undefined,
+      error: result.success ? undefined : result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'dev_stop') {
+    const agentStatus = getAgentStatus();
+    if (agentStatus.active && agentStatus.workingDir) {
+      const result = stopDevServer(agentStatus.workingDir);
+      return {
+        success: result.success,
+        output: result.message,
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    // Stop all if no specific project
+    const result = stopAllDevServers();
+    return {
+      success: result.success,
+      output: result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'dev_preview') {
+    const agentStatus = getAgentStatus();
+    if (!agentStatus.active || !agentStatus.workingDir) {
+      return {
+        success: false,
+        error: 'No active project. Open a project first.',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    const result = await openDevPreview(agentStatus.workingDir);
+    let output = result.message;
+    if (result.screenshotPath) {
+      output += `\n📸 Screenshot: ${result.screenshotPath}`;
+    }
+    
+    return {
+      success: result.success,
+      output: result.success ? output : undefined,
+      error: result.success ? undefined : result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'dev_status') {
+    return {
+      success: true,
+      output: intent.message || getDevServerStatus(),
       duration_ms: Date.now() - startTime
     };
   }

@@ -11,6 +11,7 @@ import { webInterface } from './interfaces/web.js';
 import { mockInterface } from './interfaces/mock.js';
 import { signalInterface } from './interfaces/signal.js';
 import { initMemory } from './core/memory.js';
+import { initTrust } from './core/trust.js';
 
 async function main() {
   console.log(`
@@ -46,6 +47,9 @@ async function main() {
 
   // Initialize memory system
   initMemory();
+
+  // Initialize trust system
+  initTrust();
 
   // Set up message handling
   const messageHandler = async (message: Parameters<typeof handleMessage>[0]) => {

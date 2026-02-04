@@ -76,6 +76,15 @@ const defaultConfig: Config = {
     branch_strategy: 'feature-branch',
     pause_timeout_minutes: 5
   },
+  trust: {
+    enabled: true,
+    initial_level: 2 as const,  // Start at semi-autonomous
+    successful_tasks_required: 10,
+    rollbacks_allowed: 0,
+    time_at_level_minimum_days: 7,
+    monthly_spend_limit: 50,
+    per_task_spend_limit: 10
+  },
   server: {
     host: process.env.HOST || '127.0.0.1',
     port: parseInt(process.env.PORT || '3847', 10)
@@ -113,6 +122,7 @@ function loadConfig(): Config {
       terminal: { ...defaultConfig.terminal, ...fileConfig.terminal },
       memory: { ...defaultConfig.memory, ...fileConfig.memory },
       prd: { ...defaultConfig.prd, ...fileConfig.prd },
+      trust: { ...defaultConfig.trust, ...fileConfig.trust },
       server: { ...defaultConfig.server, ...fileConfig.server },
       rate_limits: { ...defaultConfig.rate_limits, ...fileConfig.rate_limits }
     };

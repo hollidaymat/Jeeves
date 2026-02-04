@@ -12,6 +12,8 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { isAgentAvailable, startAgentSession, sendToAgent, applyChanges } from './cursor-agent.js';
+import { recordTask, recordRollback, getTrustPermissions } from './trust.js';
+import { MODELS } from './model-selector.js';
 import type { 
   ExecutionPlan, 
   PrdPhase, 
@@ -83,8 +85,11 @@ ${prdContent}
 
 Respond with ONLY valid JSON, no markdown or explanation.`;
 
+    // PRD planning is complex work - always use Opus
+    logger.info('Using Opus for PRD planning', { model: MODELS.opus.modelId });
+    
     const { text } = await generateText({
-      model: anthropic(config.claude.model),
+      model: anthropic(MODELS.opus.modelId),
       prompt: planningPrompt,
       maxTokens: 2000
     });
@@ -262,6 +267,17 @@ async function executeNextPhase(): Promise<void> {
     phase.completedAt = new Date().toISOString();
     phase.result = response;
 
+    // Record successful task for trust escalation
+    recordTask({
+      type: 'prd',
+      description: `Completed phase: ${phase.name}`,
+      startedAt: phase.startedAt || new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      success: true,
+      rollback: false,
+      corrections: 0
+    });
+
     // Send checkpoint
     const checkpoint: PrdCheckpoint = {
       phaseId: phase.id,
@@ -279,10 +295,18 @@ async function executeNextPhase(): Promise<void> {
     activePlan.currentPhaseIndex++;
 
     // Auto-continue or wait for checkpoint confirmation
-    if (config.prd.checkpoint_frequency === 'per-phase') {
+    // Trust level affects checkpoint frequency
+    const permissions = getTrustPermissions();
+    const needsCheckpoint = 
+      config.prd.checkpoint_frequency === 'per-phase' ||
+      permissions.checkpointFrequency === 'every-change' ||
+      (permissions.checkpointFrequency === 'per-phase' && phaseIndex > 0);
+
+    if (needsCheckpoint) {
       // Wait for user to continue (or timeout)
       logger.info('Waiting for checkpoint confirmation', { 
-        timeout: config.prd.pause_timeout_minutes 
+        timeout: config.prd.pause_timeout_minutes,
+        trustLevel: permissions.checkpointFrequency
       });
       
       // Auto-continue after timeout
@@ -292,7 +316,7 @@ async function executeNextPhase(): Promise<void> {
         }
       }, config.prd.pause_timeout_minutes * 60 * 1000);
     } else {
-      // Immediate continue
+      // Immediate continue (higher trust levels)
       executeNextPhase();
     }
 
@@ -300,6 +324,9 @@ async function executeNextPhase(): Promise<void> {
     logger.error('Phase execution failed', { phase: phase.name, error: String(error) });
     phase.status = 'failed';
     activePlan.status = 'failed';
+
+    // Record failure for trust de-escalation
+    recordRollback(`Phase "${phase.name}" failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
 
     notifyCheckpoint({
       phaseId: phase.id,

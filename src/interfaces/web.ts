@@ -14,6 +14,7 @@ import { logger, registerWSClient, unregisterWSClient } from '../utils/logger.js
 import { getSystemStatus, handleMessage } from '../core/handler.js';
 import { getProjectIndex, listProjects } from '../core/project-scanner.js';
 import { getPendingChanges } from '../core/cursor-agent.js';
+import { exportConversations } from '../core/memory.js';
 import { onCheckpoint, getExecutionStatus } from '../core/prd-executor.js';
 import type { IncomingMessage, OutgoingMessage, MessageInterface, WSMessage, PrdCheckpoint } from '../types/index.js';
 
@@ -79,6 +80,16 @@ export class WebInterface implements MessageInterface {
         projects,
         scanned_at: index.scanned_at
       });
+    });
+    
+    // API: Download conversations
+    this.app.get('/api/conversations/download', (req: Request, res: Response) => {
+      const format = (req.query.format as 'json' | 'markdown') || 'json';
+      const { filename, content, mimeType } = exportConversations(format);
+      
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.send(content);
     });
     
     // API: Send command

@@ -61,6 +61,22 @@ export type ActionType =
   | 'prd_resume'        // Resume PRD execution
   | 'prd_status'        // Check PRD execution status
   | 'prd_abort'         // Abort PRD execution
+  | 'trust_status'      // Show current trust level
+  | 'trust_upgrade'     // Request trust upgrade
+  | 'trust_history'     // Show trust history
+  | 'show_learned'      // Show learned preferences
+  | 'remember'          // Save a personality preference
+  | 'set_role'          // Set Jeeves' role/identity
+  | 'add_trait'         // Add a personality trait
+  | 'browse'            // Navigate to a URL and get content
+  | 'screenshot'        // Take a screenshot of a page
+  | 'browser_click'     // Click an element on the page
+  | 'browser_type'      // Type text into an element
+  | 'browser_close'     // Close the browser
+  | 'dev_start'         // Start dev server
+  | 'dev_stop'          // Stop dev server
+  | 'dev_preview'       // Open dev server in browser
+  | 'dev_status'        // Get dev server status
   | 'unknown'
   | 'denied';
 
@@ -96,6 +112,8 @@ export interface ParsedIntent {
   confidence: number;
   message?: string;
   raw_response?: string;
+  requiresAsync?: boolean;  // Action needs async handling
+  data?: Record<string, unknown>;  // Additional data for the action
 }
 
 // ============================================================================
@@ -176,6 +194,15 @@ export interface Config {
     auto_commit: boolean;
     branch_strategy: 'feature-branch' | 'direct' | 'none';
     pause_timeout_minutes: number;
+  };
+  trust: {
+    enabled: boolean;
+    initial_level: TrustLevelNumber;
+    successful_tasks_required: number;
+    rollbacks_allowed: number;
+    time_at_level_minimum_days: number;
+    monthly_spend_limit: number;
+    per_task_spend_limit: number;
   };
   server: {
     host: string;
@@ -264,6 +291,7 @@ export interface MemoryStore {
   version: number;
   preferences: UserPreferences;
   projects: Record<string, ProjectMemory>;  // keyed by project path
+  generalConversations: ConversationMessage[];  // non-project conversations
   lastUpdated: string;
 }
 
@@ -334,6 +362,102 @@ export interface PrdModeConfig {
 }
 
 // ============================================================================
+// Trust System (Phase 6)
+// ============================================================================
+
+export type TrustLevelNumber = 1 | 2 | 3 | 4 | 5;
+
+export interface TrustLevelPermissions {
+  name: 'supervised' | 'semi-autonomous' | 'trusted' | 'autonomous' | 'full-trust';
+  canCommit: boolean;
+  canSpend: boolean | { max: number };
+  canContact: boolean | { draftsOnly?: boolean; preApprovedTemplates?: boolean };
+  checkpointFrequency: 'every-change' | 'per-phase' | 'per-task' | 'on-completion';
+  requiresApproval: string[];
+}
+
+export interface TrustHistoryEntry {
+  date: string;
+  level: TrustLevelNumber;
+  reason: string;
+  taskId?: string;
+}
+
+export interface TaskRecord {
+  id: string;
+  type: 'prd' | 'edit' | 'terminal' | 'other';
+  description: string;
+  startedAt: string;
+  completedAt?: string;
+  success: boolean;
+  rollback: boolean;
+  spendAmount?: number;
+  corrections: number;  // Number of user corrections during task
+}
+
+export interface TrustState {
+  currentLevel: TrustLevelNumber;
+  history: TrustHistoryEntry[];
+  taskHistory: TaskRecord[];
+  successfulTasksAtLevel: number;
+  daysAtLevel: number;
+  levelStartDate: string;
+  totalSpend: number;
+  totalSpendLimit: number;
+}
+
+export interface LearnedPreferences {
+  codeStyle: {
+    prefersFunctionalComponents?: boolean;
+    prefersNamedExports?: boolean;
+    errorHandlingPattern?: string;
+    preferredLibraries?: Record<string, boolean>;
+    projectStructure?: string;
+    testingApproach?: string;
+    confidence: number;
+  };
+  communication: {
+    prefersConcisenessOver?: 'thoroughness' | 'detail';
+    checkpointFrequency?: 'per-phase' | 'per-task' | 'on-completion';
+    wantsExplanationsFor?: string[];
+    doesNotWantExplanationsFor?: string[];
+    confidence: number;
+  };
+  decisions: {
+    whenUncertain?: 'ask' | 'decide' | 'conservative';
+    deviationThreshold?: 'low' | 'medium' | 'high';
+    autonomousSpendingLimit?: number;
+    confidence: number;
+  };
+  personality: {
+    role?: string;  // e.g., "AI employee, not assistant"
+    traits: string[];  // e.g., ["direct", "professional", "proactive"]
+    rememberStatements: string[];  // Explicit things user told Jeeves to remember
+    dontDoStatements: string[];  // Things user said NOT to do
+    confidence: number;
+  };
+  corrections: CorrectionRecord[];
+}
+
+export interface CorrectionRecord {
+  timestamp: string;
+  original: string;
+  corrected: string;
+  category: 'code-style' | 'library' | 'approach' | 'communication' | 'other';
+  learned: string;  // What was learned from this correction
+}
+
+export interface TrustConfig {
+  enabled: boolean;
+  initialLevel: TrustLevelNumber;
+  successfulTasksRequired: number;
+  rollbacksAllowed: number;
+  timeAtLevelMinimumDays: number;
+  monthlySpendLimit: number;
+  perTaskSpendLimit: number;
+}
+
+// ============================================================================
 // Handler
 // ============================================================================
 
@@ -343,4 +467,73 @@ export interface MessageInterface {
   stop(): Promise<void>;
   send(message: OutgoingMessage): Promise<void>;
   onMessage(handler: (message: IncomingMessage) => Promise<void>): void;
+}
+
+// ============================================================================
+// Browser Automation (Web Browsing)
+// ============================================================================
+
+export type BrowserActionType = 
+  | 'navigate'
+  | 'screenshot'
+  | 'get_content'
+  | 'click'
+  | 'type'
+  | 'scroll'
+  | 'wait';
+
+export interface BrowserAction {
+  type: BrowserActionType;
+  url?: string;
+  selector?: string;
+  text?: string;
+  waitMs?: number;
+  options?: BrowserActionOptions;
+}
+
+export interface BrowserActionOptions {
+  waitForNavigation?: boolean;
+  fullPage?: boolean;  // For screenshots
+  extractStyles?: boolean;
+  maxContentLength?: number;
+}
+
+export interface BrowserResult {
+  success: boolean;
+  action: BrowserActionType;
+  url?: string;
+  title?: string;
+  content?: string;  // Sanitized text/markdown content
+  screenshotPath?: string;
+  screenshotBase64?: string;
+  error?: string;
+  securityWarnings?: string[];
+  actionLog?: BrowserActionLogEntry[];
+}
+
+export interface BrowserActionLogEntry {
+  timestamp: string;
+  action: BrowserActionType;
+  target?: string;  // URL or selector
+  result: 'success' | 'failed' | 'blocked';
+  reason?: string;
+}
+
+export interface BrowserSecurityConfig {
+  allowedDomains?: string[];  // Whitelist for interactive actions
+  blockedDomains?: string[];  // Blacklist
+  maxContentLength: number;
+  stripScripts: boolean;
+  stripStyles: boolean;
+  stripComments: boolean;
+  detectInjection: boolean;
+  incognito: boolean;
+  blockDownloads: boolean;
+  blockPopups: boolean;
+}
+
+export interface InjectionPattern {
+  pattern: RegExp;
+  severity: 'low' | 'medium' | 'high';
+  description: string;
 }

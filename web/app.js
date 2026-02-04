@@ -460,4 +460,13 @@ class CommandCenter {
 // Initialize on DOM ready
 document.addEventListener('DOMContentLoaded', () => {
   window.commandCenter = new CommandCenter();
+  
+  // Download buttons
+  document.getElementById('download-json')?.addEventListener('click', () => {
+    window.location.href = '/api/conversations/download?format=json';
+  });
+  
+  document.getElementById('download-md')?.addEventListener('click', () => {
+    window.location.href = '/api/conversations/download?format=markdown';
+  });
 });

@@ -12,6 +12,29 @@ import { parseTerminalRequest, getTerminalStatus } from './terminal.js';
 import { getFormattedHistory, getFormattedPreferences, getProjectSummary } from './memory.js';
 import { getAgentStatus } from './cursor-agent.js';
 import { isPrdTrigger, getExecutionStatus } from './prd-executor.js';
+import { 
+  getTrustStatus, 
+  getTrustHistory, 
+  getLearnedPreferences,
+  rememberPersonality,
+  setPersonalityRole,
+  addPersonalityTrait
+} from './trust.js';
+import {
+  browse as browserBrowse,
+  takeScreenshot,
+  click as browserClick,
+  type as browserType,
+  closeBrowser,
+  getBrowserStatus
+} from './browser.js';
+import {
+  startDevServer,
+  stopDevServer,
+  openDevPreview,
+  getDevServerStatus,
+  capturePreview
+} from './dev-server.js';
 import type { ParsedIntent } from '../types/index.js';
 
 // Create Anthropic provider - API key from environment
@@ -106,6 +129,34 @@ const PATTERNS = {
   prdAbort: /^(?:abort|cancel|stop everything|abandon)$/i,
   prdStatus: /^(?:prd status|build status|execution status|progress)$/i,
   
+  // Trust system patterns
+  trustStatus: /^(?:trust|trust status|trust level|my trust|autonomy)$/i,
+  trustUpgrade: /^(?:upgrade trust|request upgrade|earn trust|level up)$/i,
+  trustHistory: /^(?:trust history|trust log)$/i,
+  showLearned: /^(?:what have you learned|show learned|learned preferences|my preferences|what do you know about me)$/i,
+  
+  // Personality/remember patterns
+  remember: /^(?:remember|remember that|jeeves remember|note that)[:\s]+(.+)$/i,
+  youAre: /^(?:you are|you're|your role is)[:\s]+(.+)$/i,
+  beMore: /^(?:be more|be|act more|act)[:\s]+(.+)$/i,
+  dontBe: /^(?:don'?t be|stop being|never be)[:\s]+(.+)$/i,
+  
+  // Browser patterns - accept URLs with or without protocol, stop at punctuation/conjunctions
+  browse: /^(?:browse|visit|go to|fetch|read)\s+([^\s,]+)/i,
+  browseWithScreenshot: /^(?:browse|visit|look at|show me|screenshot)\s+(.+)\s+(?:and\s+)?(?:take\s+)?(?:a\s+)?screenshot$/i,
+  screenshot: /^(?:screenshot|capture|snap)(?:\s+(?:the\s+)?page)?$/i,
+  screenshotUrl: /^(?:screenshot|capture)\s+(.+)$/i,
+  browserClick: /^click\s+(?:on\s+)?["']?([^"']+)["']?$/i,
+  browserType: /^type\s+["']([^"']+)["']\s+(?:in|into)\s+["']?([^"']+)["']?$/i,
+  browserStatus: /^(?:browser status|browser|web status)$/i,
+  browserClose: /^(?:close browser|close web|stop browsing)$/i,
+  
+  // Dev server patterns
+  devStart: /^(?:start dev|dev start|npm run dev|start server|spin up dev)$/i,
+  devStop: /^(?:stop dev|dev stop|stop server|kill dev)$/i,
+  devPreview: /^(?:preview|show preview|open preview|dev preview|show me the app|show app)$/i,
+  devStatus: /^(?:dev status|server status|dev servers?)$/i,
+  
   // Open in Cursor IDE (explicit)
   openInCursor: /^(?:open in cursor|cursor open|launch|open in ide)\s+(.+)$/i,
   
@@ -175,6 +226,12 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
 \`clear history\` → Clear project history
 \`summary\` → Project work summary
 \`preferences\` → View your settings
+
+**Trust & Learning**:
+\`trust\` → View current trust level
+\`upgrade trust\` → Request trust upgrade
+\`trust history\` → View trust changes
+\`what have you learned\` → View learned preferences
 
 **System**:
 \`list projects\` \`status\` \`stop\``
@@ -345,6 +402,216 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
       action: 'prd_submit',
       prompt: trimmed,
       confidence: 0.9
+    };
+  }
+  
+  // Trust system commands
+  if (PATTERNS.trustStatus.test(lower)) {
+    return {
+      action: 'trust_status',
+      confidence: 1.0,
+      message: getTrustStatus()
+    };
+  }
+  
+  if (PATTERNS.trustUpgrade.test(lower)) {
+    return { action: 'trust_upgrade', confidence: 1.0 };
+  }
+  
+  if (PATTERNS.trustHistory.test(lower)) {
+    return {
+      action: 'trust_history',
+      confidence: 1.0,
+      message: getTrustHistory()
+    };
+  }
+  
+  if (PATTERNS.showLearned.test(lower)) {
+    return {
+      action: 'show_learned',
+      confidence: 1.0,
+      message: getLearnedPreferences()
+    };
+  }
+  
+  // Personality: Remember statements
+  const rememberMatch = trimmed.match(PATTERNS.remember);
+  if (rememberMatch) {
+    const statement = rememberMatch[1].trim();
+    return {
+      action: 'remember',
+      confidence: 1.0,
+      message: rememberPersonality(statement)
+    };
+  }
+  
+  // Personality: "You are" / role definition
+  const youAreMatch = trimmed.match(PATTERNS.youAre);
+  if (youAreMatch) {
+    const role = youAreMatch[1].trim();
+    return {
+      action: 'set_role',
+      confidence: 1.0,
+      message: setPersonalityRole(role)
+    };
+  }
+  
+  // Personality: "Be more" / add trait
+  const beMoreMatch = trimmed.match(PATTERNS.beMore);
+  if (beMoreMatch) {
+    const trait = beMoreMatch[1].trim();
+    return {
+      action: 'add_trait',
+      confidence: 1.0,
+      message: addPersonalityTrait(trait)
+    };
+  }
+  
+  // Personality: "Don't be" / negative trait
+  const dontBeMatch = trimmed.match(PATTERNS.dontBe);
+  if (dontBeMatch) {
+    const trait = dontBeMatch[1].trim();
+    return {
+      action: 'remember',
+      confidence: 1.0,
+      message: rememberPersonality(`don't be ${trait}`)
+    };
+  }
+  
+  // Browser: Status
+  if (PATTERNS.browserStatus.test(lower)) {
+    return {
+      action: 'browse',
+      confidence: 1.0,
+      message: getBrowserStatus()
+    };
+  }
+  
+  // Browser: Close
+  if (PATTERNS.browserClose.test(lower)) {
+    closeBrowser().catch(() => {});
+    return {
+      action: 'browser_close',
+      confidence: 1.0,
+      message: 'Browser closed.'
+    };
+  }
+  
+  // Browser: Browse URL with screenshot
+  const browseScreenshotMatch = trimmed.match(PATTERNS.browseWithScreenshot);
+  if (browseScreenshotMatch) {
+    let url = browseScreenshotMatch[1].trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+    }
+    return {
+      action: 'browse',
+      confidence: 1.0,
+      target: url,
+      data: { screenshot: true },
+      requiresAsync: true
+    };
+  }
+  
+  // Browser: Browse URL
+  const browseMatch = trimmed.match(PATTERNS.browse);
+  if (browseMatch) {
+    let url = browseMatch[1].trim();
+    // Normalize URL - add https:// if missing
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+    }
+    logger.info('Browse command matched', { url, original: trimmed });
+    return {
+      action: 'browse',
+      confidence: 1.0,
+      target: url,
+      requiresAsync: true
+    };
+  }
+  
+  // Browser: Screenshot current page
+  if (PATTERNS.screenshot.test(lower)) {
+    return {
+      action: 'screenshot',
+      confidence: 1.0,
+      requiresAsync: true
+    };
+  }
+  
+  // Browser: Screenshot URL
+  const screenshotUrlMatch = trimmed.match(PATTERNS.screenshotUrl);
+  if (screenshotUrlMatch) {
+    let url = screenshotUrlMatch[1].trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+    }
+    return {
+      action: 'screenshot',
+      confidence: 1.0,
+      target: url,
+      requiresAsync: true
+    };
+  }
+  
+  // Browser: Click element
+  const clickMatch = trimmed.match(PATTERNS.browserClick);
+  if (clickMatch) {
+    const selector = clickMatch[1].trim();
+    return {
+      action: 'browser_click',
+      confidence: 1.0,
+      target: selector,
+      requiresAsync: true
+    };
+  }
+  
+  // Browser: Type text
+  const typeMatch = trimmed.match(PATTERNS.browserType);
+  if (typeMatch) {
+    const text = typeMatch[1];
+    const selector = typeMatch[2].trim();
+    return {
+      action: 'browser_type',
+      confidence: 1.0,
+      target: selector,
+      data: { text },
+      requiresAsync: true
+    };
+  }
+  
+  // Dev Server: Start
+  if (PATTERNS.devStart.test(lower)) {
+    return {
+      action: 'dev_start',
+      confidence: 1.0,
+      requiresAsync: true
+    };
+  }
+  
+  // Dev Server: Stop
+  if (PATTERNS.devStop.test(lower)) {
+    return {
+      action: 'dev_stop',
+      confidence: 1.0
+    };
+  }
+  
+  // Dev Server: Preview
+  if (PATTERNS.devPreview.test(lower)) {
+    return {
+      action: 'dev_preview',
+      confidence: 1.0,
+      requiresAsync: true
+    };
+  }
+  
+  // Dev Server: Status
+  if (PATTERNS.devStatus.test(lower)) {
+    return {
+      action: 'dev_status',
+      confidence: 1.0,
+      message: getDevServerStatus()
     };
   }
   

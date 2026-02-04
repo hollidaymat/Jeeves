@@ -128,6 +128,14 @@ prd status           → Check progress
 abort                → Cancel execution
 ```
 
+**Trust & Learning:**
+```
+trust                → View current trust level
+upgrade trust        → Request trust upgrade
+trust history        → View trust level changes
+what have you learned → View learned preferences
+```
+
 **System:**
 ```
 status       → Check system status
@@ -219,6 +227,51 @@ Jeeves: ✅ **Phase 1 complete**
 
 Proceeding to Phase 2...
 ```
+
+## Trust Escalation (Earned Autonomy)
+
+Jeeves implements a 5-level trust system where autonomy is earned through successful task completion.
+
+### Trust Levels
+
+| Level | Name | Permissions | Checkpoints |
+|-------|------|-------------|-------------|
+| 1 | Supervised | No commits, no spending, no external contact | Every action |
+| 2 | Semi-Autonomous | No commits, limited permissions | Per phase |
+| 3 | Trusted | Can commit (with review), limited spending ($10/task) | Per phase |
+| 4 | Autonomous | Can commit freely, moderate spending ($25/task) | Summary only |
+| 5 | Full-Trust | Full autonomy, external contact, higher limits | Summary only |
+
+### How Trust Works
+
+- **Earning trust**: Complete tasks successfully. After 10 successful tasks + 7 days at level, you may be eligible for upgrade.
+- **Losing trust**: Any rollback or failure drops you down a level and resets progress.
+- **Upgrades**: Request with `upgrade trust` - Jeeves will evaluate your eligibility.
+
+### Preference Learning
+
+Jeeves learns from your corrections:
+
+```
+You: fix the login function
+Jeeves: [proposes changes using callbacks]
+You: I prefer async/await over callbacks
+Jeeves: Understood! I'll remember to use async/await for your code.
+```
+
+Over time, Jeeves learns:
+- **Code style**: Naming conventions, formatting preferences
+- **Communication style**: Verbosity, explanation depth
+- **Decision patterns**: What you approve vs reject
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `trust` | View current trust level and permissions |
+| `upgrade trust` | Request a trust level upgrade |
+| `trust history` | View recent trust changes |
+| `what have you learned` | Show learned preferences |
 
 ## Architecture
 
@@ -361,7 +414,8 @@ npm start
 - [x] **Phase 3**: Terminal Commands - npm, git with whitelist and safety
 - [x] **Phase 4**: Context + Memory - Conversation history, preferences, project context
 - [x] **Phase 5**: PRD Execution - Autonomous building from specs with planning, checkpoints
-- [ ] **Phase 6+**: Trust escalation, budget management, and more
+- [x] **Phase 6**: Trust Escalation - 5-level trust system with earned autonomy and preference learning
+- [ ] **Phase 7+**: Budget management, self-modification protocol, and more
 
 ## Requirements
 

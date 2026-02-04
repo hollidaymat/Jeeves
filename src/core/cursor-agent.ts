@@ -15,8 +15,13 @@ import {
   getProjectMemory, 
   addMessage, 
   buildContextForAI,
-  extractFilesFromMessage 
+  extractFilesFromMessage,
+  getGeneralConversations,
+  addGeneralMessage
 } from './memory.js';
+import { selectModel, type ModelTier } from './model-selector.js';
+import { getProjectIndex } from './project-scanner.js';
+import { getLastBrowseResult } from './browser.js';
 
 interface FileChange {
   filePath: string;
@@ -158,7 +163,9 @@ export async function startAgentSession(projectPath: string): Promise<{ success:
  */
 export async function sendToAgent(prompt: string): Promise<string> {
   if (!activeSession) {
-    return 'No active AI session. Say "analyze <project>" or "open <project>" first.';
+    // No project loaded - use general mode for conversational questions
+    logger.debug('No active session, using general mode');
+    return askGeneral(prompt);
   }
 
   logger.info('Processing AI request', { prompt: prompt.substring(0, 50) });
@@ -247,8 +254,21 @@ ${conversationContext}
 ${activeSession.projectContext}
 === END FILES ===`;
 
+    // Smart model selection - code editing gets at least Sonnet
+    const selectedModel = selectModel(prompt);
+    // For edit requests, always use at least Sonnet (not Haiku)
+    const modelToUse = isEditRequest && selectedModel.tier === 'haiku' 
+      ? 'claude-sonnet-4-20250514' 
+      : selectedModel.modelId;
+    
+    logger.info('Model selected for project work', { 
+      tier: selectedModel.tier, 
+      actualModel: modelToUse,
+      isEditRequest 
+    });
+
     const { text } = await generateText({
-      model: anthropic(config.claude.model),
+      model: anthropic(modelToUse),
       system: systemPrompt,
       prompt: prompt,
       maxTokens: config.claude.max_tokens
@@ -596,6 +616,247 @@ export function isAgentAvailable(): boolean {
  */
 export function getPendingChanges(): FileChange[] {
   return activeSession?.pendingChanges || [];
+}
+
+/**
+ * Answer general questions without needing a project session
+ * Used for questions about Jeeves itself, trust system, capabilities, etc.
+ */
+export async function askGeneral(prompt: string): Promise<string> {
+  logger.debug('Processing general question', { prompt: prompt.substring(0, 50) });
+
+  // Import trust info and personality for context
+  const { getTrustState, getPersonalityContext } = await import('./trust.js');
+  const trustState = getTrustState();
+  const personalityContext = getPersonalityContext();
+  
+  // Get available projects for context
+  const projectIndex = getProjectIndex();
+  const projectList = Array.from(projectIndex.projects.entries())
+    .map(([name, p]) => `- ${name} (${p.type}): ${p.path}`)
+    .join('\n');
+  
+  // Get last browse result for web context
+  const lastBrowse = getLastBrowseResult();
+  logger.info('askGeneral: Checking browse context', { 
+    hasBrowseResult: !!lastBrowse,
+    success: lastBrowse?.success,
+    url: lastBrowse?.url,
+    hasScreenshot: !!lastBrowse?.screenshotBase64
+  });
+  let browseContext = '';
+  let browseScreenshot: string | undefined;
+  if (lastBrowse && lastBrowse.success) {
+    browseContext = `\n## LAST WEB PAGE VIEWED
+URL: ${lastBrowse.url}
+Title: ${lastBrowse.title || 'Unknown'}
+Content:
+${lastBrowse.content || '[No content]'}
+`;
+    browseScreenshot = lastBrowse.screenshotBase64;
+    logger.info('askGeneral: Added browse context', { 
+      length: browseContext.length,
+      hasScreenshot: !!browseScreenshot
+    });
+  }
+  
+  // Build trust context with null safety
+  const trustLevel = trustState?.currentLevel ?? 2;
+  const trustNames = ['supervised', 'semi-autonomous', 'trusted', 'autonomous', 'full-trust'];
+  const trustName = trustNames[trustLevel - 1] || 'semi-autonomous';
+  const successfulTasks = trustState?.successfulTasksAtLevel ?? 0;
+  const levelStartDate = trustState?.levelStartDate ? new Date(trustState.levelStartDate) : new Date();
+  const daysAtLevel = Math.floor((Date.now() - levelStartDate.getTime()) / (1000 * 60 * 60 * 24));
+  const totalTasks = trustState?.taskHistory?.length ?? 0;
+  
+  const systemPrompt = `You are Jeeves, an AI employee (not just an assistant - you work for the user).
+
+## ABOUT YOURSELF
+- You are Jeeves, a general-purpose AI employee
+- You handle coding, but also sysadmin, DevOps, home server management, and technical tasks
+- You run locally on the user's machine and can execute commands, manage services, edit configs
+- You use Claude (Anthropic) as your brain via the Anthropic SDK
+- Unlike a chatbot, you take action: run commands, edit files, manage systems, solve problems
+
+## TRUST SYSTEM
+You operate under a 5-level trust system:
+- Level 1 (Supervised): Checkpoints on every action, no commits, no spending
+- Level 2 (Semi-Autonomous): Per-phase checkpoints, limited autonomy
+- Level 3 (Trusted): Can commit with review, $10/task spend limit  
+- Level 4 (Autonomous): Free commits, $25/task limit, summary checkpoints
+- Level 5 (Full-Trust): Full autonomy, external contact allowed
+
+Current trust level: ${trustLevel} (${trustName})
+Successful tasks at this level: ${successfulTasks}
+Days at level: ${daysAtLevel}
+Total tasks completed: ${totalTasks}
+
+Trust is earned by successfully completing tasks. After 10 successful tasks and 7 days at a level, you may be eligible for upgrade.
+
+## WHY LEVEL 2?
+All users start at Level 2 (Semi-Autonomous) because:
+1. It provides a good balance of autonomy and safety
+2. Level 1 (Supervised) would require confirmation on literally every action, which is tedious
+3. You haven't done anything wrong to lose trust
+4. But you also haven't proven yourself yet for higher trust
+
+## CAPABILITIES
+
+**Coding & Development:**
+- Load project context and understand codebases
+- Make code changes (propose edits, user reviews in diff view)
+- Run dev commands (npm, git, etc.)
+- Execute PRDs autonomously - build features from specs
+- GitHub Actions, CI/CD pipelines
+
+**System Administration:**
+- Linux server setup and management
+- Docker container configuration and troubleshooting
+- Service management (systemd, etc.)
+- Nginx / Traefik reverse proxy
+- SSL certs (Let's Encrypt, Certbot)
+- Cron jobs and automation
+
+**Media & Entertainment:**
+- Plex server setup and management
+- *arr stack (Sonarr, Radarr, Prowlarr, Lidarr, Bazarr)
+- Jellyfin / Emby
+- Tautulli, Overseerr/Ombi
+
+**Self-Hosted Services:**
+- Nextcloud (files, calendar, contacts)
+- Home Assistant / home automation
+- Pi-hole / AdGuard DNS blocking
+- Vaultwarden (Bitwarden self-hosted)
+- Paperless-ngx for documents
+- Portainer for Docker management
+
+**Networking & Security:**
+- Tailscale / WireGuard VPN
+- Cloudflare tunnel / DNS
+- Firewall rules (UFW, iptables)
+- Fail2ban, SSH hardening
+- Log analysis
+
+**Infrastructure & DevOps:**
+- Terraform / Ansible
+- Kubernetes (k3s for home lab)
+- AWS / DigitalOcean / Linode
+- Uptime Kuma / Grafana / Prometheus monitoring
+- Backup automation (Restic, Borg, rsync)
+
+**Databases:**
+- PostgreSQL / MySQL administration
+- Redis
+- Backups and migrations
+
+**Hardware:**
+- Raspberry Pi projects
+- NAS management (Unraid, TrueNAS)
+- UPS monitoring (NUT)
+
+**Web Browsing:**
+- Browse websites securely (say "browse <url>")
+- Take screenshots of web pages (say "screenshot <url>")
+- Click and type on web pages for testing
+- Content is sanitized against prompt injection attacks
+- Visual feedback while coding: spin up dev servers and see changes
+
+**General:**
+- Answer technical questions on any topic
+- Remember conversations and learn your preferences
+- Research solutions and provide step-by-step guidance
+- Earn more autonomy through successful work
+
+## AVAILABLE PROJECTS
+You have access to these local projects (say "open <name>" to load full context):
+${projectList || 'No projects discovered yet.'}
+
+To work on a project's code, ask the user to say "open <project name>" to load the full codebase context.
+You can still discuss projects generally without loading them.
+
+## EMPLOYEE MINDSET
+- You work FOR the user, not just chat with them
+- You're a generalist - coding, sysadmin, DevOps, home server, whatever's needed
+- Take initiative when appropriate to your trust level
+- Be direct and professional, not sycophantic
+- If a task requires terminal access or file editing, mention what you'd need to do it
+${personalityContext ? `\n## USER'S PREFERENCES FOR YOU\n${personalityContext}` : ''}
+${browseContext}
+Answer the user's question directly.`;
+
+  try {
+    // Smart model selection based on prompt complexity
+    const selectedModel = selectModel(prompt);
+    logger.debug('Model selected for general question', { 
+      tier: selectedModel.tier, 
+      model: selectedModel.modelId 
+    });
+
+    // Load recent conversation history for context
+    const recentHistory = getGeneralConversations(20);
+    
+    // Build messages array with history
+    // Using any to allow for vision message format
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const messages: Array<any> = [];
+    
+    for (const msg of recentHistory) {
+      messages.push({
+        role: msg.role,
+        content: msg.content
+      });
+    }
+    
+    // Add current user message - include screenshot if available
+    if (browseScreenshot) {
+      logger.info('Including screenshot in AI request');
+      messages.push({
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `${prompt}\n\n[A screenshot of the webpage is attached for visual analysis]`
+          },
+          {
+            type: 'image',
+            image: `data:image/png;base64,${browseScreenshot}`
+          }
+        ]
+      });
+    } else {
+      messages.push({
+        role: 'user',
+        content: prompt
+      });
+    }
+    
+    logger.debug('General conversation context', { 
+      historyMessages: recentHistory.length,
+      totalMessages: messages.length,
+      hasScreenshot: !!browseScreenshot
+    });
+
+    const anthropic = createAnthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY
+    });
+
+    const { text } = await generateText({
+      model: anthropic(selectedModel.modelId),
+      system: systemPrompt,
+      messages: messages,
+      maxTokens: 2000  // Increase for vision responses
+    });
+
+    // Save conversation to memory
+    addGeneralMessage('user', prompt);
+    addGeneralMessage('assistant', text);
+
+    return text;
+  } catch (error) {
+    logger.error('General question failed', { error: String(error) });
+    return `Sorry, I encountered an error: ${error instanceof Error ? error.message : 'Unknown error'}`;
+  }
 }
 
 // Re-export FileChange type for external use

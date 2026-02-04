@@ -83,7 +83,7 @@ export const logger = {
   // Security-specific logging
   security: {
     authorized: (sender: string, action: string) => {
-      log('info', `Authorized request`, { sender, action, security: true });
+      log('debug', `Authorized request`, { sender, action, security: true });
     },
     unauthorized: (sender: string) => {
       log('warn', `Unauthorized attempt`, { sender, security: true });

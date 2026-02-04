@@ -41,6 +41,7 @@ function createEmptyStore(): MemoryStore {
     version: MEMORY_VERSION,
     preferences: {},
     projects: {},
+    generalConversations: [],
     lastUpdated: new Date().toISOString()
   };
 }
@@ -391,6 +392,116 @@ export function extractFilesFromMessage(content: string): string[] {
   }
 
   return files;
+}
+
+/**
+ * Get recent general (non-project) conversation history
+ */
+export function getGeneralConversations(limit: number = 20): ConversationMessage[] {
+  const store = loadMemory();
+  // Migrate old stores that don't have generalConversations
+  if (!store.generalConversations) {
+    store.generalConversations = [];
+  }
+  // Return the most recent messages (up to limit)
+  return store.generalConversations.slice(-limit);
+}
+
+/**
+ * Add a message to general conversation history
+ */
+export function addGeneralMessage(
+  role: 'user' | 'assistant',
+  content: string
+): void {
+  const store = loadMemory();
+  // Migrate old stores that don't have generalConversations
+  if (!store.generalConversations) {
+    store.generalConversations = [];
+  }
+  
+  const message: ConversationMessage = {
+    role,
+    content,
+    timestamp: new Date().toISOString()
+  };
+  
+  store.generalConversations.push(message);
+  
+  // Keep only last 100 general messages to prevent unbounded growth
+  if (store.generalConversations.length > 100) {
+    store.generalConversations = store.generalConversations.slice(-100);
+  }
+  
+  saveMemory();
+}
+
+/**
+ * Export all conversations as downloadable data
+ */
+export function exportConversations(format: 'json' | 'markdown' = 'json'): { 
+  filename: string; 
+  content: string; 
+  mimeType: string 
+} {
+  const store = loadMemory();
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  
+  if (format === 'markdown') {
+    let md = `# Jeeves Conversation Export\n`;
+    md += `Exported: ${new Date().toLocaleString()}\n\n`;
+    
+    // General conversations (non-project)
+    const generalConvos = store.generalConversations || [];
+    if (generalConvos.length > 0) {
+      md += `## General Conversations\n`;
+      md += `*Non-project discussions*\n\n`;
+      
+      for (const msg of generalConvos) {
+        const role = msg.role === 'user' ? '**You**' : '**Jeeves**';
+        const time = new Date(msg.timestamp).toLocaleString();
+        md += `### ${role} (${time})\n\n`;
+        md += `${msg.content}\n\n`;
+        md += `---\n\n`;
+      }
+    }
+    
+    // Project-specific conversations
+    for (const [projectPath, project] of Object.entries(store.projects)) {
+      md += `## Project: ${project.projectName}\n`;
+      md += `Path: \`${projectPath}\`\n`;
+      md += `Last accessed: ${project.lastAccessed}\n\n`;
+      
+      if (project.conversations.length === 0) {
+        md += `*No conversations*\n\n`;
+        continue;
+      }
+      
+      for (const msg of project.conversations) {
+        const role = msg.role === 'user' ? '**You**' : '**Jeeves**';
+        const time = new Date(msg.timestamp).toLocaleString();
+        md += `### ${role} (${time})\n\n`;
+        md += `${msg.content}\n\n`;
+        if (msg.filesDiscussed?.length) {
+          md += `*Files: ${msg.filesDiscussed.join(', ')}*\n\n`;
+        }
+        md += `---\n\n`;
+      }
+    }
+    
+    return {
+      filename: `jeeves-conversations-${timestamp}.md`,
+      content: md,
+      mimeType: 'text/markdown'
+    };
+  }
+  
+  // JSON format
+  return {
+    filename: `jeeves-conversations-${timestamp}.json`,
+    content: JSON.stringify(store, null, 2),
+    mimeType: 'application/json'
+  };
 }
 
 /**

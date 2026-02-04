@@ -626,6 +626,18 @@ body::before {
   box-shadow: 0 0 20px rgba(239, 68, 68, 0.3);
 }
 
+.cmd-btn.download-btn {
+  background: rgba(168, 85, 247, 0.1);
+  border-color: rgba(168, 85, 247, 0.3);
+  color: var(--accent-purple);
+}
+
+.cmd-btn.download-btn:hover {
+  background: rgba(168, 85, 247, 0.2);
+  border-color: var(--accent-purple);
+  box-shadow: var(--glow-purple);
+}
+
 /* Agent Panel */
 .agent-panel {
   background: linear-gradient(180deg, rgba(168, 85, 247, 0.05) 0%, var(--bg-secondary) 100%);

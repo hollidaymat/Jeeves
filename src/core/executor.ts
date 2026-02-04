@@ -26,6 +26,14 @@ import {
   clearProjectHistory,
   setPreference
 } from './memory.js';
+import {
+  submitPrd,
+  approvePlan,
+  pauseExecution,
+  resumeExecution,
+  abortExecution,
+  getExecutionStatus
+} from './prd-executor.js';
 
 // Whitelisted executables
 const ALLOWED_EXECUTABLES: Record<string, string> = {
@@ -297,6 +305,80 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     return {
       success: true,
       output: `Set ${parsedKey} = ${parsedValue}`,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // Handle PRD execution commands
+  if (intent.action === 'prd_submit') {
+    if (!intent.prompt) {
+      return {
+        success: false,
+        error: 'No PRD content provided',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    // Check if we have an active project session
+    const agentStatus = getAgentStatus();
+    if (!agentStatus.active || !agentStatus.workingDir) {
+      return {
+        success: false,
+        error: 'No active project. Load a project first (e.g., "open sentinel")',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    const result = await submitPrd(intent.prompt, agentStatus.workingDir);
+    return {
+      success: result.success,
+      output: result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'prd_approve') {
+    const result = await approvePlan();
+    return {
+      success: result.success,
+      output: result.message,
+      error: result.success ? undefined : result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'prd_pause') {
+    const result = pauseExecution();
+    return {
+      success: result.success,
+      output: result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'prd_resume') {
+    const result = resumeExecution();
+    return {
+      success: result.success,
+      output: result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'prd_abort') {
+    const result = abortExecution();
+    return {
+      success: result.success,
+      output: result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'prd_status') {
+    const status = getExecutionStatus();
+    return {
+      success: true,
+      output: intent.message || status.summary || 'No PRD execution in progress.',
       duration_ms: Date.now() - startTime
     };
   }

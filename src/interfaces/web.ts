@@ -14,7 +14,8 @@ import { logger, registerWSClient, unregisterWSClient } from '../utils/logger.js
 import { getSystemStatus, handleMessage } from '../core/handler.js';
 import { getProjectIndex, listProjects } from '../core/project-scanner.js';
 import { getPendingChanges } from '../core/cursor-agent.js';
-import type { IncomingMessage, OutgoingMessage, MessageInterface, WSMessage } from '../types/index.js';
+import { onCheckpoint, getExecutionStatus } from '../core/prd-executor.js';
+import type { IncomingMessage, OutgoingMessage, MessageInterface, WSMessage, PrdCheckpoint } from '../types/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -35,6 +36,26 @@ export class WebInterface implements MessageInterface {
   constructor() {
     this.setupRoutes();
     this.setupWebSocket();
+    this.setupPrdCallbacks();
+  }
+  
+  private setupPrdCallbacks(): void {
+    // Register for PRD execution checkpoints
+    onCheckpoint((checkpoint: PrdCheckpoint) => {
+      this.broadcast({
+        type: 'prd_checkpoint',
+        payload: checkpoint
+      });
+      
+      // Also send as a response so it appears in the console
+      this.broadcast({
+        type: 'response',
+        payload: {
+          response: `**${checkpoint.phaseName}**\n\n${checkpoint.message}`,
+          timestamp: checkpoint.timestamp
+        }
+      });
+    });
   }
   
   private setupRoutes(): void {
@@ -133,6 +154,15 @@ export class WebInterface implements MessageInterface {
         type: 'projects',
         payload: Array.from(getProjectIndex().projects.values())
       }));
+      
+      // Send PRD execution status if active
+      const prdStatus = getExecutionStatus();
+      if (prdStatus.active) {
+        ws.send(JSON.stringify({
+          type: 'prd_status',
+          payload: prdStatus
+        }));
+      }
       
       ws.on('message', async (data: Buffer) => {
         try {

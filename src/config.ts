@@ -58,6 +58,24 @@ const defaultConfig: Config = {
     storage_path: './data/memory.json',
     auto_summarize: false
   },
+  prd: {
+    enabled: true,
+    triggers: [
+      "here's a prd",
+      "here is a prd",
+      "build this",
+      "implement this",
+      "implement this spec",
+      "here's what i need",
+      "execute this prd",
+      "prd:"
+    ],
+    auto_approve: false,
+    checkpoint_frequency: 'per-phase',
+    auto_commit: true,
+    branch_strategy: 'feature-branch',
+    pause_timeout_minutes: 5
+  },
   server: {
     host: process.env.HOST || '127.0.0.1',
     port: parseInt(process.env.PORT || '3847', 10)
@@ -94,6 +112,7 @@ function loadConfig(): Config {
       commands: { ...defaultConfig.commands, ...fileConfig.commands },
       terminal: { ...defaultConfig.terminal, ...fileConfig.terminal },
       memory: { ...defaultConfig.memory, ...fileConfig.memory },
+      prd: { ...defaultConfig.prd, ...fileConfig.prd },
       server: { ...defaultConfig.server, ...fileConfig.server },
       rate_limits: { ...defaultConfig.rate_limits, ...fileConfig.rate_limits }
     };

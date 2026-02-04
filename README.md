@@ -118,6 +118,16 @@ set verbose on       → Enable verbose mode
 set auto-apply on    → Auto-apply code changes
 ```
 
+**PRD Execution (Autonomous Building):**
+```
+build this: <spec>   → Submit a PRD for execution
+approve              → Approve the execution plan
+pause                → Pause execution
+resume               → Resume execution
+prd status           → Check progress
+abort                → Cancel execution
+```
+
 **System:**
 ```
 status       → Check system status
@@ -140,6 +150,75 @@ The command center has three main areas:
 4. Changes appear in the **Pending Changes** panel with diffs
 5. Review the red (removed) and green (added) lines
 6. Click **APPLY ALL** to write changes or **REJECT** to discard
+
+## PRD Execution (Autonomous Building)
+
+Jeeves can take a PRD (Product Requirements Document) and build it autonomously with checkpoints.
+
+### How It Works
+
+1. **Load a project**: `open my-project`
+2. **Submit a PRD**: 
+   ```
+   build this: Create a user settings page with:
+   - Profile editing (name, email, avatar)
+   - Password change form
+   - Notification preferences
+   - Two-factor auth toggle
+   ```
+3. **Review the plan**: Jeeves creates an execution plan with phases and estimates
+4. **Approve**: Say `approve` to start autonomous execution
+5. **Checkpoints**: After each phase, Jeeves reports progress and decisions made
+6. **Completion**: Final report with all changes, deviations, and files modified
+
+### PRD Commands
+
+| Command | Description |
+|---------|-------------|
+| `build this: <spec>` | Submit a PRD for planning |
+| `approve` | Approve the execution plan and start building |
+| `pause` | Pause execution (resumes after 5min timeout) |
+| `resume` | Resume paused execution |
+| `prd status` | Check current progress |
+| `abort` | Cancel execution entirely |
+
+### Example Session
+
+```
+You: build this: Add a dark mode toggle to the settings page
+
+Jeeves: ## PRD Execution Plan
+
+**Project:** my-app
+**Total Estimate:** 2 hours
+**Confidence:** 90%
+
+### Phase 1: Theme Configuration (30min)
+Create theme context and CSS variables
+**Decision points:** Use CSS custom properties or Tailwind dark mode?
+
+### Phase 2: Toggle Component (30min)
+Create accessible toggle switch component
+
+### Phase 3: Integration (1hr)
+Wire up toggle to settings page, persist preference
+
+---
+Say **"approve"** to start execution, or **"adjust"** with feedback.
+
+You: approve
+
+Jeeves: Plan approved! Starting Phase 1: Theme Configuration
+
+*30 minutes later*
+
+Jeeves: ✅ **Phase 1 complete**
+- Created /lib/theme-context.tsx
+- Added CSS variables to globals.css
+- Decision: Used CSS custom properties (more flexible)
+
+Proceeding to Phase 2...
+```
 
 ## Architecture
 
@@ -281,7 +360,7 @@ npm start
 - [x] **Phase 2**: Signal Integration - signal-cli daemon on Linux (wired, pending test)
 - [x] **Phase 3**: Terminal Commands - npm, git with whitelist and safety
 - [x] **Phase 4**: Context + Memory - Conversation history, preferences, project context
-- [ ] **Phase 5**: PRD Execution - Autonomous building from specs
+- [x] **Phase 5**: PRD Execution - Autonomous building from specs with planning, checkpoints
 - [ ] **Phase 6+**: Trust escalation, budget management, and more
 
 ## Requirements

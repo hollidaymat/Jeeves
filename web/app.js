@@ -112,6 +112,33 @@ class CommandCenter {
       case 'pending_changes':
         this.updatePendingChanges(message.payload);
         break;
+      case 'prd_status':
+        this.updatePrdStatus(message.payload);
+        break;
+      case 'prd_checkpoint':
+        this.handlePrdCheckpoint(message.payload);
+        break;
+    }
+  }
+  
+  updatePrdStatus(status) {
+    // Update PRD status in the UI (if we have a panel for it)
+    if (status.active && status.plan) {
+      const plan = status.plan;
+      const completedCount = plan.phases.filter(p => p.status === 'completed').length;
+      const currentPhase = plan.phases[plan.currentPhaseIndex];
+      
+      this.log('system', `PRD Execution: ${completedCount}/${plan.phases.length} phases | Current: ${currentPhase?.name || 'Complete'}`);
+    }
+  }
+  
+  handlePrdCheckpoint(checkpoint) {
+    // Log the checkpoint with special formatting
+    const icon = checkpoint.requiresResponse ? '🔔' : '✅';
+    this.log('system', `${icon} **${checkpoint.phaseName}**: ${checkpoint.message}`);
+    
+    if (checkpoint.filesChanged && checkpoint.filesChanged.length > 0) {
+      this.log('system', `Files changed: ${checkpoint.filesChanged.join(', ')}`);
     }
   }
   

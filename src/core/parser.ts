@@ -11,6 +11,7 @@ import { findProject, listProjects, getProjectIndex } from './project-scanner.js
 import { parseTerminalRequest, getTerminalStatus } from './terminal.js';
 import { getFormattedHistory, getFormattedPreferences, getProjectSummary } from './memory.js';
 import { getAgentStatus } from './cursor-agent.js';
+import { isPrdTrigger, getExecutionStatus } from './prd-executor.js';
 import type { ParsedIntent } from '../types/index.js';
 
 // Create Anthropic provider - API key from environment
@@ -98,6 +99,13 @@ const PATTERNS = {
   showPreferences: /^(?:show\s+)?(?:my\s+)?preferences$/i,
   setPreference: /^set\s+(verbose|auto.?apply|default.?project)\s+(.+)$/i,
   
+  // PRD execution patterns
+  prdApprove: /^(?:approve|yes|confirm|looks good|go ahead|start building|lgtm)$/i,
+  prdPause: /^(?:pause|wait|hold|stop building)$/i,
+  prdResume: /^(?:resume|continue|keep going|proceed)$/i,
+  prdAbort: /^(?:abort|cancel|stop everything|abandon)$/i,
+  prdStatus: /^(?:prd status|build status|execution status|progress)$/i,
+  
   // Open in Cursor IDE (explicit)
   openInCursor: /^(?:open in cursor|cursor open|launch|open in ide)\s+(.+)$/i,
   
@@ -153,6 +161,14 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
 \`npm install\` \`npm test\`
 \`git status\` \`git pull\` \`git log\`
 \`stop\` → Kill running process
+
+**PRD Execution** (autonomous building):
+\`build this: <spec>\` → Submit PRD for execution
+\`approve\` → Approve execution plan
+\`pause\` → Pause execution
+\`resume\` → Resume execution
+\`prd status\` → Check progress
+\`abort\` → Cancel execution
 
 **Memory**:
 \`history\` → View conversation history
@@ -286,6 +302,49 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
       target: key,
       prompt: value,
       confidence: 0.95
+    };
+  }
+  
+  // PRD execution commands
+  const executionStatus = getExecutionStatus();
+  
+  if (PATTERNS.prdApprove.test(lower) && executionStatus.active) {
+    return { action: 'prd_approve', confidence: 1.0 };
+  }
+  
+  if (PATTERNS.prdPause.test(lower) && executionStatus.active) {
+    return { action: 'prd_pause', confidence: 1.0 };
+  }
+  
+  if (PATTERNS.prdResume.test(lower) && executionStatus.active) {
+    return { action: 'prd_resume', confidence: 1.0 };
+  }
+  
+  if (PATTERNS.prdAbort.test(lower) && executionStatus.active) {
+    return { action: 'prd_abort', confidence: 1.0 };
+  }
+  
+  if (PATTERNS.prdStatus.test(lower)) {
+    if (executionStatus.active) {
+      return {
+        action: 'prd_status',
+        confidence: 1.0,
+        message: executionStatus.summary
+      };
+    }
+    return {
+      action: 'prd_status',
+      confidence: 1.0,
+      message: 'No PRD execution in progress.'
+    };
+  }
+  
+  // Check if this is a PRD submission (long text with PRD triggers)
+  if (isPrdTrigger(trimmed) || (trimmed.length > 200 && isPrdTrigger(trimmed))) {
+    return {
+      action: 'prd_submit',
+      prompt: trimmed,
+      confidence: 0.9
     };
   }
   

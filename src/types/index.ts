@@ -55,6 +55,12 @@ export type ActionType =
   | 'memory_clear'      // Clear conversation history
   | 'memory_summary'    // Show project summary
   | 'set_preference'    // Set a user preference
+  | 'prd_submit'        // Submit a PRD for execution
+  | 'prd_approve'       // Approve execution plan
+  | 'prd_pause'         // Pause PRD execution
+  | 'prd_resume'        // Resume PRD execution
+  | 'prd_status'        // Check PRD execution status
+  | 'prd_abort'         // Abort PRD execution
   | 'unknown'
   | 'denied';
 
@@ -162,6 +168,15 @@ export interface Config {
     storage_path: string;
     auto_summarize: boolean;
   };
+  prd: {
+    enabled: boolean;
+    triggers: string[];
+    auto_approve: boolean;
+    checkpoint_frequency: 'per-phase' | 'hourly' | 'on-decision';
+    auto_commit: boolean;
+    branch_strategy: 'feature-branch' | 'direct' | 'none';
+    pause_timeout_minutes: number;
+  };
   server: {
     host: string;
     port: number;
@@ -191,7 +206,7 @@ export interface LogEntry {
 // ============================================================================
 
 export interface WSMessage {
-  type: 'command' | 'status' | 'log' | 'projects' | 'response' | 'agent_status' | 'pending_changes';
+  type: 'command' | 'status' | 'log' | 'projects' | 'response' | 'agent_status' | 'pending_changes' | 'prd_status' | 'prd_checkpoint';
   payload: unknown;
 }
 
@@ -250,6 +265,72 @@ export interface MemoryStore {
   preferences: UserPreferences;
   projects: Record<string, ProjectMemory>;  // keyed by project path
   lastUpdated: string;
+}
+
+// ============================================================================
+// PRD Execution (Phase 5)
+// ============================================================================
+
+export type PrdPhaseStatus = 'pending' | 'planning' | 'awaiting_approval' | 'executing' | 'paused' | 'completed' | 'failed';
+
+export interface PrdPhase {
+  id: string;
+  name: string;
+  description: string;
+  estimatedDuration: string;  // e.g., "30min", "1hr"
+  decisionPoints: string[];   // Questions that may need user input
+  status: PrdPhaseStatus;
+  startedAt?: string;
+  completedAt?: string;
+  result?: string;
+  filesCreated?: string[];
+  filesModified?: string[];
+}
+
+export interface ExecutionPlan {
+  id: string;
+  prdContent: string;         // Original PRD text
+  projectPath: string;
+  projectName: string;
+  phases: PrdPhase[];
+  totalEstimate: string;      // e.g., "4 hours"
+  confidence: number;         // 0-100
+  constraints: string[];      // User-specified constraints
+  createdAt: string;
+  approvedAt?: string;
+  completedAt?: string;
+  status: 'planning' | 'awaiting_approval' | 'executing' | 'paused' | 'completed' | 'failed';
+  currentPhaseIndex: number;
+  deviations: PrdDeviation[];
+  branchName?: string;
+}
+
+export interface PrdDeviation {
+  phase: string;
+  prdSaid: string;
+  actualDid: string;
+  reasoning: string;
+  timestamp: string;
+}
+
+export interface PrdCheckpoint {
+  phaseId: string;
+  phaseName: string;
+  message: string;
+  decisions: string[];
+  filesChanged: string[];
+  timestamp: string;
+  requiresResponse: boolean;
+}
+
+export interface PrdModeConfig {
+  enabled: boolean;
+  triggers: string[];
+  autoApprove: boolean;       // Skip plan approval step
+  checkpointFrequency: 'per-phase' | 'hourly' | 'on-decision';
+  autoCommit: boolean;
+  branchStrategy: 'feature-branch' | 'direct' | 'none';
+  pauseTimeoutMinutes: number; // How long to wait before auto-continuing
 }
 
 // ============================================================================

@@ -7,6 +7,7 @@ Your AI employee. Analyze codebases, make code changes, and control your develop
 - **Natural Language Commands**: "work on dive connect", "open sentinel", "what's the project status"
 - **AI-Powered Analysis**: Ask questions about your codebase, get status reports, understand architecture
 - **Code Editing**: Ask for changes, review diffs, apply or reject with one click
+- **Terminal Commands**: Run npm scripts, git commands with whitelisted safety
 - **Project Auto-Discovery**: Scans directories for projects with fuzzy name matching
 - **Sci-Fi Command Center UI**: Beautiful dark-themed dashboard with real-time updates
 - **Secure by Design**: Localhost only, command whitelist, no shell injection
@@ -92,6 +93,18 @@ refactor this to use async/await          → AI generates diff
 show diff    → View pending changes
 apply        → Apply all changes
 reject       → Discard changes
+```
+
+**Terminal Commands:**
+```
+run dev              → npm run dev
+run build            → npm run build  
+run tests            → npm test
+npm install          → Install dependencies
+git status           → Check git status
+git pull             → Pull latest changes
+git log              → View recent commits
+stop                 → Kill running process
 ```
 
 **System:**
@@ -197,9 +210,12 @@ Signal interface is not available on Windows. Use the web UI instead at http://1
 ## Security
 
 - **Localhost Only**: Web UI binds to 127.0.0.1, never exposed to network
-- **Command Whitelist**: Only `cursor` executable allowed for external commands
+- **Command Whitelist**: Only whitelisted executables allowed (cursor, npm scripts, git commands)
 - **No Shell Injection**: Uses `spawn()` not `exec()` - arguments are never parsed by shell
 - **Path Validation**: All file paths validated against project directories
+- **Terminal Safety**: npm scripts and git commands require whitelist in config
+- **Timeout Enforcement**: Terminal commands auto-kill after configurable timeout
+- **Output Truncation**: Long command output truncated to prevent memory issues
 - **Rate Limiting**: Configurable request limits (messages per minute/hour/day)
 - **Signal Auth**: Only numbers in `allowed_numbers` can send commands via Signal
 
@@ -215,9 +231,14 @@ Signal interface is not available on Windows. Use the web UI instead at http://1
 | `commands.cursor` | Path to Cursor CLI executable |
 | `claude.model` | Claude model ID (e.g., `claude-sonnet-4-20250514`) |
 | `claude.max_tokens` | Maximum response tokens |
+| `terminal.timeout_ms` | Max time for terminal commands (default: 120000) |
+| `terminal.max_output_lines` | Truncate output after N lines (default: 200) |
+| `terminal.allowed_npm_scripts` | Whitelisted npm run scripts |
+| `terminal.allowed_git_commands` | Whitelisted git subcommands |
+| `terminal.custom_commands` | Custom command aliases (name → command) |
 | `server.host` | Server bind address (use `127.0.0.1`) |
 | `server.port` | Server port (default: 3847) |
-| `security.allowed_numbers` | Phone numbers for Signal auth (Phase 2) |
+| `security.allowed_numbers` | Phone numbers for Signal auth |
 
 ### Environment Variables
 
@@ -244,7 +265,7 @@ npm start
 - [x] **Phase 1**: Foundation - Web UI, project scanner, basic commands
 - [x] **Phase 1.5**: AI Assistant - Claude-powered analysis and code editing
 - [x] **Phase 2**: Signal Integration - signal-cli daemon on Linux (wired, pending test)
-- [ ] **Phase 3**: Terminal Commands - npm, git with whitelist
+- [x] **Phase 3**: Terminal Commands - npm, git with whitelist and safety
 - [ ] **Phase 4**: Context + Memory - Remember preferences
 - [ ] **Phase 5**: PRD Execution - Autonomous building
 - [ ] **Phase 6+**: Trust escalation, budget management, and more

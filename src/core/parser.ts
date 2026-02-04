@@ -8,6 +8,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { findProject, listProjects, getProjectIndex } from './project-scanner.js';
+import { parseTerminalRequest, getTerminalStatus } from './terminal.js';
 import type { ParsedIntent } from '../types/index.js';
 
 // Create Anthropic provider - API key from environment
@@ -84,6 +85,10 @@ const PATTERNS = {
   reject: /^(reject|no|cancel|discard|undo|reject changes|nevermind)$/i,
   showDiff: /^(show diff|diff|show changes|what changed|pending changes)$/i,
   
+  // Terminal patterns
+  terminalStop: /^(stop|kill|cancel|abort)\s*(?:process|command|terminal)?$/i,
+  terminalStatus: /^(?:terminal|process)\s*status$/i,
+  
   // Open in Cursor IDE (explicit)
   openInCursor: /^(?:open in cursor|cursor open|launch|open in ide)\s+(.+)$/i,
   
@@ -134,6 +139,12 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
 \`apply\` → Write changes to files
 \`reject\` → Discard changes
 
+**Terminal Commands**:
+\`run dev\` \`run build\` \`run tests\`
+\`npm install\` \`npm test\`
+\`git status\` \`git pull\` \`git log\`
+\`stop\` → Kill running process
+
 **System**:
 \`list projects\` \`status\` \`stop\``
     };
@@ -171,6 +182,39 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
   // Show diff
   if (PATTERNS.showDiff.test(lower)) {
     return { action: 'show_diff', confidence: 1.0 };
+  }
+  
+  // Terminal stop
+  if (PATTERNS.terminalStop.test(lower)) {
+    return { action: 'terminal_stop', confidence: 1.0 };
+  }
+  
+  // Terminal status
+  if (PATTERNS.terminalStatus.test(lower)) {
+    const status = getTerminalStatus();
+    if (status.running) {
+      return {
+        action: 'status',
+        confidence: 1.0,
+        message: `Running: ${status.command} (${status.runtime}s)`
+      };
+    }
+    return {
+      action: 'status',
+      confidence: 1.0,
+      message: 'No terminal process running'
+    };
+  }
+  
+  // Try to parse as terminal command (npm/git)
+  const terminalCmd = parseTerminalRequest(trimmed);
+  if (terminalCmd) {
+    return {
+      action: terminalCmd.type === 'npm' ? 'terminal_npm' : 'terminal_git',
+      terminal_command: terminalCmd,
+      confidence: 0.95,
+      message: `Running: ${terminalCmd.type} ${terminalCmd.args.join(' ')}`
+    };
   }
   
   // Open in Cursor IDE (explicit) - for when you actually want to open in Cursor

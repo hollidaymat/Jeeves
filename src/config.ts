@@ -43,6 +43,14 @@ const defaultConfig: Config = {
       ? 'C:\\Users\\matth\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin\\cursor.cmd'
       : '/usr/bin/cursor'
   },
+  terminal: {
+    timeout_ms: 120000,
+    max_output_lines: 200,
+    max_output_chars: 10000,
+    allowed_npm_scripts: ['dev', 'start', 'build', 'test', 'lint', 'format', 'watch', 'serve', 'typecheck'],
+    allowed_git_commands: ['status', 'pull', 'fetch', 'diff', 'log', 'branch', 'stash', 'checkout'],
+    custom_commands: {}
+  },
   server: {
     host: process.env.HOST || '127.0.0.1',
     port: parseInt(process.env.PORT || '3847', 10)
@@ -77,6 +85,7 @@ function loadConfig(): Config {
       claude: { ...defaultConfig.claude, ...fileConfig.claude },
       projects: { ...defaultConfig.projects, ...fileConfig.projects },
       commands: { ...defaultConfig.commands, ...fileConfig.commands },
+      terminal: { ...defaultConfig.terminal, ...fileConfig.terminal },
       server: { ...defaultConfig.server, ...fileConfig.server },
       rate_limits: { ...defaultConfig.rate_limits, ...fileConfig.rate_limits }
     };

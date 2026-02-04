@@ -47,8 +47,33 @@ export type ActionType =
   | 'apply_changes'
   | 'reject_changes'
   | 'show_diff'
+  | 'terminal_run'      // Run a terminal command
+  | 'terminal_npm'      // npm commands (install, run, etc)
+  | 'terminal_git'      // git commands (status, pull, etc)
+  | 'terminal_stop'     // Stop running terminal process
   | 'unknown'
   | 'denied';
+
+// ============================================================================
+// Terminal Commands
+// ============================================================================
+
+export interface TerminalCommand {
+  type: 'npm' | 'git' | 'custom';
+  command: string;
+  args: string[];
+  workingDir: string;
+}
+
+export interface TerminalResult {
+  success: boolean;
+  output: string;
+  error?: string;
+  exitCode: number | null;
+  timedOut: boolean;
+  truncated: boolean;
+  duration_ms: number;
+}
 
 export interface ParsedIntent {
   action: ActionType;
@@ -57,6 +82,7 @@ export interface ParsedIntent {
   command?: string;
   line?: number;
   prompt?: string;  // For agent commands
+  terminal_command?: TerminalCommand;  // For terminal actions
   confidence: number;
   message?: string;
   raw_response?: string;
@@ -116,6 +142,14 @@ export interface Config {
   };
   commands: {
     cursor: string;
+  };
+  terminal: {
+    timeout_ms: number;
+    max_output_lines: number;
+    max_output_chars: number;
+    allowed_npm_scripts: string[];
+    allowed_git_commands: string[];
+    custom_commands: Record<string, string>;
   };
   server: {
     host: string;

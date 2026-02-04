@@ -17,6 +17,11 @@ import {
   rejectChanges,
   showDiff
 } from './cursor-agent.js';
+import {
+  executeTerminalCommand,
+  stopTerminalProcess,
+  getTerminalStatus
+} from './terminal.js';
 
 // Whitelisted executables
 const ALLOWED_EXECUTABLES: Record<string, string> = {
@@ -182,6 +187,45 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     return {
       success: true,
       output: diff,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // Handle terminal commands
+  if (intent.action === 'terminal_npm' || intent.action === 'terminal_git' || intent.action === 'terminal_run') {
+    if (!intent.terminal_command) {
+      return {
+        success: false,
+        error: 'No terminal command specified',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    // Check if we have an active project session
+    const agentStatus = getAgentStatus();
+    if (!agentStatus.active || !agentStatus.workingDir) {
+      return {
+        success: false,
+        error: 'No active project. Load a project first (e.g., "open sentinel")',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    // Execute the terminal command
+    const result = await executeTerminalCommand(intent.terminal_command);
+    return {
+      success: result.success,
+      output: result.output,
+      error: result.error,
+      duration_ms: result.duration_ms
+    };
+  }
+  
+  if (intent.action === 'terminal_stop') {
+    const result = stopTerminalProcess();
+    return {
+      success: result.stopped,
+      output: result.message,
       duration_ms: Date.now() - startTime
     };
   }

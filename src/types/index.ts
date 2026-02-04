@@ -38,6 +38,15 @@ export type ActionType =
   | 'status'
   | 'help'
   | 'list_projects'
+  | 'agent_start'
+  | 'agent_ask'
+  | 'agent_stop'
+  | 'agent_status'
+  | 'read_file'
+  | 'edit_file'
+  | 'apply_changes'
+  | 'reject_changes'
+  | 'show_diff'
   | 'unknown'
   | 'denied';
 
@@ -47,6 +56,7 @@ export interface ParsedIntent {
   resolved_path?: string;
   command?: string;
   line?: number;
+  prompt?: string;  // For agent commands
   confidence: number;
   message?: string;
   raw_response?: string;
@@ -136,8 +146,15 @@ export interface LogEntry {
 // ============================================================================
 
 export interface WSMessage {
-  type: 'command' | 'status' | 'log' | 'projects' | 'response';
+  type: 'command' | 'status' | 'log' | 'projects' | 'response' | 'agent_status' | 'pending_changes';
   payload: unknown;
+}
+
+export interface AgentStatus {
+  active: boolean;
+  workingDir?: string;
+  uptime?: number;
+  contextSize?: number;
 }
 
 export interface SystemStatus {
@@ -153,6 +170,7 @@ export interface SystemStatus {
     timestamp: string;
     success: boolean;
   };
+  agent?: AgentStatus;
 }
 
 // ============================================================================

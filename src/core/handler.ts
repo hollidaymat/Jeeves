@@ -16,6 +16,7 @@ import type {
   ExecutionResult
 } from '../types/index.js';
 import { getProjectIndex } from './project-scanner.js';
+import { getAgentStatus } from './cursor-agent.js';
 
 // Track statistics
 const stats = {
@@ -63,7 +64,8 @@ export function getSystemStatus(): SystemStatus {
     },
     projects_loaded: getProjectIndex().projects.size,
     messages_today: stats.messagesToday,
-    last_command: stats.lastCommand || undefined
+    last_command: stats.lastCommand || undefined,
+    agent: getAgentStatus()
   };
 }
 

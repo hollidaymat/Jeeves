@@ -128,34 +128,63 @@ export function getProjectIndex(): ProjectIndex {
 }
 
 /**
+ * Normalize a string for fuzzy matching
+ * "Dive Connect AI" -> "diveconnectai"
+ * "dive_connect-ai" -> "diveconnectai"
+ */
+function normalizeForMatch(str: string): string {
+  return str.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Calculate similarity score between two strings (0-1)
+ */
+function similarity(a: string, b: string): number {
+  if (a === b) return 1;
+  if (a.length === 0 || b.length === 0) return 0;
+  
+  // Check if one contains the other
+  if (a.includes(b)) return 0.9;
+  if (b.includes(a)) return 0.8;
+  
+  // Check word overlap
+  const wordsA = a.match(/[a-z]+/g) || [];
+  const wordsB = b.match(/[a-z]+/g) || [];
+  const overlap = wordsA.filter(w => wordsB.some(wb => wb.includes(w) || w.includes(wb)));
+  if (overlap.length > 0) {
+    return 0.5 + (0.4 * overlap.length / Math.max(wordsA.length, wordsB.length));
+  }
+  
+  return 0;
+}
+
+/**
  * Find a project by name (fuzzy matching)
+ * Handles natural language like "dive connect ai", "diveconnect", "Dive_Connect"
  */
 export function findProject(query: string): Project | undefined {
-  const normalizedQuery = query.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const normalizedQuery = normalizeForMatch(query);
   
-  // Exact match first
+  // Score all projects
+  const scored: Array<{ project: Project; score: number }> = [];
+  
   for (const [name, project] of projectIndex.projects) {
-    if (name.replace(/-/g, '') === normalizedQuery) {
+    const normalizedName = normalizeForMatch(name);
+    
+    // Exact match (highest priority)
+    if (normalizedName === normalizedQuery) {
       return project;
+    }
+    
+    const score = similarity(normalizedQuery, normalizedName);
+    if (score > 0.4) {
+      scored.push({ project, score });
     }
   }
   
-  // Partial match
-  for (const [name, project] of projectIndex.projects) {
-    if (name.replace(/-/g, '').includes(normalizedQuery) || 
-        normalizedQuery.includes(name.replace(/-/g, ''))) {
-      return project;
-    }
-  }
-  
-  // Word-based match (e.g., "dive" matches "diveconnect")
-  for (const [name, project] of projectIndex.projects) {
-    if (name.includes(normalizedQuery)) {
-      return project;
-    }
-  }
-  
-  return undefined;
+  // Sort by score and return best match
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.project;
 }
 
 /**

@@ -13,6 +13,7 @@ import { config } from '../config.js';
 import { logger, registerWSClient, unregisterWSClient } from '../utils/logger.js';
 import { getSystemStatus, handleMessage } from '../core/handler.js';
 import { getProjectIndex, listProjects } from '../core/project-scanner.js';
+import { getPendingChanges } from '../core/cursor-agent.js';
 import type { IncomingMessage, OutgoingMessage, MessageInterface, WSMessage } from '../types/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -83,7 +84,7 @@ export class WebInterface implements MessageInterface {
           response: response?.content || 'No response'
         });
         
-        // Broadcast to WebSocket clients
+        // Broadcast response to WebSocket clients
         this.broadcast({
           type: 'response',
           payload: {
@@ -91,6 +92,18 @@ export class WebInterface implements MessageInterface {
             response: response?.content || 'No response',
             timestamp: new Date().toISOString()
           }
+        });
+        
+        // Broadcast pending changes if any
+        const pendingChanges = getPendingChanges();
+        this.broadcast({
+          type: 'pending_changes',
+          payload: pendingChanges.map(c => ({
+            filePath: c.filePath,
+            originalContent: c.originalContent,
+            newContent: c.newContent,
+            description: c.description
+          }))
         });
       } catch (error) {
         res.status(500).json({ 

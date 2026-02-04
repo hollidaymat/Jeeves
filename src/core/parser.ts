@@ -61,33 +61,86 @@ If the request seems dangerous or outside scope, respond with:
 }
 
 /**
+ * Natural language patterns for commands
+ */
+const PATTERNS = {
+  // Status patterns
+  status: /^(status|how are you|what'?s your status|system status)$/i,
+  
+  // Help patterns
+  help: /^(help|\?|what can you do|commands|options)$/i,
+  
+  // List projects patterns  
+  listProjects: /^(list|projects|list projects|show projects|what projects)$/i,
+  
+  // Agent status patterns
+  agentStatus: /^(agent status|ai status|is the agent running|check agent)$/i,
+  
+  // Agent stop patterns
+  agentStop: /^(agent stop|stop agent|stop ai|close agent|end session)$/i,
+  
+  // Apply/reject changes
+  apply: /^(apply|yes|confirm|do it|accept|save changes|apply changes)$/i,
+  reject: /^(reject|no|cancel|discard|undo|reject changes|nevermind)$/i,
+  showDiff: /^(show diff|diff|show changes|what changed|pending changes)$/i,
+  
+  // Open in Cursor IDE (explicit)
+  openInCursor: /^(?:open in cursor|cursor open|launch|open in ide)\s+(.+)$/i,
+  
+  // Open/start project patterns - now starts AI session
+  openProject: /^(?:open|start|load|switch to|go to|work on|let'?s work on)\s+(?:the\s+)?(?:project\s+)?(.+?)(?:\s+project)?$/i,
+  
+  // Agent start patterns - flexible
+  agentStart: /^(?:agent start|start agent|start ai|analyze|load context for|start working on|let'?s analyze)\s+(.+)$/i,
+  
+  // Ask patterns - very flexible, captures everything after trigger
+  ask: /^(?:ask|tell me|what|how|why|can you|could you|please|explain|describe|summarize|show me|find|where|help me)\s+(.+)$/i,
+};
+
+/**
  * Simple commands that don't need Claude
  */
 function handleSimpleCommand(message: string): ParsedIntent | null {
-  const lower = message.toLowerCase().trim();
+  const trimmed = message.trim();
+  const lower = trimmed.toLowerCase();
   
-  if (lower === 'status') {
-    return {
-      action: 'status',
-      confidence: 1.0
-    };
+  // Status
+  if (PATTERNS.status.test(lower)) {
+    return { action: 'status', confidence: 1.0 };
   }
   
-  if (lower === 'help' || lower === '?') {
+  // Help
+  if (PATTERNS.help.test(lower)) {
     return {
       action: 'help',
       confidence: 1.0,
-      message: `Available commands:
-- "open <project>" - Open a project in Cursor
-- "open <file> in <project>" - Open a specific file
-- "go to line <n>" - Navigate to a line
-- "list projects" - Show all known projects
-- "status" - Check system status
-- "help" - Show this message`
+      message: `## Available Commands
+
+**Load a Project** (starts AI session):
+\`sentinel\` \`dive connect\` \`open legends\`
+
+**Ask Questions**:
+\`what is the project status\`
+\`how does authentication work\`
+\`where are the API endpoints\`
+
+**Make Changes**:
+\`add a comment to the main function\`
+\`fix the bug in auth.ts\`
+\`refactor this to use async/await\`
+
+**Review & Apply**:
+\`show diff\` → View pending changes
+\`apply\` → Write changes to files
+\`reject\` → Discard changes
+
+**System**:
+\`list projects\` \`status\` \`stop\``
     };
   }
   
-  if (lower === 'list projects' || lower === 'projects' || lower === 'list') {
+  // List projects
+  if (PATTERNS.listProjects.test(lower)) {
     return {
       action: 'list_projects',
       confidence: 1.0,
@@ -95,21 +148,36 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
     };
   }
   
-  return null;
-}
-
-/**
- * Try to parse locally without Claude (for simple open commands)
- */
-function tryLocalParse(message: string): ParsedIntent | null {
-  const lower = message.toLowerCase().trim();
+  // Agent status
+  if (PATTERNS.agentStatus.test(lower)) {
+    return { action: 'agent_status', confidence: 1.0 };
+  }
   
-  // Pattern: "open <project>"
-  const openMatch = lower.match(/^open\s+(?:the\s+)?(.+?)(?:\s+project)?$/i);
-  if (openMatch) {
-    const projectName = openMatch[1].trim();
+  // Agent stop
+  if (PATTERNS.agentStop.test(lower)) {
+    return { action: 'agent_stop', confidence: 1.0 };
+  }
+  
+  // Apply changes
+  if (PATTERNS.apply.test(lower)) {
+    return { action: 'apply_changes', confidence: 1.0 };
+  }
+  
+  // Reject changes
+  if (PATTERNS.reject.test(lower)) {
+    return { action: 'reject_changes', confidence: 1.0 };
+  }
+  
+  // Show diff
+  if (PATTERNS.showDiff.test(lower)) {
+    return { action: 'show_diff', confidence: 1.0 };
+  }
+  
+  // Open in Cursor IDE (explicit) - for when you actually want to open in Cursor
+  const openInCursorMatch = trimmed.match(PATTERNS.openInCursor);
+  if (openInCursorMatch) {
+    const projectName = openInCursorMatch[1].trim();
     const project = findProject(projectName);
-    
     if (project) {
       return {
         action: 'open_project',
@@ -119,6 +187,104 @@ function tryLocalParse(message: string): ParsedIntent | null {
         confidence: 0.95
       };
     }
+  }
+  
+  // Agent start - check before open since it's more specific
+  const agentStartMatch = trimmed.match(PATTERNS.agentStart);
+  if (agentStartMatch) {
+    const projectName = agentStartMatch[1].trim();
+    const project = findProject(projectName);
+    if (project) {
+      return {
+        action: 'agent_start',
+        target: project.name,
+        resolved_path: project.path,
+        confidence: 0.95
+      };
+    }
+    return {
+      action: 'unknown',
+      confidence: 0,
+      message: `Project not found: "${projectName}". Try "list projects" to see available projects.`
+    };
+  }
+  
+  // Open project - now starts AI session by default (more useful)
+  const openMatch = trimmed.match(PATTERNS.openProject);
+  if (openMatch) {
+    const projectName = openMatch[1].trim();
+    const project = findProject(projectName);
+    if (project) {
+      // Start AI session instead of just opening in Cursor
+      return {
+        action: 'agent_start',
+        target: project.name,
+        resolved_path: project.path,
+        confidence: 0.95
+      };
+    }
+    return {
+      action: 'unknown',
+      confidence: 0,
+      message: `Project not found: "${projectName}". Try "list projects" to see available projects.`
+    };
+  }
+  
+  // Just a project name by itself - start AI session for it
+  const project = findProject(trimmed);
+  if (project && trimmed.split(/\s+/).length <= 3) {
+    return {
+      action: 'agent_start',
+      target: project.name,
+      resolved_path: project.path,
+      confidence: 0.9
+    };
+  }
+  
+  // Ask patterns - capture as AI request
+  const askMatch = trimmed.match(PATTERNS.ask);
+  if (askMatch) {
+    return {
+      action: 'agent_ask',
+      prompt: askMatch[1].trim(),
+      confidence: 0.9
+    };
+  }
+  
+  // Edit patterns - "add X", "fix Y", "update Z", etc.
+  const editMatch = trimmed.match(/^(add|fix|update|change|modify|create|remove|delete|refactor|implement|write|insert)\s+(.+)$/i);
+  if (editMatch) {
+    return {
+      action: 'agent_ask',
+      prompt: trimmed,  // Send the full message as prompt
+      confidence: 0.9
+    };
+  }
+  
+  return null;
+}
+
+/**
+ * Try to parse locally without Claude
+ * This is a fallback for anything not caught by handleSimpleCommand
+ * Route most natural language to AI assistant
+ */
+function tryLocalParse(message: string): ParsedIntent | null {
+  const trimmed = message.trim();
+  
+  // If it looks like natural language (not a simple keyword), route to AI
+  // This catches questions, requests, and conversational input
+  const looksLikeNaturalLanguage = 
+    trimmed.split(/\s+/).length >= 3 ||  // 3+ words
+    /^(the|this|my|our|what|how|can|could|is|are|does|do|should|would|will|where|when|why|please|i need|i want|make|put|get)/i.test(trimmed) ||
+    /\?$/.test(trimmed);  // Ends with question mark
+  
+  if (looksLikeNaturalLanguage) {
+    return {
+      action: 'agent_ask',
+      prompt: trimmed,
+      confidence: 0.8
+    };
   }
   
   return null;
@@ -141,11 +307,8 @@ export async function parseIntent(message: string): Promise<ParsedIntent> {
     logger.debug('Sending to Claude for parsing', { message });
     
     // Use Anthropic provider with model from config
-    // Config model format: 'anthropic/claude-sonnet-4.5' -> extract 'claude-sonnet-4.5'
-    const modelName = config.claude.model.replace('anthropic/', '');
-    
     const { text } = await generateText({
-      model: anthropic(modelName),
+      model: anthropic(config.claude.model),
       system: buildSystemPrompt(),
       prompt: message,
       maxTokens: config.claude.max_tokens

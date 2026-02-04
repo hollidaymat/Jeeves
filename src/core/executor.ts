@@ -8,6 +8,15 @@ import { existsSync } from 'fs';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import type { ParsedIntent, ExecutionResult } from '../types/index.js';
+import { 
+  startAgentSession, 
+  sendToAgent, 
+  stopAgentSession, 
+  getAgentStatus,
+  applyChanges,
+  rejectChanges,
+  showDiff
+} from './cursor-agent.js';
 
 // Whitelisted executables
 const ALLOWED_EXECUTABLES: Record<string, string> = {
@@ -87,6 +96,92 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     return {
       success: false,
       error: intent.message || 'Command denied',
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // Handle agent actions
+  if (intent.action === 'agent_start') {
+    if (!intent.resolved_path) {
+      return {
+        success: false,
+        error: 'No project path specified for agent',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    const result = await startAgentSession(intent.resolved_path);
+    return {
+      success: result.success,
+      output: result.success ? result.message : undefined,
+      error: result.success ? undefined : result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'agent_ask') {
+    if (!intent.prompt) {
+      return {
+        success: false,
+        error: 'No prompt provided',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    const response = await sendToAgent(intent.prompt);
+    return {
+      success: true,
+      output: response,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'agent_stop') {
+    const result = await stopAgentSession();
+    return {
+      success: result.success,
+      output: result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'agent_status') {
+    const status = getAgentStatus();
+    if (status.active) {
+      return {
+        success: true,
+        output: `AI assistant active for ${status.workingDir?.split(/[\\/]/).pop()} (${status.contextSize}KB context, uptime: ${status.uptime}s)`,
+        duration_ms: Date.now() - startTime
+      };
+    }
+    return {
+      success: true,
+      output: 'No active AI session. Say "analyze <project>" to start.',
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'apply_changes') {
+    const result = await applyChanges();
+    return {
+      success: result.success,
+      output: result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'reject_changes') {
+    const result = rejectChanges();
+    return {
+      success: result.success,
+      output: result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'show_diff') {
+    const diff = showDiff();
+    return {
+      success: true,
+      output: diff,
       duration_ms: Date.now() - startTime
     };
   }

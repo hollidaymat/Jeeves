@@ -21,8 +21,20 @@ class CommandCenter {
       messagesCount: document.getElementById('messages-count'),
       projectsList: document.getElementById('projects-list'),
       refreshProjects: document.getElementById('refresh-projects'),
-      lastCommand: document.getElementById('last-command')
+      lastCommand: document.getElementById('last-command'),
+      agentState: document.getElementById('agent-state'),
+      agentInfo: document.getElementById('agent-info'),
+      agentIndicator: document.getElementById('agent-indicator'),
+      agentStopBtn: document.getElementById('agent-stop-btn'),
+      changesPanel: document.getElementById('changes-panel'),
+      changesCount: document.getElementById('changes-count'),
+      changesContent: document.getElementById('changes-content'),
+      changesActions: document.getElementById('changes-actions'),
+      applyBtn: document.getElementById('apply-btn'),
+      rejectBtn: document.getElementById('reject-btn')
     };
+    
+    this.pendingChanges = [];
     
     this.init();
   }
@@ -94,6 +106,12 @@ class CommandCenter {
       case 'response':
         this.handleResponse(message.payload);
         break;
+      case 'agent_status':
+        this.updateAgentStatus(message.payload);
+        break;
+      case 'pending_changes':
+        this.updatePendingChanges(message.payload);
+        break;
     }
   }
   
@@ -113,6 +131,30 @@ class CommandCenter {
     if (status.last_command) {
       const time = new Date(status.last_command.timestamp).toLocaleTimeString();
       this.elements.lastCommand.textContent = `Last: ${status.last_command.action} at ${time}`;
+    }
+    
+    // Update agent status if included
+    if (status.agent) {
+      this.updateAgentStatus(status.agent);
+    }
+  }
+  
+  updateAgentStatus(agent) {
+    if (agent.active) {
+      this.elements.agentState.textContent = 'ACTIVE';
+      this.elements.agentState.classList.add('active');
+      this.elements.agentIndicator.classList.add('active');
+      this.elements.agentStopBtn.disabled = false;
+      
+      const dir = agent.workingDir ? agent.workingDir.split(/[\\/]/).pop() : 'Unknown';
+      const uptime = agent.uptime ? `${Math.floor(agent.uptime / 60)}m ${agent.uptime % 60}s` : '';
+      this.elements.agentInfo.textContent = `${dir} ${uptime ? '| ' + uptime : ''}`;
+    } else {
+      this.elements.agentState.textContent = 'INACTIVE';
+      this.elements.agentState.classList.remove('active');
+      this.elements.agentIndicator.classList.remove('active');
+      this.elements.agentStopBtn.disabled = true;
+      this.elements.agentInfo.textContent = 'No active session';
     }
   }
   
@@ -150,9 +192,7 @@ class CommandCenter {
   }
   
   handleResponse(response) {
-    if (response.request) {
-      this.log('command', response.request);
-    }
+    // Only log the response - command was already logged when sent
     this.log('response', response.response);
   }
   
@@ -189,6 +229,86 @@ class CommandCenter {
     this.elements.refreshProjects.addEventListener('click', () => {
       this.sendCommand('list projects');
     });
+    
+    // Apply/Reject buttons
+    this.elements.applyBtn?.addEventListener('click', () => {
+      this.sendCommand('apply');
+    });
+    
+    this.elements.rejectBtn?.addEventListener('click', () => {
+      this.sendCommand('reject');
+    });
+  }
+  
+  updatePendingChanges(changes) {
+    this.pendingChanges = changes || [];
+    
+    if (this.pendingChanges.length === 0) {
+      this.elements.changesCount.textContent = '0 files';
+      this.elements.changesContent.innerHTML = '<div class="no-changes">No pending changes</div>';
+      this.elements.changesActions.style.display = 'none';
+      return;
+    }
+    
+    this.elements.changesCount.textContent = `${this.pendingChanges.length} file(s)`;
+    this.elements.changesActions.style.display = 'flex';
+    
+    // Render each file's changes
+    let html = '';
+    for (const change of this.pendingChanges) {
+      const fileName = change.filePath.split(/[\\/]/).pop();
+      const relativePath = change.filePath.replace(/.*YOUR_CURSOR_AI_DIRECTORY[\\/]/, '');
+      
+      html += `
+        <div class="change-file">
+          <div class="change-file-header">
+            <span class="change-file-path">${fileName}</span>
+            <span class="change-file-status">${relativePath}</span>
+          </div>
+          <div class="change-diff">
+            ${this.renderDiff(change.originalContent, change.newContent)}
+          </div>
+        </div>
+      `;
+    }
+    
+    this.elements.changesContent.innerHTML = html;
+  }
+  
+  renderDiff(original, modified) {
+    const lines = [];
+    
+    if (original) {
+      const origLines = original.split('\n');
+      const newLines = modified.split('\n');
+      
+      // Simple line-by-line diff
+      const maxLen = Math.max(origLines.length, newLines.length);
+      for (let i = 0; i < maxLen; i++) {
+        if (i < origLines.length && origLines[i]) {
+          lines.push(`<div class="diff-line removed">- ${this.escapeHtml(origLines[i])}</div>`);
+        }
+      }
+      for (let i = 0; i < newLines.length; i++) {
+        if (newLines[i]) {
+          lines.push(`<div class="diff-line added">+ ${this.escapeHtml(newLines[i])}</div>`);
+        }
+      }
+    } else {
+      // New file
+      const newLines = modified.split('\n');
+      for (const line of newLines) {
+        lines.push(`<div class="diff-line added">+ ${this.escapeHtml(line)}</div>`);
+      }
+    }
+    
+    return lines.join('');
+  }
+  
+  escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
   }
   
   async sendCommand(command) {
@@ -203,9 +323,8 @@ class CommandCenter {
       
       const data = await response.json();
       
-      if (data.success) {
-        this.log('response', data.response);
-      } else {
+      // Only log errors here - success responses come via WebSocket to avoid duplication
+      if (!data.success) {
         this.log('error', data.error || 'Command failed');
       }
       
@@ -227,7 +346,17 @@ class CommandCenter {
     
     const messageSpan = document.createElement('span');
     messageSpan.className = 'message';
-    messageSpan.textContent = message;
+    
+    // Render markdown for AI responses (long messages with markdown syntax)
+    const isMarkdown = type === 'response' && 
+      (message.includes('##') || message.includes('**') || message.includes('```') || message.length > 200);
+    
+    if (isMarkdown && typeof marked !== 'undefined') {
+      messageSpan.innerHTML = marked.parse(message);
+      messageSpan.classList.add('markdown-content');
+    } else {
+      messageSpan.textContent = message;
+    }
     
     line.appendChild(timestamp);
     line.appendChild(messageSpan);

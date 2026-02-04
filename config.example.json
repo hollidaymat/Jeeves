@@ -1,0 +1,36 @@
+{
+  "signal": {
+    "number": "+1234567890",
+    "socket": "/tmp/signal-cli.sock"
+  },
+  "security": {
+    "allowed_numbers": ["+1234567890"],
+    "log_unauthorized": true,
+    "silent_deny": true
+  },
+  "claude": {
+    "model": "claude-sonnet-4-20250514",
+    "haiku_model": "claude-haiku-3-5-20241022",
+    "max_tokens": 500
+  },
+  "projects": {
+    "directories": [
+      "C:\\Users\\matth\\YOUR_CURSOR_AI_DIRECTORY"
+    ],
+    "scan_depth": 2,
+    "markers": [".git", "package.json", "Cargo.toml", "go.mod", "pyproject.toml"],
+    "exclude": ["node_modules", ".git", "dist", "build", ".next"]
+  },
+  "commands": {
+    "cursor": "C:\\Users\\matth\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin\\cursor.cmd"
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 3847
+  },
+  "rate_limits": {
+    "messages_per_minute": 10,
+    "messages_per_hour": 100,
+    "messages_per_day": 500
+  }
+}

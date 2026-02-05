@@ -84,6 +84,11 @@ export type ActionType =
   | 'api_delete'        // API test: DELETE request
   | 'api_history'       // API test: show request history
   | 'execute_plan'      // Execute pending plan
+  | 'set_model'         // Set model (haiku/sonnet/opus/auto)
+  | 'list_backups'      // List available backups for a file
+  | 'restore_backup'    // Restore a file from backup
+  | 'show_cost'         // Show cost/budget information
+  | 'compact_session'   // Compact/summarize long conversation history
   | 'unknown'
   | 'denied';
 
@@ -121,6 +126,9 @@ export interface ParsedIntent {
   raw_response?: string;
   requiresAsync?: boolean;  // Action needs async handling
   data?: Record<string, unknown>;  // Additional data for the action
+  // Token optimization tracking
+  resolutionMethod?: 'pattern' | 'llm';  // How intent was resolved
+  estimatedCost?: number;  // Estimated cost in dollars (0 for pattern-matched)
 }
 
 // ============================================================================
@@ -219,6 +227,14 @@ export interface Config {
     messages_per_minute: number;
     messages_per_hour: number;
     messages_per_day: number;
+  };
+  safety: {
+    backupEnabled: boolean;
+    backupRetentionHours: number;
+    maxShrinkagePercent: number;
+    validateContent: boolean;
+    atomicWrites: boolean;
+    gitAutoStash: boolean;
   };
 }
 

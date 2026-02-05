@@ -30,3 +30,7 @@ data/preferences.json
 
 # Encrypted credentials
 *.enc
+
+# Jeeves backup files
+.jeeves-backup/
+*.jeeves-tmp

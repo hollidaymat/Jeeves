@@ -13,7 +13,9 @@ class CommandCenter {
     this.activeStreamId = null;
     this.streamContent = '';
     this.streamElement = null;
+    this.streamHadContent = false;  // Track if stream actually received content
     this.lastStreamId = null;  // Track last completed stream to suppress duplicate response
+    this.lastStreamHadContent = false;  // Only suppress response if stream had content
     
     this.elements = {
       connectionStatus: document.getElementById('connection-status'),
@@ -110,9 +112,11 @@ class CommandCenter {
         this.handleLog(message.payload);
         break;
       case 'response':
-        // Skip if we just finished streaming (avoid duplicate)
-        if (this.lastStreamId) {
+        // Skip if we just finished streaming WITH actual content (avoid duplicate)
+        // Only suppress if lastStreamId is set AND we actually received stream content
+        if (this.lastStreamId && this.lastStreamHadContent) {
           this.lastStreamId = null;  // Reset for next time
+          this.lastStreamHadContent = false;
         } else if (!this.activeStreamId) {
           this.handleResponse(message.payload);
         }
@@ -233,6 +237,11 @@ class CommandCenter {
     // Only show info and above in console
     if (log.level === 'debug') return;
     
+    // Filter out noisy internal logs
+    if (!log.message || log.message.trim() === '') return;
+    if (/^Using .* model/i.test(log.message)) return;
+    if (/^Prompt analysis/i.test(log.message)) return;
+    
     const type = log.level === 'error' ? 'error' : 
                  log.level === 'warn' ? 'error' : 'system';
     this.log(type, log.message);
@@ -248,6 +257,7 @@ class CommandCenter {
     this.activeStreamId = payload.streamId;
     this.streamContent = '';
     this.streamElement = null;
+    this.streamHadContent = false;  // Reset - will be set true if chunks arrive
     
     // Create a new console line for streaming
     const line = document.createElement('div');
@@ -273,6 +283,7 @@ class CommandCenter {
     if (payload.streamId !== this.activeStreamId) return;
     
     this.streamContent += payload.chunk;
+    this.streamHadContent = true;  // Mark that we received actual content
     
     if (this.streamElement) {
       // For streaming, show raw text first, render markdown at end
@@ -317,9 +328,11 @@ class CommandCenter {
     }
     
     this.lastStreamId = this.activeStreamId;  // Remember to suppress duplicate response
+    this.lastStreamHadContent = this.streamHadContent;  // Only suppress if we actually got content
     this.activeStreamId = null;
     this.streamContent = '';
     this.streamElement = null;
+    this.streamHadContent = false;
   }
   
   scrollToBottom() {
@@ -489,6 +502,9 @@ class CommandCenter {
   }
   
   log(type, message) {
+    // Skip empty messages
+    if (!message || message.trim() === '') return;
+    
     const line = document.createElement('div');
     line.className = `console-line ${type}`;
     

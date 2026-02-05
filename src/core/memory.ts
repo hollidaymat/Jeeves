@@ -505,6 +505,111 @@ export function exportConversations(format: 'json' | 'markdown' = 'json'): {
 }
 
 /**
+ * Get estimated token count for general conversations
+ */
+export function getGeneralConversationTokenCount(): number {
+  const store = loadMemory();
+  const convos = store.generalConversations || [];
+  
+  // Rough estimate: 4 chars per token
+  let totalChars = 0;
+  for (const msg of convos) {
+    totalChars += msg.content.length;
+  }
+  
+  return Math.ceil(totalChars / 4);
+}
+
+/**
+ * Check if session compaction is needed
+ */
+export function needsCompaction(thresholdTokens: number = 50000): boolean {
+  return getGeneralConversationTokenCount() >= thresholdTokens;
+}
+
+/**
+ * Compact general conversations by replacing old messages with a summary
+ * This is called after summarization is done externally (to avoid circular deps)
+ */
+export function compactGeneralConversations(
+  summary: string,
+  keepRecentCount: number = 10
+): { 
+  success: boolean; 
+  beforeCount: number; 
+  afterCount: number;
+  tokensBefore: number;
+  tokensAfter: number;
+} {
+  const store = loadMemory();
+  
+  if (!store.generalConversations) {
+    store.generalConversations = [];
+  }
+  
+  const beforeCount = store.generalConversations.length;
+  const tokensBefore = getGeneralConversationTokenCount();
+  
+  if (beforeCount <= keepRecentCount) {
+    return {
+      success: false,
+      beforeCount,
+      afterCount: beforeCount,
+      tokensBefore,
+      tokensAfter: tokensBefore
+    };
+  }
+  
+  // Keep the most recent messages
+  const recentMessages = store.generalConversations.slice(-keepRecentCount);
+  
+  // Create a summary message
+  const summaryMessage: ConversationMessage = {
+    role: 'assistant',
+    content: `[CONVERSATION SUMMARY]\n${summary}\n[END SUMMARY]`,
+    timestamp: new Date().toISOString()
+  };
+  
+  // Replace conversations with summary + recent
+  store.generalConversations = [summaryMessage, ...recentMessages];
+  
+  saveMemory();
+  
+  const tokensAfter = getGeneralConversationTokenCount();
+  
+  logger.info('Compacted general conversations', {
+    beforeCount,
+    afterCount: store.generalConversations.length,
+    tokensBefore,
+    tokensAfter,
+    savings: `${((tokensBefore - tokensAfter) / tokensBefore * 100).toFixed(1)}%`
+  });
+  
+  return {
+    success: true,
+    beforeCount,
+    afterCount: store.generalConversations.length,
+    tokensBefore,
+    tokensAfter
+  };
+}
+
+/**
+ * Get messages for summarization (excluding recent ones we want to keep)
+ */
+export function getMessagesForSummary(keepRecentCount: number = 10): ConversationMessage[] {
+  const store = loadMemory();
+  const convos = store.generalConversations || [];
+  
+  if (convos.length <= keepRecentCount) {
+    return [];
+  }
+  
+  // Return all messages except the most recent ones
+  return convos.slice(0, -keepRecentCount);
+}
+
+/**
  * Initialize memory system
  */
 export function initMemory(): void {

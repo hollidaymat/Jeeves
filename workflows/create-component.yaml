@@ -1,0 +1,60 @@
+name: create-component
+description: "Create a new React component with proper file structure"
+
+trigger_patterns:
+  - "create (a )?component"
+  - "add (a )?(new )?component"
+  - "new component"
+  - "make (a )?component"
+
+steps:
+  # Step 1: Extract component parameters using cheap model
+  - name: extract-params
+    type: llm
+    model: haiku
+    max_tokens: 200
+    prompt: |
+      Extract from this request:
+      - component_name (PascalCase, e.g. "UserProfile")
+      - component_type (functional or class, default functional)
+      - props (list of prop names, or empty array)
+      - styling (css, tailwind, styled-components, none - default tailwind)
+      
+      Request: {{message}}
+      
+      Return JSON only, no explanation:
+      {"name": "", "type": "functional", "props": [], "styling": "tailwind"}
+
+  # Step 2: Generate component code using smarter model
+  - name: generate-code
+    type: llm
+    model: sonnet
+    max_tokens: 1000
+    prompt: |
+      Generate a {{extract-params.type}} React TypeScript component.
+      
+      Name: {{extract-params.name}}
+      Props: {{extract-params.props}}
+      Styling: {{extract-params.styling}}
+      
+      Requirements:
+      - Use TypeScript with proper types
+      - Export as named export
+      - Include basic prop types interface
+      - Add JSDoc comment
+      - If styling is tailwind, use Tailwind classes
+      
+      Return ONLY the component code, no explanation or markdown.
+
+  # Step 3: Format success message
+  - name: respond
+    type: llm
+    model: haiku
+    max_tokens: 100
+    prompt: |
+      Confirm component creation in 1-2 sentences. Be friendly.
+      Component: {{extract-params.name}}
+      Type: {{extract-params.type}}
+      Props: {{extract-params.props}}
+      
+      Mention the component is ready and suggest next steps (like adding to a page).

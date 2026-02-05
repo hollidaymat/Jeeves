@@ -14,9 +14,9 @@ let activeStreamCallback: StreamCallback | null = null;
 export function setStreamCallback(callback: StreamCallback | null): void {
   activeStreamCallback = callback;
 }
-import { readdir, readFile, stat, writeFile } from 'fs/promises';
-import { join, extname } from 'path';
-import { existsSync } from 'fs';
+import { readdir, readFile, stat, writeFile, copyFile, rename, mkdir, unlink } from 'fs/promises';
+import { join, extname, basename, dirname } from 'path';
+import { existsSync, mkdirSync } from 'fs';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { 
@@ -30,6 +30,7 @@ import {
 import { selectModel, type ModelTier } from './model-selector.js';
 import { getProjectIndex } from './project-scanner.js';
 import { getLastBrowseResult } from './browser.js';
+import { trackLLMUsage } from './cost-tracker.js';
 
 interface FileChange {
   filePath: string;
@@ -49,6 +50,138 @@ interface AgentSession {
 // Active session
 let activeSession: AgentSession | null = null;
 
+// Forced model override (user can say "use haiku" etc.)
+let forcedModel: ModelTier | null = null;
+
+/**
+ * Set the forced model tier (or null to use auto-selection)
+ */
+export function setForcedModel(tier: ModelTier | null): void {
+  forcedModel = tier;
+  if (tier) {
+    logger.info(`Model locked to ${tier.toUpperCase()}`);
+  } else {
+    logger.info('Model selection set to AUTO');
+  }
+}
+
+/**
+ * Get current forced model (null = auto)
+ */
+export function getForcedModel(): ModelTier | null {
+  return forcedModel;
+}
+
+// ==========================================
+// PROMPT CACHING INFRASTRUCTURE
+// ==========================================
+
+// Cache heartbeat interval (4.5 minutes - cache expires at 5 minutes)
+const CACHE_HEARTBEAT_INTERVAL_MS = 4.5 * 60 * 1000;
+let cacheHeartbeatTimer: NodeJS.Timeout | null = null;
+let lastCacheWarmTime: Date | null = null;
+
+// Track cache statistics
+interface CacheStats {
+  hits: number;
+  misses: number;
+  lastHit: Date | null;
+}
+
+const cacheStats: CacheStats = {
+  hits: 0,
+  misses: 0,
+  lastHit: null
+};
+
+/**
+ * Get cache hit rate
+ */
+export function getCacheHitRate(): number {
+  const total = cacheStats.hits + cacheStats.misses;
+  return total > 0 ? (cacheStats.hits / total) * 100 : 0;
+}
+
+/**
+ * Record a cache hit or miss
+ */
+export function recordCacheResult(hit: boolean): void {
+  if (hit) {
+    cacheStats.hits++;
+    cacheStats.lastHit = new Date();
+  } else {
+    cacheStats.misses++;
+  }
+}
+
+/**
+ * Start cache heartbeat to keep system prompt cached
+ * Sends a minimal request every 4.5 minutes to prevent cache expiration
+ */
+export function startCacheHeartbeat(): void {
+  if (cacheHeartbeatTimer) return; // Already running
+  
+  logger.info('Starting cache heartbeat (4.5 min interval)');
+  
+  cacheHeartbeatTimer = setInterval(async () => {
+    try {
+      // Send minimal request to keep cache warm
+      // This is a low-cost way to maintain the cache
+      const anthropic = createAnthropic({
+        apiKey: process.env.ANTHROPIC_API_KEY
+      });
+      
+      // Minimal request - just ping with system prompt
+      await generateText({
+        model: anthropic('claude-3-5-haiku-20241022'),
+        system: 'You are Jeeves, a helpful assistant.', // Minimal cached prompt
+        prompt: 'ping',
+        maxTokens: 1
+      });
+      
+      lastCacheWarmTime = new Date();
+      logger.debug('Cache heartbeat sent');
+    } catch (error) {
+      logger.warn('Cache heartbeat failed', { error: String(error) });
+    }
+  }, CACHE_HEARTBEAT_INTERVAL_MS);
+}
+
+/**
+ * Stop cache heartbeat
+ */
+export function stopCacheHeartbeat(): void {
+  if (cacheHeartbeatTimer) {
+    clearInterval(cacheHeartbeatTimer);
+    cacheHeartbeatTimer = null;
+    logger.info('Cache heartbeat stopped');
+  }
+}
+
+/**
+ * Get cache status
+ */
+export function getCacheStatus(): { 
+  heartbeatActive: boolean; 
+  lastWarm: Date | null; 
+  hitRate: number;
+  stats: CacheStats;
+} {
+  return {
+    heartbeatActive: cacheHeartbeatTimer !== null,
+    lastWarm: lastCacheWarmTime,
+    hitRate: getCacheHitRate(),
+    stats: { ...cacheStats }
+  };
+}
+
+/**
+ * Get active project session (if any)
+ */
+export function getActiveProject(): AgentSession | null {
+  return activeSession;
+}
+
 // Re-export plan state functions
 import {
   getPendingPlan,
@@ -59,6 +192,305 @@ import {
 } from './plan-state.js';
 
 export { getPendingPlan, clearPendingPlan, getLastExecutionResults };
+
+// ============================================================================
+// FILE SAFETY SYSTEM
+// Prevents file truncation and corruption with backup, validation, and atomic writes
+// ============================================================================
+
+interface SafeWriteResult {
+  success: boolean;
+  error?: string;
+  backupPath?: string;
+  warnings?: string[];
+}
+
+/**
+ * Get the backup directory for a project
+ */
+function getBackupDir(projectPath: string): string {
+  return join(projectPath, '.jeeves-backup');
+}
+
+/**
+ * Validate content for obvious truncation/corruption
+ */
+function validateContent(content: string, filePath: string): { valid: boolean; warning?: string } {
+  const ext = extname(filePath).toLowerCase();
+  
+  // Skip validation for small files or non-code files
+  if (content.length < 100) {
+    return { valid: true };
+  }
+  
+  // Check balanced braces for JS/TS/CSS/JSON
+  if (['.ts', '.tsx', '.js', '.jsx', '.css', '.scss', '.json'].includes(ext)) {
+    const opens = (content.match(/\{/g) || []).length;
+    const closes = (content.match(/\}/g) || []).length;
+    if (Math.abs(opens - closes) > 2) {  // Allow small imbalance for template literals
+      return { valid: false, warning: `Unbalanced braces: ${opens} opens, ${closes} closes - possible truncation` };
+    }
+  }
+  
+  // Check for files that end abruptly (no trailing newline and ends with partial content)
+  if (!content.endsWith('\n') && content.length > 500) {
+    // Check if it ends mid-statement
+    const lastChars = content.slice(-20);
+    if (lastChars.match(/[a-zA-Z0-9_]$/)) {  // Ends with identifier character
+      return { valid: false, warning: 'File appears truncated (ends mid-identifier)' };
+    }
+  }
+  
+  return { valid: true };
+}
+
+/**
+ * Check if file shrinkage exceeds safety threshold
+ */
+async function checkShrinkage(filePath: string, newContent: string): Promise<{ safe: boolean; shrinkage: number; warning?: string }> {
+  if (!existsSync(filePath)) {
+    return { safe: true, shrinkage: 0 };
+  }
+  
+  try {
+    const stats = await stat(filePath);
+    const originalSize = stats.size;
+    const newSize = Buffer.byteLength(newContent, 'utf-8');
+    
+    if (originalSize === 0) {
+      return { safe: true, shrinkage: 0 };
+    }
+    
+    const shrinkage = (originalSize - newSize) / originalSize;
+    const maxShrinkage = config.safety.maxShrinkagePercent / 100;
+    
+    // Only flag if original file was substantial (>500 bytes) and shrinkage is significant
+    if (shrinkage > maxShrinkage && originalSize > 500) {
+      return { 
+        safe: false, 
+        shrinkage: Math.round(shrinkage * 100),
+        warning: `File would shrink by ${Math.round(shrinkage * 100)}% (${originalSize} → ${newSize} bytes) - possible truncation`
+      };
+    }
+    
+    return { safe: true, shrinkage: Math.round(shrinkage * 100) };
+  } catch {
+    return { safe: true, shrinkage: 0 };
+  }
+}
+
+/**
+ * Create a backup of a file before modification
+ */
+async function createBackup(filePath: string, projectPath: string): Promise<string | null> {
+  if (!config.safety.backupEnabled || !existsSync(filePath)) {
+    return null;
+  }
+  
+  try {
+    const backupDir = getBackupDir(projectPath);
+    if (!existsSync(backupDir)) {
+      await mkdir(backupDir, { recursive: true });
+    }
+    
+    const fileName = basename(filePath);
+    const timestamp = Date.now();
+    const backupPath = join(backupDir, `${fileName}.${timestamp}.bak`);
+    
+    await copyFile(filePath, backupPath);
+    logger.debug('Created backup', { original: filePath, backup: backupPath });
+    
+    return backupPath;
+  } catch (error) {
+    logger.warn('Failed to create backup', { filePath, error: String(error) });
+    return null;
+  }
+}
+
+/**
+ * Clean up old backups (older than retention period)
+ */
+async function cleanupOldBackups(projectPath: string): Promise<number> {
+  const backupDir = getBackupDir(projectPath);
+  if (!existsSync(backupDir)) {
+    return 0;
+  }
+  
+  try {
+    const files = await readdir(backupDir);
+    const cutoffTime = Date.now() - (config.safety.backupRetentionHours * 60 * 60 * 1000);
+    let cleaned = 0;
+    
+    for (const file of files) {
+      if (!file.endsWith('.bak')) continue;
+      
+      // Extract timestamp from filename (format: filename.timestamp.bak)
+      const match = file.match(/\.(\d+)\.bak$/);
+      if (match) {
+        const timestamp = parseInt(match[1], 10);
+        if (timestamp < cutoffTime) {
+          await unlink(join(backupDir, file));
+          cleaned++;
+        }
+      }
+    }
+    
+    if (cleaned > 0) {
+      logger.debug('Cleaned up old backups', { count: cleaned, dir: backupDir });
+    }
+    
+    return cleaned;
+  } catch (error) {
+    logger.warn('Failed to cleanup backups', { error: String(error) });
+    return 0;
+  }
+}
+
+/**
+ * List available backups for a file
+ */
+export async function listBackups(fileName: string, projectPath: string): Promise<Array<{ path: string; timestamp: Date; size: number }>> {
+  const backupDir = getBackupDir(projectPath);
+  if (!existsSync(backupDir)) {
+    return [];
+  }
+  
+  try {
+    const files = await readdir(backupDir);
+    const backups: Array<{ path: string; timestamp: Date; size: number }> = [];
+    
+    for (const file of files) {
+      if (!file.startsWith(fileName) || !file.endsWith('.bak')) continue;
+      
+      const match = file.match(/\.(\d+)\.bak$/);
+      if (match) {
+        const filePath = join(backupDir, file);
+        const stats = await stat(filePath);
+        backups.push({
+          path: filePath,
+          timestamp: new Date(parseInt(match[1], 10)),
+          size: stats.size
+        });
+      }
+    }
+    
+    // Sort by timestamp descending (newest first)
+    backups.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+    
+    return backups;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Restore a file from backup
+ */
+export async function restoreFromBackup(backupPath: string, originalPath: string): Promise<{ success: boolean; message: string }> {
+  if (!existsSync(backupPath)) {
+    return { success: false, message: 'Backup file not found' };
+  }
+  
+  try {
+    await copyFile(backupPath, originalPath);
+    logger.info('Restored file from backup', { backup: backupPath, target: originalPath });
+    return { success: true, message: `Restored ${basename(originalPath)} from backup` };
+  } catch (error) {
+    return { success: false, message: `Failed to restore: ${error instanceof Error ? error.message : 'Unknown error'}` };
+  }
+}
+
+/**
+ * Safe file write with all safety layers:
+ * 1. Pre-edit backup
+ * 2. Size sanity check
+ * 3. Content validation
+ * 4. Atomic write (write to temp, then rename)
+ */
+async function safeWriteFile(
+  filePath: string, 
+  content: string, 
+  projectPath: string,
+  options: { force?: boolean } = {}
+): Promise<SafeWriteResult> {
+  const warnings: string[] = [];
+  
+  // Layer 1: Create backup
+  let backupPath: string | null = null;
+  if (config.safety.backupEnabled && existsSync(filePath)) {
+    backupPath = await createBackup(filePath, projectPath);
+    if (backupPath) {
+      warnings.push(`Backup created: ${basename(backupPath)}`);
+    }
+  }
+  
+  // Layer 2: Size sanity check
+  const shrinkageCheck = await checkShrinkage(filePath, content);
+  if (!shrinkageCheck.safe && !options.force) {
+    return {
+      success: false,
+      error: `SAFETY BLOCK: ${shrinkageCheck.warning}. Use --force to override.`,
+      backupPath: backupPath || undefined,
+      warnings
+    };
+  }
+  if (shrinkageCheck.shrinkage > 20) {
+    warnings.push(`File shrinks by ${shrinkageCheck.shrinkage}%`);
+  }
+  
+  // Layer 3: Content validation
+  if (config.safety.validateContent) {
+    const validation = validateContent(content, filePath);
+    if (!validation.valid && !options.force) {
+      return {
+        success: false,
+        error: `SAFETY BLOCK: ${validation.warning}. Use --force to override.`,
+        backupPath: backupPath || undefined,
+        warnings
+      };
+    }
+    if (validation.warning) {
+      warnings.push(validation.warning);
+    }
+  }
+  
+  // Layer 4: Atomic write
+  try {
+    if (config.safety.atomicWrites) {
+      // Ensure directory exists
+      const dir = dirname(filePath);
+      if (!existsSync(dir)) {
+        await mkdir(dir, { recursive: true });
+      }
+      
+      // Write to temp file first
+      const tempPath = `${filePath}.jeeves-tmp`;
+      await writeFile(tempPath, content, 'utf-8');
+      
+      // Atomic rename
+      await rename(tempPath, filePath);
+    } else {
+      await writeFile(filePath, content, 'utf-8');
+    }
+    
+    return {
+      success: true,
+      backupPath: backupPath || undefined,
+      warnings: warnings.length > 0 ? warnings : undefined
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: `Write failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      backupPath: backupPath || undefined,
+      warnings
+    };
+  }
+}
+
+// ============================================================================
+// END FILE SAFETY SYSTEM
+// ============================================================================
 
 /**
  * Validate a command against trust level constraints
@@ -354,6 +786,20 @@ export async function startAgentSession(projectPath: string): Promise<{ success:
  * Send a prompt to the AI assistant
  */
 export async function sendToAgent(prompt: string): Promise<string> {
+  const lowerPrompt = prompt.toLowerCase().trim();
+  
+  // Handle model switching commands
+  const modelMatch = lowerPrompt.match(/^use\s+(haiku|sonnet|opus)$/i);
+  if (modelMatch) {
+    const tier = modelMatch[1].toLowerCase() as ModelTier;
+    setForcedModel(tier);
+    return `Model locked to **${tier.toUpperCase()}**. All requests will now use ${tier} until you say "use auto".`;
+  }
+  if (lowerPrompt === 'use auto' || lowerPrompt === 'auto model') {
+    setForcedModel(null);
+    return 'Model selection set to **AUTO**. Will choose the best model based on task complexity.';
+  }
+  
   if (!activeSession) {
     // No project loaded - use general mode for conversational questions
     logger.debug('No active session, using general mode');
@@ -447,17 +893,25 @@ ${conversationContext}
 ${activeSession.projectContext}
 === END FILES ===`;
 
-    // Smart model selection - code editing gets at least Sonnet
-    const selectedModel = selectModel(prompt);
-    // For edit requests, always use at least Sonnet (not Haiku)
-    const modelToUse = isEditRequest && selectedModel.tier === 'haiku' 
-      ? 'claude-sonnet-4-20250514' 
-      : selectedModel.modelId;
+    // Smart model selection - check for forced model first
+    const selectedModel = selectModel(prompt, forcedModel ?? undefined);
     
-    logger.info('Model selected for project work', { 
+    // For edit requests, always use at least Sonnet (not Haiku) - unless user forced Haiku
+    let modelToUse = selectedModel.modelId;
+    let wasUpgraded = false;
+    if (!forcedModel && isEditRequest && selectedModel.tier === 'haiku') {
+      modelToUse = 'claude-sonnet-4-20250514';
+      wasUpgraded = true;
+    }
+    
+    // Clear, visible logging of which model is being used
+    const modelDisplay = forcedModel ? `[FORCED: ${forcedModel.toUpperCase()}]` : `[AUTO: ${selectedModel.tier.toUpperCase()}]`;
+    logger.info(`Using ${selectedModel.tier.toUpperCase()} model ${modelDisplay}`, { 
       tier: selectedModel.tier, 
       actualModel: modelToUse,
-      isEditRequest 
+      isEditRequest,
+      forcedModel: forcedModel ?? 'auto',
+      wasUpgraded
     });
 
     // Use streaming for real-time updates
@@ -709,9 +1163,28 @@ export async function applyChanges(): Promise<{ success: boolean; message: strin
         newContent = change.newContent;
       }
       
-      await writeFile(change.filePath, newContent, 'utf-8');
-      results.push(`✓ ${change.description}`);
-      logger.info('Applied change', { file: change.filePath });
+      // Use safe write with backup, validation, and atomic write
+      const writeResult = await safeWriteFile(change.filePath, newContent, activeSession.workingDir);
+      
+      if (writeResult.success) {
+        let msg = `✓ ${change.description}`;
+        if (writeResult.backupPath) {
+          msg += ` (backup: ${basename(writeResult.backupPath)})`;
+        }
+        results.push(msg);
+        logger.info('Applied change safely', { 
+          file: change.filePath, 
+          backup: writeResult.backupPath,
+          warnings: writeResult.warnings 
+        });
+      } else {
+        results.push(`✗ ${change.description} - ${writeResult.error}`);
+        logger.error('Safe write blocked change', { 
+          file: change.filePath, 
+          error: writeResult.error,
+          backup: writeResult.backupPath 
+        });
+      }
       
     } catch (error) {
       results.push(`✗ Failed: ${change.description} - ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -721,6 +1194,9 @@ export async function applyChanges(): Promise<{ success: boolean; message: strin
   
   // Clear pending changes
   activeSession.pendingChanges = [];
+  
+  // Cleanup old backups periodically
+  await cleanupOldBackups(activeSession.workingDir);
   
   // Refresh project context
   activeSession.projectContext = await scanProjectContext(activeSession.workingDir);
@@ -835,236 +1311,247 @@ export function getPendingChanges(): FileChange[] {
  * Answer general questions without needing a project session
  * Used for questions about Jeeves itself, trust system, capabilities, etc.
  */
+/**
+ * Prompt complexity tiers for token optimization
+ */
+type PromptTier = 'minimal' | 'standard' | 'full';
+
+interface PromptAnalysis {
+  tier: PromptTier;
+  needsProjectContext: boolean;
+  needsBrowseContext: boolean;
+  needsExecContext: boolean;
+  historyCount: number;
+  maxTokens: number;  // Response token limit based on intent
+}
+
+// Token limits per tier - prevents verbose responses
+const TOKEN_LIMITS: Record<PromptTier, number> = {
+  minimal: 150,   // Greetings, status checks - keep it brief
+  standard: 800,  // Normal questions - moderate response
+  full: 2000      // Complex technical work - allow detailed responses
+};
+
+/**
+ * Analyze prompt to determine optimal context tier
+ * Returns tier and what context is actually needed
+ */
+function analyzePromptComplexity(prompt: string): PromptAnalysis {
+  const lower = prompt.toLowerCase().trim();
+  const wordCount = prompt.split(/\s+/).length;
+  
+  // Minimal tier: greetings, simple chat, status checks
+  const minimalPatterns = [
+    /^(hi|hey|hello|yo|sup|what'?s? up|you there|you back|back\??|test|ping|status)\b/i,
+    /^(how are you|how'?s? it going|good morning|good afternoon|good evening)\b/i,
+    /^(thanks|thank you|ok|okay|yes|no|sure|got it|cool|nice|great)\b/i
+  ];
+  
+  if (wordCount <= 5 && minimalPatterns.some(p => p.test(lower))) {
+    return {
+      tier: 'minimal',
+      needsProjectContext: false,
+      needsBrowseContext: false,
+      needsExecContext: false,
+      historyCount: 3,
+      maxTokens: TOKEN_LIMITS.minimal
+    };
+  }
+  
+  // Check what context is actually needed
+  const needsProjectContext = /\b(project|code|file|function|component|api|database|bug|fix|implement|refactor|open|load)\b/i.test(lower);
+  const needsBrowseContext = /\b(browse|website|page|url|screenshot|web|site|click|scroll)\b/i.test(lower);
+  const needsExecContext = /\b(result|output|what happened|did it work|success|fail|error|run|execute|plan)\b/i.test(lower);
+  
+  // Full tier: complex technical work, multi-step tasks
+  // Only use if explicitly technical, not just long conversation
+  const fullPatterns = [
+    /\b(implement|build|create|develop|architect|design|refactor|migrate)\b/i,
+    /\b(deploy|kubernetes|docker|terraform|ansible|ci\/?cd)\b/i,
+    /\b(security|audit|vulnerability|penetration|hardening)\b/i,
+    /```/,  // Code blocks indicate complex work
+    /\bplan\b.*\bcommands?\b/i  // "plan" only if talking about commands
+  ];
+  
+  // Only use FULL tier if technical patterns match, not just word count
+  if (fullPatterns.some(p => p.test(lower))) {
+    return {
+      tier: 'full',
+      needsProjectContext: true,
+      needsBrowseContext: needsBrowseContext,
+      needsExecContext: needsExecContext,
+      historyCount: 15,
+      maxTokens: TOKEN_LIMITS.full
+    };
+  }
+  
+  // Standard tier: normal questions and tasks
+  return {
+    tier: 'standard',
+    needsProjectContext: needsProjectContext,
+    needsBrowseContext: needsBrowseContext,
+    needsExecContext: needsExecContext,
+    historyCount: 8,
+    maxTokens: TOKEN_LIMITS.standard
+  };
+}
+
+/**
+ * Build system prompt based on tier
+ */
+function buildSystemPrompt(
+  tier: PromptTier,
+  trustLevel: number,
+  trustName: string,
+  projectList: string | null,
+  browseContext: string,
+  executionContext: string,
+  personalityContext: string | null,
+  analysis: PromptAnalysis
+): string {
+  // Core identity - always included (~100 tokens)
+  const corePrompt = `You are Jeeves, an AI employee. You work for the user - coding, sysadmin, DevOps, home server management. You run locally and take action: run commands, edit files, solve problems. Be direct and professional.`;
+  
+  if (tier === 'minimal') {
+    // ~150 tokens total
+    return `${corePrompt}
+
+Trust level: ${trustLevel}/5 (${trustName}). Be conversational and helpful - a few sentences is fine.`;
+  }
+  
+  // Standard tier: core + trust + constraints (~400 tokens)
+  const trustConstraints = `
+## TRUST LEVEL: ${trustLevel}/5 (${trustName})
+${trustLevel < 3 ? 'Cannot: POST/PUT/PATCH/DELETE (need L3+)' : 'Can: All HTTP methods'}
+${trustLevel < 4 ? 'Cannot: Database mutations (need L4+)' : 'Can: Database operations'}
+
+When proposing multi-command work, use:
+\`\`\`plan
+DESCRIPTION: What you'll do
+COMMANDS:
+command1
+command2
+\`\`\`
+User says "yes" to approve. Only propose commands allowed at your level.`;
+
+  if (tier === 'standard') {
+    let prompt = `${corePrompt}
+${trustConstraints}`;
+    
+    if (analysis.needsProjectContext && projectList) {
+      prompt += `\n\n## PROJECTS\n${projectList}`;
+    }
+    if (analysis.needsBrowseContext && browseContext) {
+      prompt += browseContext;
+    }
+    if (analysis.needsExecContext && executionContext) {
+      prompt += executionContext;
+    }
+    if (personalityContext) {
+      prompt += `\n\n## PREFERENCES\n${personalityContext}`;
+    }
+    
+    return prompt;
+  }
+  
+  // Full tier: everything (~1200 tokens)
+  const capabilities = `
+## CAPABILITIES
+- Coding: project context, code changes, git, npm, CI/CD, PRDs
+- Sysadmin: Linux, Docker, systemd, Nginx, SSL, cron
+- Media: Plex, *arr stack, Jellyfin
+- Self-hosted: Nextcloud, Home Assistant, Pi-hole, Vaultwarden
+- Network: Tailscale, WireGuard, Cloudflare, firewalls
+- DevOps: Terraform, Ansible, k8s, AWS/DO, monitoring
+- Databases: PostgreSQL, MySQL, Redis
+- Web: browse sites, screenshots, click/type for testing
+- API: test endpoints (GET any, POST/PUT/DELETE need L3+)`;
+
+  let prompt = `${corePrompt}
+${capabilities}
+${trustConstraints}`;
+
+  if (projectList) {
+    prompt += `\n\n## PROJECTS\nSay "open <name>" to load context:\n${projectList}`;
+  }
+  if (browseContext) {
+    prompt += browseContext;
+  }
+  if (executionContext) {
+    prompt += executionContext;
+  }
+  if (personalityContext) {
+    prompt += `\n\n## PREFERENCES\n${personalityContext}`;
+  }
+  
+  return prompt;
+}
+
 export async function askGeneral(prompt: string): Promise<string> {
-  logger.debug('Processing general question', { prompt: prompt.substring(0, 50) });
+  // Analyze prompt complexity first
+  const analysis = analyzePromptComplexity(prompt);
+  logger.debug('Prompt analysis', { tier: analysis.tier, historyCount: analysis.historyCount });
 
   // Import trust info and personality for context
   const { getTrustState, getPersonalityContext } = await import('./trust.js');
   const trustState = getTrustState();
   const personalityContext = getPersonalityContext();
   
-  // Get available projects for context
-  const projectIndex = getProjectIndex();
-  const projectList = Array.from(projectIndex.projects.entries())
-    .map(([name, p]) => `- ${name} (${p.type}): ${p.path}`)
-    .join('\n');
-  
-  // Get last browse result for web context
-  const lastBrowse = getLastBrowseResult();
-  logger.info('askGeneral: Checking browse context', { 
-    hasBrowseResult: !!lastBrowse,
-    success: lastBrowse?.success,
-    url: lastBrowse?.url,
-    hasScreenshot: !!lastBrowse?.screenshotBase64
-  });
-  let browseContext = '';
-  let browseScreenshot: string | undefined;
-  if (lastBrowse && lastBrowse.success) {
-    browseContext = `\n## LAST WEB PAGE VIEWED
-URL: ${lastBrowse.url}
-Title: ${lastBrowse.title || 'Unknown'}
-Content:
-${lastBrowse.content || '[No content]'}
-`;
-    browseScreenshot = lastBrowse.screenshotBase64;
-    logger.info('askGeneral: Added browse context', { 
-      length: browseContext.length,
-      hasScreenshot: !!browseScreenshot
-    });
-  }
-  
-  // Get last execution results for context
-  const execResults = getLastExecutionResults();
-  let executionContext = '';
-  if (execResults) {
-    executionContext = `\n## RECENT EXECUTION RESULTS
-Task: ${execResults.description}
-Time: ${execResults.timestamp.toLocaleTimeString()}
-
-Results:
-${execResults.results.join('\n\n')}
-
-IMPORTANT: Use these ACTUAL results when the user asks about what happened. Do NOT generate placeholder templates - use the real data above.
-`;
-    logger.info('askGeneral: Added execution context', { 
-      description: execResults.description,
-      resultsCount: execResults.results.length
-    });
-  }
-  
   // Build trust context with null safety
   const trustLevel = trustState?.currentLevel ?? 2;
   const trustNames = ['supervised', 'semi-autonomous', 'trusted', 'autonomous', 'full-trust'];
   const trustName = trustNames[trustLevel - 1] || 'semi-autonomous';
-  const successfulTasks = trustState?.successfulTasksAtLevel ?? 0;
-  const levelStartDate = trustState?.levelStartDate ? new Date(trustState.levelStartDate) : new Date();
-  const daysAtLevel = Math.floor((Date.now() - levelStartDate.getTime()) / (1000 * 60 * 60 * 24));
-  const totalTasks = trustState?.taskHistory?.length ?? 0;
   
-  const systemPrompt = `You are Jeeves, an AI employee (not just an assistant - you work for the user).
-
-## ABOUT YOURSELF
-- You are Jeeves, a general-purpose AI employee
-- You handle coding, but also sysadmin, DevOps, home server management, and technical tasks
-- You run locally on the user's machine and can execute commands, manage services, edit configs
-- You use Claude (Anthropic) as your brain via the Anthropic SDK
-- Unlike a chatbot, you take action: run commands, edit files, manage systems, solve problems
-
-## TRUST SYSTEM
-You operate under a 5-level trust system:
-- Level 1 (Supervised): Checkpoints on every action, no commits, no spending
-- Level 2 (Semi-Autonomous): Per-phase checkpoints, limited autonomy
-- Level 3 (Trusted): Can commit with review, $10/task spend limit  
-- Level 4 (Autonomous): Free commits, $25/task limit, summary checkpoints
-- Level 5 (Full-Trust): Full autonomy, external contact allowed
-
-Current trust level: ${trustLevel} (${trustName})
-Successful tasks at this level: ${successfulTasks}
-Days at level: ${daysAtLevel}
-Total tasks completed: ${totalTasks}
-
-Trust is earned by successfully completing tasks. After 10 successful tasks and 7 days at a level, you may be eligible for upgrade.
-
-## WHY LEVEL 2?
-All users start at Level 2 (Semi-Autonomous) because:
-1. It provides a good balance of autonomy and safety
-2. Level 1 (Supervised) would require confirmation on literally every action, which is tedious
-3. You haven't done anything wrong to lose trust
-4. But you also haven't proven yourself yet for higher trust
-
-## CAPABILITIES
-
-**Coding & Development:**
-- Load project context and understand codebases
-- Make code changes (propose edits, user reviews in diff view)
-- Run dev commands (npm, git, etc.)
-- Execute PRDs autonomously - build features from specs
-- GitHub Actions, CI/CD pipelines
-
-**System Administration:**
-- Linux server setup and management
-- Docker container configuration and troubleshooting
-- Service management (systemd, etc.)
-- Nginx / Traefik reverse proxy
-- SSL certs (Let's Encrypt, Certbot)
-- Cron jobs and automation
-
-**Media & Entertainment:**
-- Plex server setup and management
-- *arr stack (Sonarr, Radarr, Prowlarr, Lidarr, Bazarr)
-- Jellyfin / Emby
-- Tautulli, Overseerr/Ombi
-
-**Self-Hosted Services:**
-- Nextcloud (files, calendar, contacts)
-- Home Assistant / home automation
-- Pi-hole / AdGuard DNS blocking
-- Vaultwarden (Bitwarden self-hosted)
-- Paperless-ngx for documents
-- Portainer for Docker management
-
-**Networking & Security:**
-- Tailscale / WireGuard VPN
-- Cloudflare tunnel / DNS
-- Firewall rules (UFW, iptables)
-- Fail2ban, SSH hardening
-- Log analysis
-
-**Infrastructure & DevOps:**
-- Terraform / Ansible
-- Kubernetes (k3s for home lab)
-- AWS / DigitalOcean / Linode
-- Uptime Kuma / Grafana / Prometheus monitoring
-- Backup automation (Restic, Borg, rsync)
-
-**Databases:**
-- PostgreSQL / MySQL administration
-- Redis
-- Backups and migrations
-
-**Hardware:**
-- Raspberry Pi projects
-- NAS management (Unraid, TrueNAS)
-- UPS monitoring (NUT)
-
-**Web Browsing:**
-- Browse websites securely (say "browse <url>")
-- Take screenshots of web pages (say "screenshot <url>")
-- Click and type on web pages for testing
-- Content is sanitized against prompt injection attacks
-- Visual feedback while coding: spin up dev servers and see changes
-
-**API Testing:**
-- Test API endpoints (say "get https://api.example.com/endpoint")
-- Make POST/PUT/PATCH/DELETE requests (need trust level 3+)
-- View request history (say "api history")
-- Validate responses and debug integrations
-
-**General:**
-- Answer technical questions on any topic
-- Remember conversations and learn your preferences
-- Research solutions and provide step-by-step guidance
-- Earn more autonomy through successful work
-
-## YOUR TRUST CONSTRAINTS (CRITICAL)
-Your current trust level is ${trustLevel}/5 (${trustName}).
-
-**At Level ${trustLevel}, you CAN:**
-- GET requests to any API
-- Browse websites
-- Read files and code
-${trustLevel >= 3 ? '- POST/PUT/PATCH/DELETE requests' : ''}
-${trustLevel >= 4 ? '- Database queries' : ''}
-
-**At Level ${trustLevel}, you CANNOT:**
-${trustLevel < 3 ? '- POST/PUT/PATCH/DELETE requests (need Level 3+)' : ''}
-${trustLevel < 4 ? '- Database mutations (need Level 4+)' : ''}
-${trustLevel < 5 ? '- Self-modification (need Level 5)' : ''}
-
-NEVER propose commands you cannot execute. This is a security constraint.
-
-## PROPOSING PLANS
-When you want to execute multiple commands, propose a plan using this format:
-
-\`\`\`plan
-DESCRIPTION: Brief description of what you'll do
-COMMANDS:
-get https://example.com/api/endpoint1
-get https://example.com/api/endpoint2
-browse https://example.com
-\`\`\`
-
-The user will say "yes" to approve or "no" to cancel. Don't execute commands yourself - propose them and wait for approval.
-IMPORTANT: Only propose commands allowed at your current trust level!
-
-## AVAILABLE PROJECTS
-You have access to these local projects (say "open <name>" to load full context):
-${projectList || 'No projects discovered yet.'}
-
-To work on a project's code, ask the user to say "open <project name>" to load the full codebase context.
-You can still discuss projects generally without loading them.
-
-## EMPLOYEE MINDSET
-- You work FOR the user, not just chat with them
-- You're a generalist - coding, sysadmin, DevOps, home server, whatever's needed
-- Take initiative when appropriate to your trust level
-- Be direct and professional, not sycophantic
-- If a task requires terminal access or file editing, mention what you'd need to do it
-${personalityContext ? `\n## USER'S PREFERENCES FOR YOU\n${personalityContext}` : ''}
-${browseContext}
-${executionContext}
-Answer the user's question directly. If asked about recent task results, use the ACTUAL data provided above - never generate placeholder templates.`;
+  // Only load project list if needed
+  let projectList: string | null = null;
+  if (analysis.needsProjectContext || analysis.tier === 'full') {
+    const projectIndex = getProjectIndex();
+    projectList = Array.from(projectIndex.projects.entries())
+      .map(([name, p]) => `- ${name} (${p.type}): ${p.path}`)
+      .join('\n') || null;
+  }
+  
+  // Only load browse context if needed
+  let browseContext = '';
+  let browseScreenshot: string | undefined;
+  if (analysis.needsBrowseContext) {
+    const lastBrowse = getLastBrowseResult();
+    if (lastBrowse && lastBrowse.success) {
+      browseContext = `\n## LAST WEB PAGE\nURL: ${lastBrowse.url}\nTitle: ${lastBrowse.title || 'Unknown'}\nContent:\n${lastBrowse.content || '[No content]'}`;
+      browseScreenshot = lastBrowse.screenshotBase64;
+    }
+  }
+  
+  // Only load execution context if needed
+  let executionContext = '';
+  if (analysis.needsExecContext) {
+    const execResults = getLastExecutionResults();
+    if (execResults) {
+      executionContext = `\n## RECENT EXECUTION\nTask: ${execResults.description}\nResults:\n${execResults.results.join('\n\n')}\nUse these ACTUAL results - never generate placeholders.`;
+    }
+  }
+  
+  // Build tiered system prompt
+  const systemPrompt = buildSystemPrompt(
+    analysis.tier,
+    trustLevel,
+    trustName,
+    projectList,
+    browseContext,
+    executionContext,
+    personalityContext,
+    analysis
+  );
 
   try {
-    // Smart model selection based on prompt complexity
-    const selectedModel = selectModel(prompt);
-    logger.debug('Model selected for general question', { 
-      tier: selectedModel.tier, 
-      model: selectedModel.modelId 
-    });
+    // Smart model selection based on prompt complexity (with forced model support)
+    const selectedModel = selectModel(prompt, forcedModel ?? undefined);
+    const modelDisplay = forcedModel ? `[FORCED: ${forcedModel.toUpperCase()}]` : `[AUTO: ${selectedModel.tier.toUpperCase()}]`;
+    const promptTokenEstimate = Math.ceil(systemPrompt.length / 4);
+    logger.info(`Using ${selectedModel.tier.toUpperCase()} model ${modelDisplay} [${analysis.tier.toUpperCase()} prompt ~${promptTokenEstimate} tokens]`);
 
-    // Load recent conversation history for context
-    const recentHistory = getGeneralConversations(20);
+    // Load conversation history based on complexity tier
+    const recentHistory = getGeneralConversations(analysis.historyCount);
     
     // Build messages array with history
     // Using any to allow for vision message format
@@ -1101,22 +1588,37 @@ Answer the user's question directly. If asked about recent task results, use the
       });
     }
     
-    logger.debug('General conversation context', { 
-      historyMessages: recentHistory.length,
-      totalMessages: messages.length,
-      hasScreenshot: !!browseScreenshot
-    });
+    logger.debug('Context', { history: recentHistory.length, hasScreenshot: !!browseScreenshot });
 
     const anthropic = createAnthropic({
       apiKey: process.env.ANTHROPIC_API_KEY
     });
 
-    const { text } = await generateText({
+    // Use tier-based max tokens, but increase for vision (screenshots need more detail)
+    const maxTokens = browseScreenshot ? Math.max(analysis.maxTokens, 1000) : analysis.maxTokens;
+    
+    const result = await generateText({
       model: anthropic(selectedModel.modelId),
       system: systemPrompt,
       messages: messages,
-      maxTokens: 2000  // Increase for vision responses
+      maxTokens: maxTokens
     });
+    
+    logger.debug(`Response tokens limit: ${maxTokens} (tier: ${analysis.tier})`);
+
+    const { text } = result;
+    
+    // Track LLM usage for cost monitoring
+    const usage = result.usage;
+    if (usage) {
+      trackLLMUsage(
+        'general',
+        selectedModel.modelId,
+        usage.promptTokens,
+        usage.completionTokens,
+        false  // TODO: Track cache hits when SDK supports it
+      );
+    }
 
     // Save conversation to memory
     addGeneralMessage('user', prompt);

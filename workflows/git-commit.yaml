@@ -1,0 +1,57 @@
+name: git-commit
+description: "Create a git commit with an AI-generated message"
+
+trigger_patterns:
+  - "commit"
+  - "git commit"
+  - "save changes"
+  - "commit (my |the )?changes"
+  - "create (a )?commit"
+
+steps:
+  # Step 1: Get git status
+  - name: git-status
+    type: exec
+    command: git status --porcelain
+
+  # Step 2: Get diff summary
+  - name: git-diff
+    type: exec
+    command: git diff --stat HEAD 2>/dev/null || git diff --stat
+
+  # Step 3: Generate commit message
+  - name: generate-message
+    type: llm
+    model: haiku
+    max_tokens: 150
+    prompt: |
+      Generate a conventional commit message for these changes.
+      
+      Changed files:
+      {{git-status.output}}
+      
+      Diff summary:
+      {{git-diff.output}}
+      
+      User context (if any): {{message}}
+      
+      Rules:
+      - Use conventional commit format: type(scope): message
+      - Types: feat, fix, docs, style, refactor, test, chore
+      - Keep under 72 characters
+      - Be specific about what changed
+      
+      Return ONLY the commit message, no quotes or explanation.
+
+  # Step 4: Format response (ask for confirmation)
+  - name: respond
+    type: template
+    template: |
+      Ready to commit with message:
+      
+      `{{generate-message.output}}`
+      
+      Changed files:
+      {{git-status.output}}
+      
+      Say "yes" or "do it" to commit, or provide a different message.

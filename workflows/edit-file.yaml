@@ -1,0 +1,67 @@
+name: edit-file
+description: "Edit a file with specific changes"
+
+trigger_patterns:
+  - "edit (the )?file"
+  - "modify (the )?file"
+  - "change (the )?file"
+  - "update (the )?(file|code)"
+  - "fix (the )?(file|code|bug)"
+
+steps:
+  # Step 1: Extract edit parameters
+  - name: extract-params
+    type: llm
+    model: haiku
+    max_tokens: 300
+    prompt: |
+      Extract from this request:
+      - file_path (relative path to the file, or "unknown" if not specified)
+      - change_type (add, remove, modify, fix)
+      - description (brief description of what to change)
+      - search_context (text near the change location, if mentioned)
+      
+      Request: {{message}}
+      
+      Return JSON only:
+      {"file_path": "", "change_type": "", "description": "", "search_context": ""}
+
+  # Step 2: Generate the edit
+  - name: generate-edit
+    type: llm
+    model: sonnet
+    max_tokens: 1500
+    prompt: |
+      Generate code changes for this request.
+      
+      File: {{extract-params.file_path}}
+      Change type: {{extract-params.change_type}}
+      Description: {{extract-params.description}}
+      Context hint: {{extract-params.search_context}}
+      
+      If you know the file content, provide the exact change.
+      If not, provide a template that shows:
+      1. What to find (ORIGINAL block)
+      2. What to replace with (MODIFIED block)
+      
+      Use this format:
+      <<<ORIGINAL
+      // existing code to find
+      >>>
+      <<<MODIFIED
+      // new code to replace with
+      >>>
+      
+      Return ONLY the edit blocks, no explanation.
+
+  # Step 3: Format response
+  - name: respond
+    type: llm
+    model: haiku
+    max_tokens: 100
+    prompt: |
+      Summarize the edit in 1-2 sentences.
+      File: {{extract-params.file_path}}
+      Change: {{extract-params.description}}
+      
+      Remind user to say "apply" to apply changes or "show diff" to review.

@@ -1,0 +1,21 @@
+{
+  "codeStyle": {
+    "confidence": 0
+  },
+  "communication": {
+    "confidence": 0
+  },
+  "decisions": {
+    "confidence": 0
+  },
+  "personality": {
+    "traits": [],
+    "rememberStatements": [
+      "You have web browsing capabilities. To browse a website, users can say \"browse <url>\" (e.g., \"browse diveconnect.io\"). To take a screenshot, say \"screenshot <url>\". You can also click elements with \"click <selector>\" and type with \"type <text>\". These commands use Playwright under the hood and are fully functional.",
+      "you are being evaluated. I am not asking if the test passed or failed, of course it failed. I'm asking about your performance for this project"
+    ],
+    "dontDoStatements": [],
+    "confidence": 20
+  },
+  "corrections": []
+}

@@ -1,6 +1,6 @@
 /**
  * Message Handler
- * Routes messages through auth, parsing, and execution
+ * Routes messages through cognitive processing, auth, parsing, and execution
  */
 
 import { config } from '../config.js';
@@ -16,7 +16,17 @@ import type {
   ExecutionResult
 } from '../types/index.js';
 import { getProjectIndex } from './project-scanner.js';
-import { getAgentStatus } from './cursor-agent.js';
+import { getAgentStatus, getActiveProject } from './cursor-agent.js';
+import { tryExecuteWorkflow, loadWorkflows } from './workflow-engine.js';
+import { checkAndCompact } from './session-compactor.js';
+import { think, quickDecision } from './cognitive/index.js';
+
+// Load workflows on module initialization
+loadWorkflows().catch(err => logger.warn('Failed to load workflows', { error: String(err) }));
+
+// Compaction check counter (run every N messages)
+let messagesSinceCompactionCheck = 0;
+const COMPACTION_CHECK_INTERVAL = 10; // Check every 10 messages
 
 // Track statistics
 const stats = {
@@ -107,7 +117,93 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
   stats.messagesToday++;
   
   try {
-    // Parse the intent
+    // Try workflow engine first (deterministic, token-efficient)
+    const activeProject = getActiveProject();
+    const workflowResult = await tryExecuteWorkflow(content, activeProject?.workingDir);
+    
+    if (workflowResult) {
+      logger.debug('Workflow executed', { success: workflowResult.success, tokens: workflowResult.tokensUsed });
+      
+      // Update stats
+      stats.lastCommand = {
+        action: 'workflow',
+        timestamp: new Date().toISOString(),
+        success: workflowResult.success
+      };
+      
+      return {
+        recipient: sender,
+        content: workflowResult.output,
+        replyTo: message.id
+      };
+    }
+    
+    // ==========================================
+    // COGNITIVE PROCESSING LAYER
+    // ==========================================
+    
+    // Quick decision for trivial/dangerous requests
+    const quickResult = quickDecision(content);
+    if (quickResult && quickResult.action === 'refuse') {
+      logger.debug('Quick refuse', { reason: quickResult.response });
+      return {
+        recipient: sender,
+        content: quickResult.response || 'Cannot process this request.',
+        replyTo: message.id
+      };
+    }
+    
+    // Full metacognitive processing for non-trivial requests
+    if (!quickResult) {
+      const cognitiveResult = await think({
+        message: content,
+        sender,
+        context: {
+          projectPath: activeProject?.workingDir,
+          previousMessages: [],  // TODO: Connect to session history
+          activeTask: undefined  // TODO: Connect to task manager
+        }
+      });
+      
+      logger.debug('Cognitive decision', { 
+        action: cognitiveResult.action,
+        confidence: cognitiveResult.confidence.overall,
+        processingTime: cognitiveResult.processingTime,
+        tokensUsed: cognitiveResult.tokensUsed
+      });
+      
+      // Handle cognitive decisions
+      switch (cognitiveResult.action) {
+        case 'refuse':
+          return {
+            recipient: sender,
+            content: cognitiveResult.response || 'Cannot perform this action.',
+            replyTo: message.id
+          };
+          
+        case 'clarify':
+          return {
+            recipient: sender,
+            content: cognitiveResult.response || 'I need more information to proceed.',
+            replyTo: message.id
+          };
+          
+        case 'notice':
+          // Continue execution but with a notice
+          logger.debug('Proceeding with notice', { notice: cognitiveResult.response });
+          break;
+          
+        case 'proceed':
+          // Continue to normal execution
+          break;
+      }
+    }
+    
+    // ==========================================
+    // NORMAL EXECUTION PATH
+    // ==========================================
+    
+    // Fall back to intent parsing and execution
     const intent = await parseIntent(content);
     
     // Execute the command
@@ -122,6 +218,16 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
     
     // Format and return response
     const response = formatResponse(intent, result);
+    
+    // Periodically check for session compaction
+    messagesSinceCompactionCheck++;
+    if (messagesSinceCompactionCheck >= COMPACTION_CHECK_INTERVAL) {
+      messagesSinceCompactionCheck = 0;
+      // Run compaction asynchronously (don't block response)
+      checkAndCompact().catch(err => 
+        logger.debug('Compaction check failed', { error: String(err) })
+      );
+    }
     
     return {
       recipient: sender,

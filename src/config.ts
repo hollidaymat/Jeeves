@@ -93,6 +93,14 @@ const defaultConfig: Config = {
     messages_per_minute: 10,
     messages_per_hour: 100,
     messages_per_day: 500
+  },
+  safety: {
+    backupEnabled: true,
+    backupRetentionHours: 24,
+    maxShrinkagePercent: 50,
+    validateContent: true,
+    atomicWrites: true,
+    gitAutoStash: false  // Opt-in - can cause confusion
   }
 };
 
@@ -124,7 +132,8 @@ function loadConfig(): Config {
       prd: { ...defaultConfig.prd, ...fileConfig.prd },
       trust: { ...defaultConfig.trust, ...fileConfig.trust },
       server: { ...defaultConfig.server, ...fileConfig.server },
-      rate_limits: { ...defaultConfig.rate_limits, ...fileConfig.rate_limits }
+      rate_limits: { ...defaultConfig.rate_limits, ...fileConfig.rate_limits },
+      safety: { ...defaultConfig.safety, ...fileConfig.safety }
     };
 
     return merged;

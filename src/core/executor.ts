@@ -15,8 +15,13 @@ import {
   getAgentStatus,
   applyChanges,
   rejectChanges,
-  showDiff
+  showDiff,
+  setForcedModel,
+  getForcedModel,
+  listBackups,
+  restoreFromBackup
 } from './cursor-agent.js';
+import { getDailyReport, trackPatternMatch } from './cost-tracker.js';
 import {
   executeTerminalCommand,
   stopTerminalProcess,
@@ -26,6 +31,7 @@ import {
   clearProjectHistory,
   setPreference
 } from './memory.js';
+import { forceCompact, getCompactionStatus } from './session-compactor.js';
 import { 
   submitPrd, 
   approvePlan, 
@@ -124,9 +130,139 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
   }
   
   if (intent.action === 'help' || intent.action === 'list_projects') {
+    if (intent.resolutionMethod === 'pattern') trackPatternMatch(intent.action);
     return {
       success: true,
       output: intent.message || 'No message available',
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'show_cost') {
+    trackPatternMatch('show_cost');
+    return {
+      success: true,
+      output: getDailyReport(),
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // Session compaction
+  if (intent.action === 'compact_session') {
+    trackPatternMatch('compact_session');
+    const compactionStatus = getCompactionStatus();
+    
+    if (!compactionStatus.needsCompaction) {
+      return {
+        success: true,
+        output: `No compaction needed. Current session: ${compactionStatus.currentTokens.toLocaleString()} tokens (${compactionStatus.percentOfThreshold}% of threshold)`,
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    const result = await forceCompact();
+    return {
+      success: result.success,
+      output: result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'set_model') {
+    const tier = intent.target as 'haiku' | 'sonnet' | 'opus' | 'auto';
+    if (tier === 'auto') {
+      setForcedModel(null);
+      return {
+        success: true,
+        output: 'Model selection set to **AUTO**. Will choose the best model based on task complexity.',
+        duration_ms: Date.now() - startTime
+      };
+    } else {
+      setForcedModel(tier);
+      return {
+        success: true,
+        output: `Model locked to **${tier.toUpperCase()}**. All requests will now use ${tier} until you say "use auto".`,
+        duration_ms: Date.now() - startTime
+      };
+    }
+  }
+  
+  // Handle backup operations
+  if (intent.action === 'list_backups') {
+    // Get project path from active session or intent
+    const projectPath = intent.resolved_path || process.cwd();
+    const fileName = intent.target;
+    
+    if (!fileName) {
+      return {
+        success: true,
+        output: 'Usage: `backups <filename>` - List available backups for a file\nExample: `backups styles.css`',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    const backups = await listBackups(fileName, projectPath);
+    
+    if (backups.length === 0) {
+      return {
+        success: true,
+        output: `No backups found for "${fileName}"`,
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    const backupList = backups.map((b, i) => 
+      `${i + 1}. ${b.timestamp.toLocaleString()} (${Math.round(b.size / 1024)}KB)`
+    ).join('\n');
+    
+    return {
+      success: true,
+      output: `**Backups for ${fileName}:**\n${backupList}\n\nRestore with: \`restore ${fileName} <number>\``,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  if (intent.action === 'restore_backup') {
+    const projectPath = intent.resolved_path || process.cwd();
+    const fileName = intent.target;
+    const backupIndex = parseInt(intent.message || '1', 10) - 1;
+    
+    if (!fileName) {
+      return {
+        success: false,
+        error: 'Usage: `restore <filename> [number]` - Restore a file from backup\nExample: `restore styles.css 1`',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    const backups = await listBackups(fileName, projectPath);
+    
+    if (backups.length === 0) {
+      return {
+        success: false,
+        error: `No backups found for "${fileName}"`,
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    if (backupIndex < 0 || backupIndex >= backups.length) {
+      return {
+        success: false,
+        error: `Invalid backup number. Available: 1-${backups.length}`,
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    const backup = backups[backupIndex];
+    // Reconstruct original path from backup
+    const originalPath = backup.path.replace(/\.jeeves-backup[/\\]/, '').replace(/\.\d+\.bak$/, '');
+    
+    const result = await restoreFromBackup(backup.path, originalPath);
+    
+    return {
+      success: result.success,
+      output: result.success ? result.message : undefined,
+      error: result.success ? undefined : result.message,
       duration_ms: Date.now() - startTime
     };
   }

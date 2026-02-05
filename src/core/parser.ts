@@ -101,10 +101,13 @@ If the request seems dangerous or outside scope, respond with:
  */
 const PATTERNS = {
   // Status patterns
-  status: /^(status|how are you|what'?s your status|system status)$/i,
+  status: /^(status|how are you|what'?s your status|system status|health|ping)$/i,
   
   // Help patterns
-  help: /^(help|\?|what can you do|commands|options)$/i,
+  help: /^(help|\?|what can you do|commands|options|usage)$/i,
+  
+  // Cost/budget patterns (new)
+  cost: /^(cost|costs|budget|spending|usage|how much|token usage|tokens used|daily cost)$/i,
   
   // List projects patterns  
   listProjects: /^(list|projects|list projects|show projects|what projects)$/i,
@@ -127,6 +130,9 @@ const PATTERNS = {
   // Memory patterns
   showHistory: /^(?:show\s+)?(?:conversation\s+)?history$/i,
   clearHistory: /^clear\s+(?:conversation\s+)?history$/i,
+  
+  // Session compaction
+  compact: /^(compact|compress|summarize\s*(?:session|history|conversation)|cleanup\s*(?:history|memory))$/i,
   showSummary: /^(?:show\s+)?(?:project\s+)?summary$/i,
   showPreferences: /^(?:show\s+)?(?:my\s+)?preferences$/i,
   setPreference: /^set\s+(verbose|auto.?apply|default.?project)\s+(.+)$/i,
@@ -179,6 +185,14 @@ const PATTERNS = {
   apiTest: /^(?:test\s+)?api\s+(get|post|put|patch|delete)\s+(https?:\/\/[^\s]+)(?:\s+(.+))?$/i,
   apiHistory: /^(?:api\s+)?(?:history|requests|logs)$/i,
   
+  // Model switching patterns
+  useModel: /^use\s+(haiku|sonnet|opus)$/i,
+  useAuto: /^(?:use auto|auto model|auto)$/i,
+  
+  // Backup/restore patterns
+  listBackups: /^(?:list\s+)?backups(?:\s+(?:for\s+)?(.+))?$/i,
+  restoreBackup: /^restore\s+(.+?)(?:\s+(\d+))?$/i,
+  
   // Open in Cursor IDE (explicit)
   openInCursor: /^(?:open in cursor|cursor open|launch|open in ide)\s+(.+)$/i,
   
@@ -201,7 +215,12 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
   
   // Status
   if (PATTERNS.status.test(lower)) {
-    return { action: 'status', confidence: 1.0 };
+    return { action: 'status', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+  }
+  
+  // Cost/budget - FREE (no LLM needed)
+  if (PATTERNS.cost.test(lower)) {
+    return { action: 'show_cost', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
   }
   
   // Help
@@ -209,6 +228,8 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
     return {
       action: 'help',
       confidence: 1.0,
+      resolutionMethod: 'pattern',
+      estimatedCost: 0,
       message: `## Available Commands
 
 **Load a Project** (starts AI session):
@@ -255,8 +276,62 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
 \`trust history\` → View trust changes
 \`what have you learned\` → View learned preferences
 
+**Model & Cost**:
+\`use haiku\` \`use sonnet\` \`use auto\` → Switch models
+\`cost\` → View daily cost report
+\`backups <file>\` → List backups
+\`restore <file>\` → Restore from backup
+
 **System**:
 \`list projects\` \`status\` \`stop\``
+    };
+  }
+  
+  // Model switching
+  const modelMatch = lower.match(PATTERNS.useModel);
+  if (modelMatch) {
+    const tier = modelMatch[1].toLowerCase();
+    return {
+      action: 'set_model',
+      confidence: 1.0,
+      target: tier,
+      resolutionMethod: 'pattern',
+      estimatedCost: 0
+    };
+  }
+  
+  if (PATTERNS.useAuto.test(lower)) {
+    return {
+      action: 'set_model',
+      confidence: 1.0,
+      target: 'auto',
+      resolutionMethod: 'pattern',
+      estimatedCost: 0
+    };
+  }
+  
+  // List backups
+  const listBackupsMatch = lower.match(PATTERNS.listBackups);
+  if (listBackupsMatch) {
+    return {
+      action: 'list_backups',
+      confidence: 1.0,
+      target: listBackupsMatch[1]?.trim() || undefined,
+      resolutionMethod: 'pattern',
+      estimatedCost: 0
+    };
+  }
+  
+  // Restore from backup
+  const restoreMatch = lower.match(PATTERNS.restoreBackup);
+  if (restoreMatch) {
+    return {
+      action: 'restore_backup',
+      confidence: 1.0,
+      target: restoreMatch[1]?.trim(),
+      message: restoreMatch[2] || '1',  // Default to most recent backup
+      resolutionMethod: 'pattern',
+      estimatedCost: 0
     };
   }
   
@@ -368,6 +443,16 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
   
   if (PATTERNS.clearHistory.test(lower)) {
     return { action: 'memory_clear', confidence: 1.0 };
+  }
+  
+  // Session compaction
+  if (PATTERNS.compact.test(lower)) {
+    return { 
+      action: 'compact_session', 
+      confidence: 1.0,
+      resolutionMethod: 'pattern',
+      estimatedCost: 0  // The compaction uses Haiku internally, very cheap
+    };
   }
   
   if (PATTERNS.showSummary.test(lower)) {

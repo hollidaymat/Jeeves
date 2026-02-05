@@ -206,6 +206,22 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
     // Fall back to intent parsing and execution
     const intent = await parseIntent(content);
     
+    // Attach any image attachments from the message to the intent
+    if (message.attachments && message.attachments.length > 0) {
+      const imageAttachments = message.attachments
+        .filter(a => a.type === 'image' && a.data)
+        .map(a => ({
+          name: a.name || 'image',
+          data: a.data!,
+          mimeType: a.mimeType
+        }));
+      
+      if (imageAttachments.length > 0) {
+        intent.attachments = imageAttachments;
+        logger.debug('Attached images to intent', { count: imageAttachments.length });
+      }
+    }
+    
     // Execute the command
     const result = await executeCommand(intent);
     

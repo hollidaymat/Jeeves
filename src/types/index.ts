@@ -17,7 +17,9 @@ export interface IncomingMessage {
 
 export interface Attachment {
   type: 'image' | 'audio' | 'file';
-  path: string;
+  path?: string;           // File path (for Signal attachments)
+  data?: string;           // Base64 data (for web uploads)
+  name?: string;           // Original filename
   mimeType: string;
 }
 
@@ -113,6 +115,13 @@ export interface TerminalResult {
   duration_ms: number;
 }
 
+// Image attachment from web interface
+export interface ImageAttachment {
+  name: string;
+  data: string; // base64 data URL
+  mimeType?: string;
+}
+
 export interface ParsedIntent {
   action: ActionType;
   target?: string;
@@ -126,6 +135,7 @@ export interface ParsedIntent {
   raw_response?: string;
   requiresAsync?: boolean;  // Action needs async handling
   data?: Record<string, unknown>;  // Additional data for the action
+  attachments?: ImageAttachment[];  // Image attachments from web interface
   // Token optimization tracking
   resolutionMethod?: 'pattern' | 'llm';  // How intent was resolved
   estimatedCost?: number;  // Estimated cost in dollars (0 for pattern-matched)

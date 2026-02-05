@@ -94,19 +94,42 @@ export class WebInterface implements MessageInterface {
     
     // API: Send command
     this.app.post('/api/command', async (req: Request, res: Response) => {
-      const { content } = req.body;
+      const { content, attachments } = req.body;
       
       if (!content) {
         res.status(400).json({ error: 'Missing content' });
         return;
       }
       
+      // Process attachments and build enhanced content
+      let enhancedContent = content;
+      const processedAttachments: IncomingMessage['attachments'] = [];
+      
+      if (attachments && Array.isArray(attachments)) {
+        for (const attachment of attachments) {
+          if (attachment.isImage) {
+            // Store image data for vision processing
+            processedAttachments.push({
+              type: 'image',
+              data: attachment.content, // base64 data URL
+              name: attachment.name,
+              mimeType: attachment.type || 'image/png'
+            });
+            enhancedContent += `\n\n[Attached image: ${attachment.name}]`;
+          } else {
+            // For text files, include content directly in the message
+            enhancedContent += `\n\n--- Attached file: ${attachment.name} ---\n${attachment.content}\n--- End of ${attachment.name} ---`;
+          }
+        }
+      }
+      
       const message: IncomingMessage = {
         id: randomUUID(),
         sender: 'web',
-        content,
+        content: enhancedContent,
         timestamp: new Date(),
-        interface: 'web'
+        interface: 'web',
+        attachments: processedAttachments.length > 0 ? processedAttachments : undefined
       };
       
       try {

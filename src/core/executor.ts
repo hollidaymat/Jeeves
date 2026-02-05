@@ -309,7 +309,7 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
         duration_ms: Date.now() - startTime
       };
     }
-    const response = await sendToAgent(intent.prompt);
+    const response = await sendToAgent(intent.prompt, intent.attachments);
     return {
       success: true,
       output: response,

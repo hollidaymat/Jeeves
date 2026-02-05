@@ -900,3 +900,92 @@ body::before {
   border-radius: 3px;
   border-left: 2px solid var(--warning);
 }
+
+/* ============ FILE ATTACHMENTS ============ */
+.input-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.attach-btn {
+  padding: 0.5rem 0.75rem;
+  background: rgba(168, 85, 247, 0.1);
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  border-radius: 4px;
+  color: var(--accent-purple);
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.attach-btn:hover {
+  background: rgba(168, 85, 247, 0.2);
+  border-color: var(--accent-purple);
+  box-shadow: var(--glow-purple);
+}
+
+.attachments-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.attachments-preview:empty {
+  display: none;
+}
+
+.attachment-item {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.5rem;
+  background: rgba(168, 85, 247, 0.15);
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  color: var(--accent-purple);
+  max-width: 200px;
+}
+
+.attachment-item .file-icon {
+  font-size: 0.875rem;
+  flex-shrink: 0;
+}
+
+.attachment-item .file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-item .file-size {
+  color: var(--text-dim);
+  font-size: 0.65rem;
+  flex-shrink: 0;
+}
+
+.attachment-item .remove-btn {
+  background: none;
+  border: none;
+  color: var(--error);
+  font-size: 0.875rem;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 0.25rem;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.attachment-item .remove-btn:hover {
+  opacity: 1;
+}
+
+.attachment-image-preview {
+  width: 32px;
+  height: 32px;
+  border-radius: 3px;
+  object-fit: cover;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+}

@@ -39,10 +39,14 @@ class CommandCenter {
       changesContent: document.getElementById('changes-content'),
       changesActions: document.getElementById('changes-actions'),
       applyBtn: document.getElementById('apply-btn'),
-      rejectBtn: document.getElementById('reject-btn')
+      rejectBtn: document.getElementById('reject-btn'),
+      fileInput: document.getElementById('file-input'),
+      attachBtn: document.getElementById('attach-btn'),
+      attachmentsPreview: document.getElementById('attachments-preview')
     };
     
     this.pendingChanges = [];
+    this.attachedFiles = [];  // Store attached files
     
     this.init();
   }
@@ -295,8 +299,14 @@ class CommandCenter {
   handleStreamEnd(payload) {
     if (payload.streamId !== this.activeStreamId) return;
     
-    // Final render with markdown
-    if (this.streamElement && this.streamContent) {
+    // If stream had no content, remove the empty element
+    if (!this.streamHadContent && this.streamElement) {
+      const line = this.streamElement.parentElement;
+      if (line) {
+        line.remove();
+      }
+    } else if (this.streamElement && this.streamContent) {
+      // Final render with markdown
       const line = this.streamElement.parentElement;
       line.classList.remove('streaming');
       
@@ -395,6 +405,158 @@ class CommandCenter {
     this.elements.rejectBtn?.addEventListener('click', () => {
       this.sendCommand('reject');
     });
+    
+    // File attachment handling
+    this.elements.attachBtn?.addEventListener('click', () => {
+      this.elements.fileInput?.click();
+    });
+    
+    this.elements.fileInput?.addEventListener('change', (e) => {
+      this.handleFileSelection(e.target.files);
+    });
+    
+    // Drag and drop support
+    this.elements.commandInput?.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.currentTarget.style.borderColor = 'var(--accent-purple)';
+    });
+    
+    this.elements.commandInput?.addEventListener('dragleave', (e) => {
+      e.currentTarget.style.borderColor = '';
+    });
+    
+    this.elements.commandInput?.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.currentTarget.style.borderColor = '';
+      if (e.dataTransfer.files.length > 0) {
+        this.handleFileSelection(e.dataTransfer.files);
+      }
+    });
+  }
+  
+  // Handle file selection
+  async handleFileSelection(files) {
+    for (const file of files) {
+      // Check file size (max 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        this.log('error', `File ${file.name} is too large (max 5MB)`);
+        continue;
+      }
+      
+      // Check if already attached
+      if (this.attachedFiles.some(f => f.name === file.name)) {
+        continue;
+      }
+      
+      const fileData = await this.readFile(file);
+      if (fileData) {
+        this.attachedFiles.push(fileData);
+        this.renderAttachmentPreview();
+      }
+    }
+    
+    // Clear the file input
+    if (this.elements.fileInput) {
+      this.elements.fileInput.value = '';
+    }
+  }
+  
+  // Read file content
+  async readFile(file) {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      const isImage = file.type.startsWith('image/');
+      
+      reader.onload = (e) => {
+        resolve({
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          content: e.target.result,
+          isImage: isImage
+        });
+      };
+      
+      reader.onerror = () => {
+        this.log('error', `Failed to read file: ${file.name}`);
+        resolve(null);
+      };
+      
+      if (isImage) {
+        reader.readAsDataURL(file);
+      } else {
+        reader.readAsText(file);
+      }
+    });
+  }
+  
+  // Render attachment preview
+  renderAttachmentPreview() {
+    if (!this.elements.attachmentsPreview) return;
+    
+    this.elements.attachmentsPreview.innerHTML = this.attachedFiles.map((file, index) => {
+      const icon = this.getFileIcon(file.name);
+      const size = this.formatFileSize(file.size);
+      
+      if (file.isImage) {
+        return `
+          <div class="attachment-item" data-index="${index}">
+            <img src="${file.content}" alt="${file.name}" class="attachment-image-preview">
+            <span class="file-name">${file.name}</span>
+            <span class="file-size">${size}</span>
+            <button class="remove-btn" onclick="commandCenter.removeAttachment(${index})">×</button>
+          </div>
+        `;
+      }
+      
+      return `
+        <div class="attachment-item" data-index="${index}">
+          <span class="file-icon">${icon}</span>
+          <span class="file-name">${file.name}</span>
+          <span class="file-size">${size}</span>
+          <button class="remove-btn" onclick="commandCenter.removeAttachment(${index})">×</button>
+        </div>
+      `;
+    }).join('');
+  }
+  
+  // Get file icon based on extension
+  getFileIcon(filename) {
+    const ext = filename.split('.').pop()?.toLowerCase() || '';
+    const icons = {
+      'md': '📝',
+      'txt': '📄',
+      'json': '📋',
+      'xml': '📰',
+      'csv': '📊',
+      'doc': '📃',
+      'docx': '📃',
+      'png': '🖼️',
+      'jpg': '🖼️',
+      'jpeg': '🖼️',
+      'gif': '🖼️',
+      'webp': '🖼️'
+    };
+    return icons[ext] || '📎';
+  }
+  
+  // Format file size
+  formatFileSize(bytes) {
+    if (bytes < 1024) return `${bytes}B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+  }
+  
+  // Remove attachment
+  removeAttachment(index) {
+    this.attachedFiles.splice(index, 1);
+    this.renderAttachmentPreview();
+  }
+  
+  // Clear all attachments
+  clearAttachments() {
+    this.attachedFiles = [];
+    this.renderAttachmentPreview();
   }
   
   updatePendingChanges(changes) {
@@ -477,13 +639,42 @@ class CommandCenter {
   }
   
   async sendCommand(command) {
-    this.log('command', command);
+    // Build command with attachments
+    let fullCommand = command;
+    const attachmentInfo = [];
+    
+    if (this.attachedFiles.length > 0) {
+      for (const file of this.attachedFiles) {
+        if (file.isImage) {
+          attachmentInfo.push(`[Image: ${file.name}]`);
+        } else {
+          attachmentInfo.push(`[File: ${file.name}]`);
+        }
+      }
+    }
+    
+    // Log command with attachment indicators
+    const displayCommand = attachmentInfo.length > 0 
+      ? `${command} ${attachmentInfo.join(' ')}`
+      : command;
+    this.log('command', displayCommand);
     
     try {
+      // Prepare request body with attachments
+      const requestBody = { 
+        content: command,
+        attachments: this.attachedFiles.map(f => ({
+          name: f.name,
+          type: f.type,
+          content: f.content,
+          isImage: f.isImage
+        }))
+      };
+      
       const response = await fetch('/api/command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: command })
+        body: JSON.stringify(requestBody)
       });
       
       const data = await response.json();
@@ -495,6 +686,9 @@ class CommandCenter {
       
       // Update last command
       this.elements.lastCommand.textContent = `Last: ${command} at ${new Date().toLocaleTimeString()}`;
+      
+      // Clear attachments after successful send
+      this.clearAttachments();
       
     } catch (error) {
       this.log('error', `Failed to send command: ${error.message}`);

@@ -44,7 +44,12 @@
           </div>
           <form class="console-input" id="command-form">
             <span class="prompt">❯</span>
-            <textarea id="command-input" placeholder="Enter command..." autocomplete="off" autofocus rows="1"></textarea>
+            <div class="input-wrapper">
+              <textarea id="command-input" placeholder="Enter command..." autocomplete="off" autofocus rows="1"></textarea>
+              <div class="attachments-preview" id="attachments-preview"></div>
+            </div>
+            <input type="file" id="file-input" accept=".md,.txt,.csv,.xml,.json,.doc,.docx,.png,.jpg,.jpeg,.gif,.webp" multiple style="display:none">
+            <button type="button" class="attach-btn" id="attach-btn" title="Attach files (md, doc, csv, xml, json, images)">📎</button>
             <button type="submit" class="send-btn">SEND</button>
           </form>
         </section>

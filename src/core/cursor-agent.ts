@@ -31,6 +31,8 @@ import { selectModel, type ModelTier } from './model-selector.js';
 import { getProjectIndex } from './project-scanner.js';
 import { getLastBrowseResult } from './browser.js';
 import { trackLLMUsage } from './cost-tracker.js';
+import type { ImageAttachment } from '../types/index.js';
+import { buildSkillsSummary, getSkillContext, loadAllSkills } from './skill-loader.js';
 
 interface FileChange {
   filePath: string;
@@ -52,6 +54,9 @@ let activeSession: AgentSession | null = null;
 
 // Forced model override (user can say "use haiku" etc.)
 let forcedModel: ModelTier | null = null;
+
+// Preload skills on module initialization
+loadAllSkills().catch(err => logger.debug('Skills preload deferred', { error: String(err) }));
 
 /**
  * Set the forced model tier (or null to use auto-selection)
@@ -785,7 +790,7 @@ export async function startAgentSession(projectPath: string): Promise<{ success:
 /**
  * Send a prompt to the AI assistant
  */
-export async function sendToAgent(prompt: string): Promise<string> {
+export async function sendToAgent(prompt: string, attachments?: ImageAttachment[]): Promise<string> {
   const lowerPrompt = prompt.toLowerCase().trim();
   
   // Handle model switching commands
@@ -803,7 +808,7 @@ export async function sendToAgent(prompt: string): Promise<string> {
   if (!activeSession) {
     // No project loaded - use general mode for conversational questions
     logger.debug('No active session, using general mode');
-    return askGeneral(prompt);
+    return askGeneral(prompt, attachments);
   }
 
   logger.info('Processing AI request', { prompt: prompt.substring(0, 50) });
@@ -1407,7 +1412,8 @@ function buildSystemPrompt(
   browseContext: string,
   executionContext: string,
   personalityContext: string | null,
-  analysis: PromptAnalysis
+  analysis: PromptAnalysis,
+  skillsContext?: string
 ): string {
   // Core identity - always included (~100 tokens)
   const corePrompt = `You are Jeeves, an AI employee. You work for the user - coding, sysadmin, DevOps, home server management. You run locally and take action: run commands, edit files, solve problems. Be direct and professional.`;
@@ -1450,6 +1456,9 @@ ${trustConstraints}`;
     if (personalityContext) {
       prompt += `\n\n## PREFERENCES\n${personalityContext}`;
     }
+    if (skillsContext) {
+      prompt += `\n\n${skillsContext}`;
+    }
     
     return prompt;
   }
@@ -1483,14 +1492,17 @@ ${trustConstraints}`;
   if (personalityContext) {
     prompt += `\n\n## PREFERENCES\n${personalityContext}`;
   }
+  if (skillsContext) {
+    prompt += `\n\n${skillsContext}`;
+  }
   
   return prompt;
 }
 
-export async function askGeneral(prompt: string): Promise<string> {
+export async function askGeneral(prompt: string, attachments?: ImageAttachment[]): Promise<string> {
   // Analyze prompt complexity first
   const analysis = analyzePromptComplexity(prompt);
-  logger.debug('Prompt analysis', { tier: analysis.tier, historyCount: analysis.historyCount });
+  logger.debug('Prompt analysis', { tier: analysis.tier, historyCount: analysis.historyCount, attachments: attachments?.length || 0 });
 
   // Import trust info and personality for context
   const { getTrustState, getPersonalityContext } = await import('./trust.js');
@@ -1531,6 +1543,17 @@ export async function askGeneral(prompt: string): Promise<string> {
     }
   }
   
+  // Load relevant skills context (only for standard/full tiers to save tokens)
+  let skillsContext = '';
+  if (analysis.tier !== 'minimal') {
+    // Detect relevant skills based on prompt content
+    skillsContext = await getSkillContext(prompt);
+    
+    if (skillsContext) {
+      logger.debug('Loaded skills context', { length: skillsContext.length });
+    }
+  }
+  
   // Build tiered system prompt
   const systemPrompt = buildSystemPrompt(
     analysis.tier,
@@ -1540,7 +1563,8 @@ export async function askGeneral(prompt: string): Promise<string> {
     browseContext,
     executionContext,
     personalityContext,
-    analysis
+    analysis,
+    skillsContext
   );
 
   try {
@@ -1565,21 +1589,53 @@ export async function askGeneral(prompt: string): Promise<string> {
       });
     }
     
-    // Add current user message - include screenshot if available
-    if (browseScreenshot) {
-      logger.info('Including screenshot in AI request');
+    // Add current user message - include screenshot and/or attachments if available
+    const hasAttachments = attachments && attachments.length > 0;
+    
+    if (browseScreenshot || hasAttachments) {
+      // Build multimodal message content
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const contentParts: Array<any> = [];
+      
+      // Add text prompt
+      let textContent = prompt;
+      if (browseScreenshot) {
+        textContent += '\n\n[A screenshot of the webpage is attached for visual analysis]';
+      }
+      if (hasAttachments) {
+        const attachmentNames = attachments!.map(a => a.name).join(', ');
+        textContent += `\n\n[Attached images: ${attachmentNames}]`;
+        logger.info('Including user attachments in AI request', { count: attachments!.length });
+      }
+      
+      contentParts.push({
+        type: 'text',
+        text: textContent
+      });
+      
+      // Add browse screenshot if available
+      if (browseScreenshot) {
+        logger.info('Including browse screenshot in AI request');
+        contentParts.push({
+          type: 'image',
+          image: `data:image/png;base64,${browseScreenshot}`
+        });
+      }
+      
+      // Add user-attached images
+      if (hasAttachments) {
+        for (const attachment of attachments!) {
+          // attachment.data is already a data URL (e.g., "data:image/png;base64,...")
+          contentParts.push({
+            type: 'image',
+            image: attachment.data
+          });
+        }
+      }
+      
       messages.push({
         role: 'user',
-        content: [
-          {
-            type: 'text',
-            text: `${prompt}\n\n[A screenshot of the webpage is attached for visual analysis]`
-          },
-          {
-            type: 'image',
-            image: `data:image/png;base64,${browseScreenshot}`
-          }
-        ]
+        content: contentParts
       });
     } else {
       messages.push({
@@ -1588,14 +1644,15 @@ export async function askGeneral(prompt: string): Promise<string> {
       });
     }
     
-    logger.debug('Context', { history: recentHistory.length, hasScreenshot: !!browseScreenshot });
+    logger.debug('Context', { history: recentHistory.length, hasScreenshot: !!browseScreenshot, attachments: attachments?.length || 0 });
 
     const anthropic = createAnthropic({
       apiKey: process.env.ANTHROPIC_API_KEY
     });
 
-    // Use tier-based max tokens, but increase for vision (screenshots need more detail)
-    const maxTokens = browseScreenshot ? Math.max(analysis.maxTokens, 1000) : analysis.maxTokens;
+    // Use tier-based max tokens, but increase for vision (screenshots/images need more detail)
+    const hasVision = browseScreenshot || hasAttachments;
+    const maxTokens = hasVision ? Math.max(analysis.maxTokens, 1000) : analysis.maxTokens;
     
     const result = await generateText({
       model: anthropic(selectedModel.modelId),

@@ -77,6 +77,13 @@ export type ActionType =
   | 'dev_stop'          // Stop dev server
   | 'dev_preview'       // Open dev server in browser
   | 'dev_status'        // Get dev server status
+  | 'api_get'           // API test: GET request
+  | 'api_post'          // API test: POST request
+  | 'api_put'           // API test: PUT request
+  | 'api_patch'         // API test: PATCH request
+  | 'api_delete'        // API test: DELETE request
+  | 'api_history'       // API test: show request history
+  | 'execute_plan'      // Execute pending plan
   | 'unknown'
   | 'denied';
 
@@ -233,7 +240,7 @@ export interface LogEntry {
 // ============================================================================
 
 export interface WSMessage {
-  type: 'command' | 'status' | 'log' | 'projects' | 'response' | 'agent_status' | 'pending_changes' | 'prd_status' | 'prd_checkpoint';
+  type: 'command' | 'status' | 'log' | 'projects' | 'response' | 'agent_status' | 'pending_changes' | 'prd_status' | 'prd_checkpoint' | 'stream_start' | 'stream_chunk' | 'stream_end';
   payload: unknown;
 }
 

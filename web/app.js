@@ -9,6 +9,12 @@ class CommandCenter {
     this.maxReconnectAttempts = 10;
     this.startTime = null;
     
+    // Streaming state
+    this.activeStreamId = null;
+    this.streamContent = '';
+    this.streamElement = null;
+    this.lastStreamId = null;  // Track last completed stream to suppress duplicate response
+    
     this.elements = {
       connectionStatus: document.getElementById('connection-status'),
       uptime: document.getElementById('uptime'),
@@ -104,7 +110,21 @@ class CommandCenter {
         this.handleLog(message.payload);
         break;
       case 'response':
-        this.handleResponse(message.payload);
+        // Skip if we just finished streaming (avoid duplicate)
+        if (this.lastStreamId) {
+          this.lastStreamId = null;  // Reset for next time
+        } else if (!this.activeStreamId) {
+          this.handleResponse(message.payload);
+        }
+        break;
+      case 'stream_start':
+        this.handleStreamStart(message.payload);
+        break;
+      case 'stream_chunk':
+        this.handleStreamChunk(message.payload);
+        break;
+      case 'stream_end':
+        this.handleStreamEnd(message.payload);
         break;
       case 'agent_status':
         this.updateAgentStatus(message.payload);
@@ -223,6 +243,89 @@ class CommandCenter {
     this.log('response', response.response);
   }
   
+  // Streaming handlers for real-time AI responses
+  handleStreamStart(payload) {
+    this.activeStreamId = payload.streamId;
+    this.streamContent = '';
+    this.streamElement = null;
+    
+    // Create a new console line for streaming
+    const line = document.createElement('div');
+    line.className = 'console-line response streaming';
+    line.id = `stream-${payload.streamId}`;
+    
+    const timestamp = document.createElement('span');
+    timestamp.className = 'timestamp';
+    timestamp.textContent = `[${new Date().toLocaleTimeString()}]`;
+    
+    const message = document.createElement('span');
+    message.className = 'message stream-content';
+    
+    line.appendChild(timestamp);
+    line.appendChild(message);
+    this.elements.consoleOutput.appendChild(line);
+    this.scrollToBottom();
+    
+    this.streamElement = message;
+  }
+  
+  handleStreamChunk(payload) {
+    if (payload.streamId !== this.activeStreamId) return;
+    
+    this.streamContent += payload.chunk;
+    
+    if (this.streamElement) {
+      // For streaming, show raw text first, render markdown at end
+      this.streamElement.textContent = this.streamContent;
+      this.scrollToBottom();
+    }
+  }
+  
+  handleStreamEnd(payload) {
+    if (payload.streamId !== this.activeStreamId) return;
+    
+    // Final render with markdown
+    if (this.streamElement && this.streamContent) {
+      const line = this.streamElement.parentElement;
+      line.classList.remove('streaming');
+      
+      // Render final content with markdown and thinking extraction
+      this.streamElement.innerHTML = '';
+      
+      // Extract thinking section
+      let content = this.streamContent;
+      const thinkingMatch = content.match(/\[Thinking\]\s*([^\n]+(?:\n(?!\n)[^\n]+)*)/i);
+      
+      if (thinkingMatch) {
+        const thinkingDiv = document.createElement('div');
+        thinkingDiv.className = 'thinking-block';
+        thinkingDiv.innerHTML = `<span class="thinking-icon">💭</span> ${this.escapeHtml(thinkingMatch[1])}`;
+        this.streamElement.appendChild(thinkingDiv);
+        content = content.replace(thinkingMatch[0], '').trim();
+      }
+      
+      // Render markdown if available
+      if (typeof marked !== 'undefined' && (content.includes('##') || content.includes('**') || content.includes('```'))) {
+        const contentDiv = document.createElement('div');
+        contentDiv.innerHTML = marked.parse(content);
+        contentDiv.classList.add('markdown-content');
+        this.streamElement.appendChild(contentDiv);
+      } else {
+        const textNode = document.createTextNode(content);
+        this.streamElement.appendChild(textNode);
+      }
+    }
+    
+    this.lastStreamId = this.activeStreamId;  // Remember to suppress duplicate response
+    this.activeStreamId = null;
+    this.streamContent = '';
+    this.streamElement = null;
+  }
+  
+  scrollToBottom() {
+    this.elements.consoleOutput.scrollTop = this.elements.consoleOutput.scrollHeight;
+  }
+  
   updateConnectionStatus(status) {
     const badge = this.elements.connectionStatus;
     const statusText = badge.querySelector('.status-text');
@@ -239,6 +342,20 @@ class CommandCenter {
       if (command) {
         this.sendCommand(command);
         this.elements.commandInput.value = '';
+        this.autoResizeTextarea();
+      }
+    });
+    
+    // Textarea auto-resize and Enter key handling
+    this.elements.commandInput.addEventListener('input', () => {
+      this.autoResizeTextarea();
+    });
+    
+    this.elements.commandInput.addEventListener('keydown', (e) => {
+      // Enter without Shift = submit, Shift+Enter = new line
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        this.elements.commandForm.dispatchEvent(new Event('submit'));
       }
     });
     
@@ -336,6 +453,14 @@ class CommandCenter {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+  
+  autoResizeTextarea() {
+    const textarea = this.elements.commandInput;
+    // Reset height to auto to get the correct scrollHeight
+    textarea.style.height = 'auto';
+    // Set height to scrollHeight (capped by max-height in CSS)
+    textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
   }
   
   async sendCommand(command) {

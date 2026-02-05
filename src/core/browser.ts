@@ -32,14 +32,36 @@ let currentPage: Page | null = null;
 // Action log for audit trail
 const actionLog: BrowserActionLogEntry[] = [];
 
-// Last browse result for AI context
+// Last browse result for AI context (with timestamp)
 let lastBrowseResult: BrowserResult | null = null;
+let lastBrowseTimestamp: number = 0;
+
+// How long to keep browse context (2 minutes)
+const BROWSE_CONTEXT_TTL_MS = 2 * 60 * 1000;
 
 /**
  * Get the last browse result for AI context
+ * Returns null if the browse happened more than 2 minutes ago
  */
 export function getLastBrowseResult(): BrowserResult | null {
+  if (!lastBrowseResult) return null;
+  
+  const age = Date.now() - lastBrowseTimestamp;
+  if (age > BROWSE_CONTEXT_TTL_MS) {
+    // Expired - clear it
+    lastBrowseResult = null;
+    return null;
+  }
+  
   return lastBrowseResult;
+}
+
+/**
+ * Clear the browse context (call after using it)
+ */
+export function clearBrowseContext(): void {
+  lastBrowseResult = null;
+  lastBrowseTimestamp = 0;
 }
 
 // Screenshot storage directory
@@ -510,8 +532,9 @@ export async function browse(url: string, options?: {
       actionLog: actionLog.slice(-10)  // Last 10 actions
     };
     
-    // Store for AI context
+    // Store for AI context with timestamp
     lastBrowseResult = result;
+    lastBrowseTimestamp = Date.now();
     
     return result;
   } catch (error) {
@@ -525,6 +548,7 @@ export async function browse(url: string, options?: {
       error: errorMsg
     };
     lastBrowseResult = result;
+    lastBrowseTimestamp = Date.now();
     return result;
   }
 }

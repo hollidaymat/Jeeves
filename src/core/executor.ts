@@ -57,6 +57,13 @@ import {
   capturePreview,
   getDevServerStatus
 } from './dev-server.js';
+import {
+  apiTest,
+  formatApiResult
+} from './api-tester.js';
+import {
+  executePendingPlan
+} from './cursor-agent.js';
 
 // Whitelisted executables
 const ALLOWED_EXECUTABLES: Record<string, string> = {
@@ -633,6 +640,123 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     return {
       success: true,
       output: intent.message || getDevServerStatus(),
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // API Testing: GET
+  if (intent.action === 'api_get') {
+    if (!intent.target) {
+      return { success: false, error: 'No URL provided', duration_ms: Date.now() - startTime };
+    }
+    const result = await apiTest('GET', intent.target);
+    // success = 2xx only; 4xx/5xx = failure but show output (not error)
+    return {
+      success: result.success,
+      output: formatApiResult(result),
+      error: result.error, // Only set for network failures
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // API Testing: POST
+  if (intent.action === 'api_post') {
+    if (!intent.target) {
+      return { success: false, error: 'No URL provided', duration_ms: Date.now() - startTime };
+    }
+    const body = intent.data?.body;
+    let parsedBody: unknown;
+    if (typeof body === 'string') {
+      try {
+        parsedBody = JSON.parse(body);
+      } catch {
+        parsedBody = body;
+      }
+    }
+    const result = await apiTest('POST', intent.target, { body: parsedBody });
+    return {
+      success: result.success,
+      output: formatApiResult(result),
+      error: result.error,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // API Testing: PUT
+  if (intent.action === 'api_put') {
+    if (!intent.target) {
+      return { success: false, error: 'No URL provided', duration_ms: Date.now() - startTime };
+    }
+    const body = intent.data?.body;
+    let parsedBody: unknown;
+    if (typeof body === 'string') {
+      try {
+        parsedBody = JSON.parse(body);
+      } catch {
+        parsedBody = body;
+      }
+    }
+    const result = await apiTest('PUT', intent.target, { body: parsedBody });
+    return {
+      success: result.success,
+      output: formatApiResult(result),
+      error: result.error,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // API Testing: DELETE
+  if (intent.action === 'api_delete') {
+    if (!intent.target) {
+      return { success: false, error: 'No URL provided', duration_ms: Date.now() - startTime };
+    }
+    const result = await apiTest('DELETE', intent.target);
+    return {
+      success: result.success,
+      output: formatApiResult(result),
+      error: result.error,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // API Testing: PATCH
+  if (intent.action === 'api_patch') {
+    if (!intent.target) {
+      return { success: false, error: 'No URL provided', duration_ms: Date.now() - startTime };
+    }
+    const body = intent.data?.body;
+    let parsedBody: unknown;
+    if (typeof body === 'string') {
+      try {
+        parsedBody = JSON.parse(body);
+      } catch {
+        parsedBody = body;
+      }
+    }
+    const result = await apiTest('PATCH', intent.target, { body: parsedBody });
+    return {
+      success: result.success,
+      output: formatApiResult(result),
+      error: result.error,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // API Testing: History
+  if (intent.action === 'api_history') {
+    return {
+      success: true,
+      output: intent.message || 'No API requests yet.',
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // Execute pending plan
+  if (intent.action === 'execute_plan') {
+    const result = await executePendingPlan();
+    return {
+      success: result.success,
+      output: result.results.join('\n\n'),
       duration_ms: Date.now() - startTime
     };
   }

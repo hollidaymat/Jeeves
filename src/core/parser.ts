@@ -35,6 +35,15 @@ import {
   getDevServerStatus,
   capturePreview
 } from './dev-server.js';
+import {
+  apiTest,
+  getApiHistory,
+  formatApiResult
+} from './api-tester.js';
+import {
+  getPendingPlan,
+  clearPendingPlan
+} from './plan-state.js';
 import type { ParsedIntent } from '../types/index.js';
 
 // Create Anthropic provider - API key from environment
@@ -157,6 +166,19 @@ const PATTERNS = {
   devPreview: /^(?:preview|show preview|open preview|dev preview|show me the app|show app)$/i,
   devStatus: /^(?:dev status|server status|dev servers?)$/i,
   
+  // Plan approval patterns
+  approvePlan: /^(?:yes|yep|yeah|go|go ahead|do it|proceed|execute|run it|approved?|confirm|ok|okay|sure|lets? go)$/i,
+  rejectPlan: /^(?:no|nope|cancel|stop|don'?t|abort|nevermind|never mind)$/i,
+  showPlan: /^(?:show plan|what'?s the plan|pending plan|current plan)$/i,
+  
+  // API testing patterns
+  apiGet: /^(?:api\s+)?get\s+(https?:\/\/[^\s]+)$/i,
+  apiPost: /^(?:api\s+)?post\s+(https?:\/\/[^\s]+)(?:\s+(.+))?$/i,
+  apiPut: /^(?:api\s+)?put\s+(https?:\/\/[^\s]+)(?:\s+(.+))?$/i,
+  apiDelete: /^(?:api\s+)?delete\s+(https?:\/\/[^\s]+)$/i,
+  apiTest: /^(?:test\s+)?api\s+(get|post|put|patch|delete)\s+(https?:\/\/[^\s]+)(?:\s+(.+))?$/i,
+  apiHistory: /^(?:api\s+)?(?:history|requests|logs)$/i,
+  
   // Open in Cursor IDE (explicit)
   openInCursor: /^(?:open in cursor|cursor open|launch|open in ide)\s+(.+)$/i,
   
@@ -257,12 +279,34 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
     return { action: 'agent_stop', confidence: 1.0 };
   }
   
-  // Apply changes
+  // Plan approval: Execute pending plan (CHECK THIS FIRST before apply/reject)
+  // "yes" should trigger plan execution if there's a pending plan
+  if (PATTERNS.approvePlan.test(lower)) {
+    logger.info('Approval pattern matched', { input: lower });
+    const plan = getPendingPlan();
+    logger.info('Pending plan check', { hasPlan: !!plan, commands: plan?.commands?.length });
+    if (plan) {
+      return { action: 'execute_plan', confidence: 1.0, requiresAsync: true };
+    }
+    // No pending plan - fall through to apply_changes
+  }
+  
+  // Plan rejection: Cancel pending plan
+  if (PATTERNS.rejectPlan.test(lower)) {
+    const plan = getPendingPlan();
+    if (plan) {
+      clearPendingPlan();
+      return { action: 'status', confidence: 1.0, message: '❌ Plan cancelled.' };
+    }
+    // No pending plan - fall through to reject_changes
+  }
+  
+  // Apply changes (for code edits, not plans)
   if (PATTERNS.apply.test(lower)) {
     return { action: 'apply_changes', confidence: 1.0 };
   }
   
-  // Reject changes
+  // Reject changes (for code edits, not plans)
   if (PATTERNS.reject.test(lower)) {
     return { action: 'reject_changes', confidence: 1.0 };
   }
@@ -613,6 +657,86 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
       confidence: 1.0,
       message: getDevServerStatus()
     };
+  }
+  
+  // API Testing: GET
+  const apiGetMatch = trimmed.match(PATTERNS.apiGet);
+  if (apiGetMatch) {
+    return { action: 'api_get', confidence: 1.0, target: apiGetMatch[1], requiresAsync: true };
+  }
+  
+  // API Testing: POST
+  const apiPostMatch = trimmed.match(PATTERNS.apiPost);
+  if (apiPostMatch) {
+    return { 
+      action: 'api_post', 
+      confidence: 1.0, 
+      target: apiPostMatch[1], 
+      data: { body: apiPostMatch[2] },
+      requiresAsync: true 
+    };
+  }
+  
+  // API Testing: PUT
+  const apiPutMatch = trimmed.match(PATTERNS.apiPut);
+  if (apiPutMatch) {
+    return { 
+      action: 'api_put', 
+      confidence: 1.0, 
+      target: apiPutMatch[1], 
+      data: { body: apiPutMatch[2] },
+      requiresAsync: true 
+    };
+  }
+  
+  // API Testing: DELETE
+  const apiDeleteMatch = trimmed.match(PATTERNS.apiDelete);
+  if (apiDeleteMatch) {
+    return { action: 'api_delete', confidence: 1.0, target: apiDeleteMatch[1], requiresAsync: true };
+  }
+  
+  // API Testing: Generic (test api GET/POST/etc url)
+  const apiTestMatch = trimmed.match(PATTERNS.apiTest);
+  if (apiTestMatch) {
+    const method = apiTestMatch[1].toLowerCase();
+    const actionMap: Record<string, 'api_get' | 'api_post' | 'api_put' | 'api_patch' | 'api_delete'> = {
+      get: 'api_get',
+      post: 'api_post',
+      put: 'api_put',
+      patch: 'api_patch',
+      delete: 'api_delete'
+    };
+    const action = actionMap[method] || 'api_get';
+    return { 
+      action, 
+      confidence: 1.0, 
+      target: apiTestMatch[2],
+      data: { body: apiTestMatch[3] },
+      requiresAsync: true 
+    };
+  }
+  
+  // API Testing: History
+  if (PATTERNS.apiHistory.test(lower)) {
+    const history = getApiHistory(20);
+    const formatted = history.length > 0
+      ? history.map(h => `${h.timestamp.toISOString()} ${h.method} ${h.url} → ${h.status || h.error}`).join('\n')
+      : 'No API requests yet.';
+    return { action: 'api_history', confidence: 1.0, message: `**API Request History**\n${formatted}` };
+  }
+  
+  // Show current plan
+  if (PATTERNS.showPlan.test(lower)) {
+    const plan = getPendingPlan();
+    if (plan) {
+      const formatted = plan.commands.map((c, i) => `${i + 1}. ${c}`).join('\n');
+      return { 
+        action: 'status', 
+        confidence: 1.0, 
+        message: `**Pending Plan: ${plan.description}**\n${formatted}\n\nSay "yes" to execute or "no" to cancel.`
+      };
+    }
+    return { action: 'status', confidence: 1.0, message: 'No pending plan.' };
   }
   
   // Open in Cursor IDE (explicit) - for when you actually want to open in Cursor

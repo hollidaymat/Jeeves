@@ -4,8 +4,16 @@
  * since `cursor agent` requires interactive terminal
  */
 
-import { generateText } from 'ai';
+import { generateText, streamText } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
+
+// Streaming callback for real-time updates
+type StreamCallback = (chunk: string) => void;
+let activeStreamCallback: StreamCallback | null = null;
+
+export function setStreamCallback(callback: StreamCallback | null): void {
+  activeStreamCallback = callback;
+}
 import { readdir, readFile, stat, writeFile } from 'fs/promises';
 import { join, extname } from 'path';
 import { existsSync } from 'fs';
@@ -41,10 +49,169 @@ interface AgentSession {
 // Active session
 let activeSession: AgentSession | null = null;
 
+// Re-export plan state functions
+import {
+  getPendingPlan,
+  setPendingPlan,
+  clearPendingPlan,
+  getLastExecutionResults,
+  setExecutionResults
+} from './plan-state.js';
+
+export { getPendingPlan, clearPendingPlan, getLastExecutionResults };
+
+/**
+ * Validate a command against trust level constraints
+ * Returns error message if forbidden, null if allowed
+ */
+async function validateCommandTrust(command: string): Promise<string | null> {
+  const { getTrustLevel } = await import('./trust.js');
+  const trustLevel = getTrustLevel();
+  const lower = command.toLowerCase().trim();
+  
+  // POST/PUT/PATCH/DELETE require trust level 3+
+  if (trustLevel < 3) {
+    if (lower.startsWith('post ') || lower.match(/^(?:api\s+)?post\s+/i)) {
+      return `POST requests require trust level 3+ (current: ${trustLevel})`;
+    }
+    if (lower.startsWith('put ') || lower.match(/^(?:api\s+)?put\s+/i)) {
+      return `PUT requests require trust level 3+ (current: ${trustLevel})`;
+    }
+    if (lower.startsWith('patch ') || lower.match(/^(?:api\s+)?patch\s+/i)) {
+      return `PATCH requests require trust level 3+ (current: ${trustLevel})`;
+    }
+    if (lower.startsWith('delete ') || lower.match(/^(?:api\s+)?delete\s+/i)) {
+      return `DELETE requests require trust level 3+ (current: ${trustLevel})`;
+    }
+  }
+  
+  // Database writes require trust level 4+
+  if (trustLevel < 4) {
+    if (lower.match(/\b(insert|update|delete|drop|truncate|alter)\b/i)) {
+      return `Database mutations require trust level 4+ (current: ${trustLevel})`;
+    }
+  }
+  
+  return null; // Command is allowed
+}
+
+/**
+ * Extract a plan from AI response and store it
+ * Validates commands against trust constraints
+ */
+async function extractAndStorePlan(text: string): Promise<void> {
+  // Look for ```plan blocks
+  const planMatch = text.match(/```plan\s*([\s\S]*?)```/i);
+  if (!planMatch) return;
+  
+  const planBlock = planMatch[1];
+  
+  // Extract description
+  const descMatch = planBlock.match(/DESCRIPTION:\s*(.+)/i);
+  const description = descMatch ? descMatch[1].trim() : 'Proposed plan';
+  
+  // Extract commands
+  const commandsMatch = planBlock.match(/COMMANDS:\s*([\s\S]*)/i);
+  if (!commandsMatch) return;
+  
+  const rawCommands = commandsMatch[1]
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 0 && !line.startsWith('#') && !line.startsWith('//'));
+  
+  if (rawCommands.length === 0) return;
+  
+  // Validate each command against trust constraints
+  const validCommands: string[] = [];
+  const rejectedCommands: string[] = [];
+  
+  for (const cmd of rawCommands) {
+    const error = await validateCommandTrust(cmd);
+    if (error) {
+      rejectedCommands.push(`${cmd} (BLOCKED: ${error})`);
+      logger.warn('Command blocked by trust constraints', { command: cmd, error });
+    } else {
+      validCommands.push(cmd);
+    }
+  }
+  
+  // Only store valid commands
+  if (validCommands.length > 0) {
+    setPendingPlan(validCommands, description);
+    logger.info('Extracted plan from AI response', { 
+      description, 
+      validCommands: validCommands.length,
+      rejectedCommands: rejectedCommands.length 
+    });
+  }
+  
+  if (rejectedCommands.length > 0) {
+    logger.warn('Some commands rejected due to trust constraints', { rejectedCommands });
+  }
+}
+
+/**
+ * Execute the pending plan
+ */
+export async function executePendingPlan(): Promise<{ success: boolean; results: string[] }> {
+  const plan = getPendingPlan();
+  if (!plan) {
+    return { success: false, results: ['No pending plan to execute'] };
+  }
+  
+  const { parseIntent } = await import('./parser.js');
+  const { executeCommand } = await import('./executor.js');
+  
+  const results: string[] = [];
+  const summary: { command: string; success: boolean; status?: string }[] = [];
+  let successCount = 0;
+  let failCount = 0;
+  
+  logger.info('Executing pending plan', { commands: plan.commands.length });
+  
+  for (const command of plan.commands) {
+    try {
+      const intent = await parseIntent(command);
+      const result = await executeCommand(intent);
+      
+      if (result.success) {
+        successCount++;
+        // Extract status from API results (format: "  404 Not Found (215ms)")
+        const statusMatch = result.output?.match(/^\s+(\d{3}\s+[^\n(]+)/m);
+        const status = statusMatch ? statusMatch[1].trim() : 'OK';
+        summary.push({ command, success: true, status });
+        results.push(`✓ ${command}: ${status}`);
+      } else {
+        failCount++;
+        const status = result.error || 'Failed';
+        summary.push({ command, success: false, status });
+        results.push(`✗ ${command}: ${status}`);
+      }
+    } catch (error) {
+      failCount++;
+      const status = error instanceof Error ? error.message : String(error);
+      summary.push({ command, success: false, status });
+      results.push(`✗ ${command}: ${status}`);
+    }
+  }
+  
+  // Create a clean summary
+  const header = `## Plan Execution Complete\n\n**${plan.description}**\n\n📊 ${successCount} passed, ${failCount} failed\n`;
+  results.unshift(header);
+  
+  // Store results for follow-up questions
+  setExecutionResults(plan.description, results);
+  
+  // Clear the plan after execution
+  clearPendingPlan();
+  
+  return { success: failCount === 0, results };
+}
+
 // File extensions to include in context
 const CODE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs', '.md', '.json', '.sql', '.css', '.html'];
 const MAX_FILE_SIZE = 50000;  // 50KB max per file
-const MAX_TOTAL_CONTEXT = 100000;  // 100KB max total context
+const MAX_TOTAL_CONTEXT = 300000;  // 300KB max total context (Claude can handle much more)
 
 /**
  * Scan project directory for context
@@ -112,10 +279,35 @@ async function scanProjectContext(projectPath: string): Promise<string> {
     }
   }
 
-  // Then scan directories
+  // Prioritize frontend directories first (they're often at the end alphabetically)
+  const priorityDirs = ['web', 'public', 'client', 'frontend', 'app', 'pages', 'components'];
+  for (const dir of priorityDirs) {
+    const dirPath = join(projectPath, dir);
+    try {
+      const stats = await stat(dirPath);
+      if (stats.isDirectory()) {
+        await scanDir(dirPath, 1);
+      }
+    } catch (e) {
+      // Directory doesn't exist
+    }
+  }
+  
+  // Then scan remaining directories
   await scanDir(projectPath);
 
-  return contextParts.join('');
+  // Extract file list for quick reference
+  const fileList = contextParts
+    .map(p => {
+      const match = p.match(/^### (.+)/m);
+      return match ? match[1] : null;
+    })
+    .filter(Boolean);
+  
+  // Prepend file list summary so model knows what's available
+  const fileSummary = `## LOADED FILES (${fileList.length} files)\n${fileList.join('\n')}\n\n`;
+  
+  return fileSummary + contextParts.join('');
 }
 
 /**
@@ -192,20 +384,21 @@ export async function sendToAgent(prompt: string): Promise<string> {
     const systemPrompt = `You are Jeeves, an AI coding assistant with FULL ACCESS to this project's source code.
 
 ## THINKING
-Start your response with a brief [Thinking] section (1-3 sentences) explaining your reasoning:
-- What you're looking for in the codebase
-- What approach you'll take
-- Any decisions you're making
+Start your response with a [Thinking] section that shows your search process:
+1. What keywords/patterns you're searching for
+2. Which files you found that match
+3. The specific file and line numbers you'll modify
 
-Example: "[Thinking] Looking for authentication-related files. Found auth.ts and middleware.ts. Will modify the middleware to add the new check."
+Example: "[Thinking] User wants to modify the text input. Searching for 'input', 'textarea', 'form'. Found: web/index.html:47 has <input>, web/styles.css:390 has input styling, web/app.js:17 references commandInput. Will modify all three files."
 
-## RULES
-1. You have ALL the project files loaded below - SEARCH THEM before asking for clarification
-2. When the user mentions something vague like "the scan function", search the code for matches
-3. If you find multiple matches, pick the most likely one based on context OR list the options
-4. NEVER say "I don't have access" - you DO have access, the files are below
-5. Be proactive - if asked to modify "the auth code", find auth-related files and suggest changes
-6. Use the previous conversation context to understand references like "that file" or "what we discussed"
+## CRITICAL RULES
+1. **SEARCH BEFORE RESPONDING**: Scan the loaded files for relevant keywords before writing any code
+2. **NEVER GIVE GENERIC EXAMPLES**: If asked to modify something, find the ACTUAL file in the project context
+3. **QUOTE ACTUAL PATHS**: Reference real file paths from the project (e.g., "In web/index.html line 47...")
+4. **MATCH THE TECH STACK**: If the project uses vanilla HTML/CSS/JS, don't suggest React/Tailwind solutions
+5. **LIST WHAT YOU FOUND**: In [Thinking], explicitly list the files and line numbers you found
+6. **FAIL LOUDLY**: If you cannot find the relevant file in the loaded context, say "I searched for X but couldn't find it in the loaded files" - don't make up generic code
+7. **BE SPECIFIC**: Propose edits to the actual code you see, not hypothetical code that might exist
 
 ${isEditRequest ? `
 ## CODE CHANGES
@@ -244,7 +437,7 @@ Rules:
 - Use semantic HTML and proper ARIA attributes
 - Prefer Tailwind spacing scale over arbitrary values
 
-Be concise. Reference specific file paths. Don't ask for clarification if you can infer from context.
+REMEMBER: You have the actual project files loaded. ALWAYS search them and reference specific paths. NEVER give generic examples when you have the real code available.
 
 PROJECT: ${activeSession.workingDir.split(/[\\/]/).pop()}
 PROJECT ROOT: ${activeSession.workingDir}
@@ -267,12 +460,32 @@ ${activeSession.projectContext}
       isEditRequest 
     });
 
-    const { text } = await generateText({
-      model: anthropic(modelToUse),
-      system: systemPrompt,
-      prompt: prompt,
-      maxTokens: config.claude.max_tokens
-    });
+    // Use streaming for real-time updates
+    let text = '';
+    
+    if (activeStreamCallback) {
+      // Streaming mode
+      const result = streamText({
+        model: anthropic(modelToUse),
+        system: systemPrompt,
+        prompt: prompt,
+        maxTokens: config.claude.max_tokens
+      });
+      
+      for await (const chunk of result.textStream) {
+        text += chunk;
+        activeStreamCallback(chunk);
+      }
+    } else {
+      // Non-streaming fallback
+      const result = await generateText({
+        model: anthropic(modelToUse),
+        system: systemPrompt,
+        prompt: prompt,
+        maxTokens: config.claude.max_tokens
+      });
+      text = result.text;
+    }
 
     logger.info('AI response received', { 
       length: text.length, 
@@ -660,6 +873,25 @@ ${lastBrowse.content || '[No content]'}
     });
   }
   
+  // Get last execution results for context
+  const execResults = getLastExecutionResults();
+  let executionContext = '';
+  if (execResults) {
+    executionContext = `\n## RECENT EXECUTION RESULTS
+Task: ${execResults.description}
+Time: ${execResults.timestamp.toLocaleTimeString()}
+
+Results:
+${execResults.results.join('\n\n')}
+
+IMPORTANT: Use these ACTUAL results when the user asks about what happened. Do NOT generate placeholder templates - use the real data above.
+`;
+    logger.info('askGeneral: Added execution context', { 
+      description: execResults.description,
+      resultsCount: execResults.results.length
+    });
+  }
+  
   // Build trust context with null safety
   const trustLevel = trustState?.currentLevel ?? 2;
   const trustNames = ['supervised', 'semi-autonomous', 'trusted', 'autonomous', 'full-trust'];
@@ -762,11 +994,48 @@ All users start at Level 2 (Semi-Autonomous) because:
 - Content is sanitized against prompt injection attacks
 - Visual feedback while coding: spin up dev servers and see changes
 
+**API Testing:**
+- Test API endpoints (say "get https://api.example.com/endpoint")
+- Make POST/PUT/PATCH/DELETE requests (need trust level 3+)
+- View request history (say "api history")
+- Validate responses and debug integrations
+
 **General:**
 - Answer technical questions on any topic
 - Remember conversations and learn your preferences
 - Research solutions and provide step-by-step guidance
 - Earn more autonomy through successful work
+
+## YOUR TRUST CONSTRAINTS (CRITICAL)
+Your current trust level is ${trustLevel}/5 (${trustName}).
+
+**At Level ${trustLevel}, you CAN:**
+- GET requests to any API
+- Browse websites
+- Read files and code
+${trustLevel >= 3 ? '- POST/PUT/PATCH/DELETE requests' : ''}
+${trustLevel >= 4 ? '- Database queries' : ''}
+
+**At Level ${trustLevel}, you CANNOT:**
+${trustLevel < 3 ? '- POST/PUT/PATCH/DELETE requests (need Level 3+)' : ''}
+${trustLevel < 4 ? '- Database mutations (need Level 4+)' : ''}
+${trustLevel < 5 ? '- Self-modification (need Level 5)' : ''}
+
+NEVER propose commands you cannot execute. This is a security constraint.
+
+## PROPOSING PLANS
+When you want to execute multiple commands, propose a plan using this format:
+
+\`\`\`plan
+DESCRIPTION: Brief description of what you'll do
+COMMANDS:
+get https://example.com/api/endpoint1
+get https://example.com/api/endpoint2
+browse https://example.com
+\`\`\`
+
+The user will say "yes" to approve or "no" to cancel. Don't execute commands yourself - propose them and wait for approval.
+IMPORTANT: Only propose commands allowed at your current trust level!
 
 ## AVAILABLE PROJECTS
 You have access to these local projects (say "open <name>" to load full context):
@@ -783,7 +1052,8 @@ You can still discuss projects generally without loading them.
 - If a task requires terminal access or file editing, mention what you'd need to do it
 ${personalityContext ? `\n## USER'S PREFERENCES FOR YOU\n${personalityContext}` : ''}
 ${browseContext}
-Answer the user's question directly.`;
+${executionContext}
+Answer the user's question directly. If asked about recent task results, use the ACTUAL data provided above - never generate placeholder templates.`;
 
   try {
     // Smart model selection based on prompt complexity
@@ -851,6 +1121,9 @@ Answer the user's question directly.`;
     // Save conversation to memory
     addGeneralMessage('user', prompt);
     addGeneralMessage('assistant', text);
+    
+    // Extract and store any proposed plan (validates trust constraints)
+    await extractAndStorePlan(text);
 
     return text;
   } catch (error) {

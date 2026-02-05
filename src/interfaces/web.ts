@@ -13,7 +13,7 @@ import { config } from '../config.js';
 import { logger, registerWSClient, unregisterWSClient } from '../utils/logger.js';
 import { getSystemStatus, handleMessage } from '../core/handler.js';
 import { getProjectIndex, listProjects } from '../core/project-scanner.js';
-import { getPendingChanges } from '../core/cursor-agent.js';
+import { getPendingChanges, setStreamCallback } from '../core/cursor-agent.js';
 import { exportConversations } from '../core/memory.js';
 import { onCheckpoint, getExecutionStatus } from '../core/prd-executor.js';
 import type { IncomingMessage, OutgoingMessage, MessageInterface, WSMessage, PrdCheckpoint } from '../types/index.js';
@@ -110,13 +110,31 @@ export class WebInterface implements MessageInterface {
       };
       
       try {
+        // Enable streaming - broadcast chunks as they arrive
+        const streamId = randomUUID();
+        this.broadcast({ type: 'stream_start', payload: { streamId } });
+        
+        setStreamCallback((chunk: string) => {
+          this.broadcast({ 
+            type: 'stream_chunk', 
+            payload: { streamId, chunk } 
+          });
+        });
+        
         const response = await handleMessage(message);
+        
+        // Clear stream callback
+        setStreamCallback(null);
+        
+        // Signal stream end
+        this.broadcast({ type: 'stream_end', payload: { streamId } });
+        
         res.json({
           success: true,
           response: response?.content || 'No response'
         });
         
-        // Broadcast response to WebSocket clients
+        // Broadcast final response (for non-streaming clients)
         this.broadcast({
           type: 'response',
           payload: {
@@ -138,6 +156,7 @@ export class WebInterface implements MessageInterface {
           }))
         });
       } catch (error) {
+        setStreamCallback(null);
         res.status(500).json({ 
           error: error instanceof Error ? error.message : 'Unknown error' 
         });

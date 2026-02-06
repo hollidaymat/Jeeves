@@ -43,7 +43,27 @@ export async function addLocalDNS(
 ): Promise<{ success: boolean; message: string }> {
   logger.info('Adding local DNS entry', { hostname, ip });
 
-  // ---- Primary: Pi-hole API ----
+  // ---- Primary: docker exec into pihole container (most reliable) ----
+  const appendResult = await execHomelab('docker', [
+    'exec', PIHOLE_CONTAINER, 'bash', '-c',
+    `echo '${ip} ${hostname}' >> ${CUSTOM_LIST_PATH}`,
+  ], { timeout: 10_000 });
+
+  if (appendResult.success) {
+    // Restart Pi-hole DNS resolver to pick up the new entry
+    await execHomelab('docker', [
+      'exec', PIHOLE_CONTAINER, 'pihole', 'restartdns',
+    ], { timeout: 15_000 });
+
+    logger.info('DNS entry added via custom.list', { hostname, ip });
+    return { success: true, message: `DNS entry added: ${hostname} -> ${ip}` };
+  }
+
+  logger.debug('docker exec failed, trying Pi-hole API', {
+    stderr: appendResult.stderr,
+  });
+
+  // ---- Fallback: Pi-hole API ----
   const apiResult = await execHomelab('curl', [
     '-s',
     '-X', 'POST',
@@ -56,32 +76,9 @@ export async function addLocalDNS(
     return { success: true, message: `DNS entry added: ${hostname} -> ${ip}` };
   }
 
-  logger.warn('Pi-hole API failed, falling back to custom.list', {
-    stderr: apiResult.stderr,
-    stdout: apiResult.stdout,
-  });
-
-  // ---- Fallback: docker exec into pihole container ----
-  const appendResult = await execHomelab('docker', [
-    'exec', PIHOLE_CONTAINER, 'bash', '-c',
-    `echo '${ip} ${hostname}' >> ${CUSTOM_LIST_PATH}`,
-  ], { timeout: 10_000 });
-
-  if (!appendResult.success) {
-    return {
-      success: false,
-      message: `Failed to add DNS entry: ${appendResult.stderr || 'Unknown error'}`,
-    };
-  }
-
-  // Restart Pi-hole DNS resolver to pick up the new entry
-  await execHomelab('docker', [
-    'exec', PIHOLE_CONTAINER, 'pihole', 'restartdns',
-  ], { timeout: 15_000 });
-
   return {
-    success: true,
-    message: `DNS entry added to custom.list: ${hostname} -> ${ip}`,
+    success: false,
+    message: `Failed to add DNS entry: Pi-hole container not reachable`,
   };
 }
 

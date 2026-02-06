@@ -1415,8 +1415,9 @@ export async function parseIntent(message: string): Promise<ParsedIntent> {
       maxTokens: config.claude.max_tokens
     });
     
-    // Parse JSON response
-    const parsed = JSON.parse(text) as ParsedIntent;
+    // Parse JSON response - strip markdown code fences if present
+    const cleanedText = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+    const parsed = JSON.parse(cleanedText) as ParsedIntent;
     parsed.raw_response = text;
     parsed.resolutionMethod = 'llm';
     

@@ -130,10 +130,9 @@ function initRegistry(): void {
       image: 'jellyfin/jellyfin:latest',
       ports: [8096],
       ramMB: parseRAM('512MB'),
-      purpose: 'Media server (hardware transcoding via QuickSync)',
+      purpose: 'Media server (CPU transcoding)',
       priority: 'high',
       dependencies: [],
-      devices: ['/dev/dri:/dev/dri'], // GPU passthrough for transcoding
       volumes: [
         'jellyfin_config:/config',
         'jellyfin_cache:/cache',

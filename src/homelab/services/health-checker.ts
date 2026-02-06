@@ -190,15 +190,18 @@ export function httpHealthCheck(
         res.resume();
 
         const elapsed = Date.now() - startTime;
-        const passed = res.statusCode === 200;
+        const code = res.statusCode ?? 0;
+        // Service is alive if it responds with anything other than 5xx
+        // 2xx = OK, 3xx = redirect (login page), 401 = needs auth, 400 = needs setup
+        const passed = code > 0 && code < 500;
 
         resolve({
           type: 'http',
           target: url,
           passed,
           responseTimeMs: elapsed,
-          details: `HTTP ${res.statusCode}`,
-          error: passed ? undefined : `Expected 200, got ${res.statusCode}`,
+          details: `HTTP ${code}`,
+          error: passed ? undefined : `Server error: ${code}`,
         });
       });
 

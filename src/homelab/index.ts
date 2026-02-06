@@ -43,6 +43,11 @@ const TRUST_REQUIREMENTS: Record<string, number> = {
   homelab_install: 2,
   homelab_uninstall: 3,
   homelab_update_all: 3,
+
+  // Media commands: trust level 2+ (semi-autonomous)
+  media_search: 2,
+  media_download: 2,
+  media_status: 2,
 };
 
 // ============================================================================
@@ -87,6 +92,10 @@ async function getSecurityAudit() {
 
 async function getSSL() {
   return await import('./security/ssl.js');
+}
+
+async function getMediaSearch() {
+  return await import('./media/search.js');
 }
 
 // ============================================================================
@@ -192,6 +201,15 @@ export async function executeHomelabAction(
 
       case 'homelab_firewall':
         return await handleFirewall(intent.data?.subcommand as string, intent.data?.port as number, intent.data?.proto as string);
+
+      case 'media_search':
+        return await handleMediaSearch(serviceName);
+
+      case 'media_download':
+        return await handleMediaDownload(serviceName);
+
+      case 'media_status':
+        return await handleMediaStatus();
 
       default:
         return {
@@ -593,6 +611,78 @@ async function handleUninstall(serviceName: string): Promise<ExecutionResult> {
   }
 
   return { success: result.success, output, duration_ms: Date.now() - startTime };
+}
+
+// ============================================================================
+// Media Handlers
+// ============================================================================
+
+async function handleMediaSearch(query: string): Promise<ExecutionResult> {
+  const startTime = Date.now();
+  if (!query) {
+    return { success: false, output: 'Please specify what to search for. Usage: `search Breaking Bad`', duration_ms: Date.now() - startTime };
+  }
+
+  const media = await getMediaSearch();
+  const { query: cleanQuery, season, type } = media.parseMediaQuery(query);
+  const result = await media.searchMedia(cleanQuery);
+
+  if (!result.success || result.results.length === 0) {
+    return { success: true, output: result.message, duration_ms: Date.now() - startTime };
+  }
+
+  let output = `## Media Search: "${cleanQuery}"\n\n`;
+  for (const r of result.results) {
+    const icon = r.type === 'movie' ? '🎬' : '📺';
+    const inLib = r.inLibrary ? ' ✅ (in library)' : '';
+    const seasonInfo = r.seasonCount ? ` (${r.seasonCount} seasons)` : '';
+    const runtime = r.runtime ? ` (${r.runtime} min)` : '';
+    output += `${icon} **${r.title}** (${r.year})${seasonInfo}${runtime}${inLib}\n`;
+    output += `   ${r.overview}\n\n`;
+  }
+
+  output += `\nSay \`download ${cleanQuery}${season !== undefined ? ` season ${season}` : ''}\` to add to library and start downloading.`;
+
+  return { success: true, output, duration_ms: Date.now() - startTime };
+}
+
+async function handleMediaDownload(query: string): Promise<ExecutionResult> {
+  const startTime = Date.now();
+  if (!query) {
+    return { success: false, output: 'Please specify what to download. Usage: `download Breaking Bad season 3`', duration_ms: Date.now() - startTime };
+  }
+
+  const media = await getMediaSearch();
+  const parsed = media.parseMediaQuery(query);
+  const result = await media.addMedia(parsed.query, { season: parsed.season, type: parsed.type });
+
+  const icon = result.success ? '✅' : '❌';
+  return {
+    success: result.success,
+    output: `${icon} ${result.message}`,
+    duration_ms: Date.now() - startTime,
+  };
+}
+
+async function handleMediaStatus(): Promise<ExecutionResult> {
+  const startTime = Date.now();
+  const media = await getMediaSearch();
+  const result = await media.getDownloadQueue();
+
+  if (!result.success || result.queue.length === 0) {
+    return { success: true, output: result.message, duration_ms: Date.now() - startTime };
+  }
+
+  let output = '## Download Queue\n\n';
+  output += '| Title | Status | Progress | Size | ETA |\n';
+  output += '|-------|--------|----------|------|-----|\n';
+
+  for (const item of result.queue) {
+    const bar = makeBar(item.progress, 10);
+    output += `| ${item.title} | ${item.status} | ${bar} ${item.progress}% | ${item.size} | ${item.timeLeft} |\n`;
+  }
+
+  return { success: true, output, duration_ms: Date.now() - startTime };
 }
 
 // ============================================================================

@@ -144,7 +144,7 @@ function initRegistry(): void {
       purpose: 'TV show management',
       priority: 'medium',
       dependencies: ['prowlarr'],
-      volumes: ['sonarr_config:/config', '/data/media:/data/media'],
+      volumes: ['sonarr_config:/config', '/data/media:/data/media', '/data/downloads:/data/downloads'],
       environment: { PUID: '1000', PGID: '1000', TZ: 'America/New_York' },
     },
     {
@@ -156,7 +156,7 @@ function initRegistry(): void {
       purpose: 'Movie management',
       priority: 'medium',
       dependencies: ['prowlarr'],
-      volumes: ['radarr_config:/config', '/data/media:/data/media'],
+      volumes: ['radarr_config:/config', '/data/media:/data/media', '/data/downloads:/data/downloads'],
       environment: { PUID: '1000', PGID: '1000', TZ: 'America/New_York' },
     },
     {
@@ -180,7 +180,7 @@ function initRegistry(): void {
       purpose: 'Music management',
       priority: 'low',
       dependencies: ['prowlarr'],
-      volumes: ['lidarr_config:/config', '/data/media:/data/media'],
+      volumes: ['lidarr_config:/config', '/data/media:/data/media', '/data/downloads:/data/downloads'],
       environment: { PUID: '1000', PGID: '1000', TZ: 'America/New_York' },
     },
     {
@@ -215,6 +215,36 @@ function initRegistry(): void {
       purpose: 'Media server analytics',
       priority: 'low',
       dependencies: ['jellyfin'],
+    },
+    {
+      name: 'qbittorrent',
+      tier: 'media',
+      image: 'lscr.io/linuxserver/qbittorrent:latest',
+      ports: ['8080:8080', '6881:6881'],
+      ramMB: parseRAM('256MB'),
+      purpose: 'Torrent download client',
+      priority: 'medium',
+      dependencies: [],
+      volumes: [
+        'qbittorrent_config:/config',
+        '/data/downloads/torrents:/downloads',
+      ],
+      environment: { PUID: '1000', PGID: '1000', TZ: 'America/New_York', WEBUI_PORT: '8080' },
+    },
+    {
+      name: 'nzbget',
+      tier: 'media',
+      image: 'lscr.io/linuxserver/nzbget:latest',
+      ports: [6789],
+      ramMB: parseRAM('128MB'),
+      purpose: 'Usenet download client',
+      priority: 'medium',
+      dependencies: [],
+      volumes: [
+        'nzbget_config:/config',
+        '/data/downloads/usenet:/downloads',
+      ],
+      environment: { PUID: '1000', PGID: '1000', TZ: 'America/New_York' },
     },
 
     // =====================================================================

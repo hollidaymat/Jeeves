@@ -116,6 +116,10 @@ export type ActionType =
   | 'homelab_self_test'       // Run self-test suite
   | 'homelab_security_status' // Security overview
   | 'homelab_firewall'        // Firewall management
+  // Media commands
+  | 'media_search'            // Search for movies/shows
+  | 'media_download'          // Download/add media to library
+  | 'media_status'            // Check download queue status
   | 'unknown'
   | 'denied';
 

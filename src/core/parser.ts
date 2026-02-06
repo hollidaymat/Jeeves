@@ -255,6 +255,11 @@ const PATTERNS = {
   homelabFirewallStatus: /^(?:firewall\s+status|firewall|show\s+firewall|ufw\s+status)$/i,
   homelabFirewallAllow: /^firewall\s+allow\s+(\d+)(?:\/(tcp|udp))?$/i,
   homelabFirewallDeny: /^firewall\s+deny\s+(\d+)$/i,
+
+  // Media commands
+  mediaSearch: /^(?:search|find|look\s*up|search\s+for)\s+(.+)/i,
+  mediaDownload: /^(?:download|get|grab|add|queue)\s+(.+)/i,
+  mediaStatus: /^(?:download(?:s|ing)?|queue|what'?s downloading|download status|download queue|media status|media queue)$/i,
   
   // List projects patterns  
   listProjects: /^(list|projects|list projects|show projects|what projects)$/i,
@@ -510,6 +515,27 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
     if (fwDenyMatch) {
       return { action: 'homelab_firewall', confidence: 1.0, data: { subcommand: 'deny', port: parseInt(fwDenyMatch[1], 10) }, resolutionMethod: 'pattern', estimatedCost: 0 };
     }
+
+    // Media: download status / queue (check before download verb to avoid "downloads" matching)
+    if (PATTERNS.mediaStatus.test(lower)) {
+      return { action: 'media_status', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Media: download / get / add (check BEFORE search so "download X" triggers add, not just search)
+    const downloadMatch = lower.match(PATTERNS.mediaDownload);
+    if (downloadMatch) {
+      const target = downloadMatch[1].trim();
+      // Exclude generic service names so "install qbittorrent" doesn't trigger media download
+      if (!['deps', 'dependencies', 'packages', 'modules'].includes(target)) {
+        return { action: 'media_download', target, confidence: 0.9, resolutionMethod: 'pattern', estimatedCost: 0 };
+      }
+    }
+
+    // Media: search / find / look up
+    const searchMatch = lower.match(PATTERNS.mediaSearch);
+    if (searchMatch) {
+      return { action: 'media_search', target: searchMatch[1].trim(), confidence: 0.9, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
   }
   
   // Help
@@ -594,7 +620,13 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
 \`security status\` → Security overview (firewall, SSH, SSL)
 \`firewall status\` → Show firewall rules
 \`firewall allow <port>\` → Open a port
-\`firewall deny <port>\` → Close a port`
+\`firewall deny <port>\` → Close a port
+
+**Media** (requires Sonarr/Radarr API keys):
+\`search <title>\` → Search for movies/shows
+\`download <title>\` → Add to library and download
+\`download <title> season 2\` → Download specific season
+\`downloads\` / \`queue\` → View download queue`
     };
   }
   

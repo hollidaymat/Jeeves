@@ -134,6 +134,14 @@ function initRegistry(): void {
       priority: 'high',
       dependencies: [],
       devices: ['/dev/dri:/dev/dri'], // GPU passthrough for transcoding
+      volumes: [
+        'jellyfin_config:/config',
+        'jellyfin_cache:/cache',
+        '/data/media/movies:/data/media/movies',
+        '/data/media/tv:/data/media/tv',
+        '/data/media/music:/data/media/music',
+      ],
+      environment: { PUID: '1000', PGID: '1000', TZ: 'America/New_York' },
     },
     {
       name: 'sonarr',

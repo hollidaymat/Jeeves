@@ -263,7 +263,20 @@ export class WebInterface implements MessageInterface {
   }
   
   async start(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      // Handle server errors (including EADDRINUSE)
+      this.server.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EADDRINUSE') {
+          logger.error(`Port ${config.server.port} is already in use. Waiting and retrying...`);
+          setTimeout(() => {
+            this.server.close();
+            this.server.listen(config.server.port, config.server.host);
+          }, 1000);
+        } else {
+          reject(err);
+        }
+      });
+      
       this.server.listen(config.server.port, config.server.host, () => {
         logger.info(`Web interface started at http://${config.server.host}:${config.server.port}`);
         resolve();
@@ -273,8 +286,31 @@ export class WebInterface implements MessageInterface {
   
   async stop(): Promise<void> {
     return new Promise((resolve) => {
-      this.wss.close();
+      // Close all WebSocket connections first
+      for (const client of this.clients) {
+        try {
+          client.close();
+        } catch {
+          // Ignore errors closing clients
+        }
+      }
+      this.clients.clear();
+      
+      // Close WebSocket server
+      try {
+        this.wss.close();
+      } catch {
+        // Ignore
+      }
+      
+      // Close HTTP server with timeout
+      const timeout = setTimeout(() => {
+        logger.debug('Force closing server after timeout');
+        resolve();
+      }, 1000);
+      
       this.server.close(() => {
+        clearTimeout(timeout);
         logger.info('Web interface stopped');
         resolve();
       });

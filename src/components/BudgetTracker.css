@@ -1,0 +1,233 @@
+.budget-tracker {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+  margin-bottom: 30px;
+  overflow: hidden;
+}
+
+.budget-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  background: linear-gradient(135deg, #4caf50 0%, #45a049 100%);
+  color: white;
+}
+
+.budget-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.add-budget-btn {
+  background: rgba(255,255,255,0.2);
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.2s ease;
+}
+
+.add-budget-btn:hover {
+  background: rgba(255,255,255,0.3);
+}
+
+.budget-form {
+  display: flex;
+  gap: 15px;
+  padding: 20px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e0e0e0;
+  align-items: center;
+}
+
+.budget-form select {
+  padding: 10px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 14px;
+  min-width: 150px;
+}
+
+.budget-amount-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.budget-amount-input .currency {
+  position: absolute;
+  left: 12px;
+  font-weight: 600;
+  color: #666;
+  z-index: 1;
+}
+
+.budget-amount-input input {
+  padding: 10px 10px 10px 30px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 14px;
+  width: 150px;
+}
+
+.budget-form button {
+  background: #4caf50;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.2s ease;
+}
+
+.budget-form button:hover {
+  background: #45a049;
+}
+
+.budget-list {
+  padding: 20px;
+}
+
+.budget-item {
+  margin-bottom: 20px;
+  padding: 20px;
+  background: #f8f9fa;
+  border-radius: 12px;
+  border-left: 4px solid #4caf50;
+}
+
+.budget-info {
+  margin-bottom: 15px;
+}
+
+.budget-category {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.category-name {
+  font-weight: 600;
+  font-size: 16px;
+  color: #333;
+}
+
+.remove-budget {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  opacity: 0.6;
+  transition: opacity 0.2s ease;
+}
+
+.remove-budget:hover {
+  opacity: 1;
+}
+
+.budget-amounts {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 5px;
+  font-size: 14px;
+}
+
+.spent {
+  color: #d32f2f;
+  font-weight: 600;
+}
+
+.budget-total {
+  color: #666;
+}
+
+.remaining {
+  font-size: 14px;
+}
+
+.remaining-positive {
+  color: #4caf50;
+  font-weight: 500;
+}
+
+.remaining-negative {
+  color: #d32f2f;
+  font-weight: 600;
+}
+
+.budget-progress {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.progress-bar {
+  flex: 1;
+  height: 8px;
+  background: #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.progress-percentage {
+  font-size: 14px;
+  font-weight: 600;
+  color: #666;
+  min-width: 40px;
+  text-align: right;
+}
+
+.no-budgets {
+  padding: 40px 20px;
+  text-align: center;
+  color: #666;
+}
+
+.no-budgets p {
+  margin: 0;
+  font-size: 16px;
+}
+
+@media (max-width: 768px) {
+  .budget-header {
+    flex-direction: column;
+    gap: 15px;
+    align-items: stretch;
+  }
+  
+  .budget-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .budget-form select,
+  .budget-amount-input input {
+    width: 100%;
+  }
+  
+  .budget-category {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  
+  .budget-amounts {
+    flex-direction: column;
+    gap: 5px;
+  }
+}

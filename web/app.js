@@ -48,7 +48,56 @@ class CommandCenter {
     this.pendingChanges = [];
     this.attachedFiles = [];  // Store attached files
     
+    // Command history
+    this.commandHistory = [];
+    this.historyIndex = -1;
+    this.currentInput = '';  // Store current input when navigating history
+    this.maxHistorySize = 100;
+    
+    // Load history from localStorage
+    this.loadCommandHistory();
+    
     this.init();
+  }
+  
+  loadCommandHistory() {
+    try {
+      const saved = localStorage.getItem('jeeves-command-history');
+      if (saved) {
+        this.commandHistory = JSON.parse(saved);
+      }
+    } catch (e) {
+      console.warn('Failed to load command history:', e);
+    }
+  }
+  
+  saveCommandHistory() {
+    try {
+      localStorage.setItem('jeeves-command-history', JSON.stringify(this.commandHistory));
+    } catch (e) {
+      console.warn('Failed to save command history:', e);
+    }
+  }
+  
+  addToHistory(command) {
+    // Don't add empty commands or duplicates of the last command
+    if (!command.trim()) return;
+    if (this.commandHistory.length > 0 && this.commandHistory[0] === command) return;
+    
+    // Add to beginning of history
+    this.commandHistory.unshift(command);
+    
+    // Trim to max size
+    if (this.commandHistory.length > this.maxHistorySize) {
+      this.commandHistory = this.commandHistory.slice(0, this.maxHistorySize);
+    }
+    
+    // Reset history navigation
+    this.historyIndex = -1;
+    this.currentInput = '';
+    
+    // Persist
+    this.saveCommandHistory();
   }
   
   init() {
@@ -374,11 +423,43 @@ class CommandCenter {
       this.autoResizeTextarea();
     });
     
+    // Handle paste - resize after content is inserted
+    this.elements.commandInput.addEventListener('paste', () => {
+      // Use requestAnimationFrame for more reliable DOM update detection
+      requestAnimationFrame(() => {
+        this.autoResizeTextarea();
+        // Double-check after a small delay for large pastes
+        setTimeout(() => this.autoResizeTextarea(), 50);
+      });
+    });
+    
+    // Also handle drop events (drag and drop text)
+    this.elements.commandInput.addEventListener('drop', () => {
+      requestAnimationFrame(() => {
+        this.autoResizeTextarea();
+      });
+    });
+    
     this.elements.commandInput.addEventListener('keydown', (e) => {
       // Enter without Shift = submit, Shift+Enter = new line
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         this.elements.commandForm.dispatchEvent(new Event('submit'));
+        return;
+      }
+      
+      // Arrow Up = previous command in history
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        this.navigateHistory('up');
+        return;
+      }
+      
+      // Arrow Down = next command in history
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        this.navigateHistory('down');
+        return;
       }
     });
     
@@ -632,13 +713,60 @@ class CommandCenter {
   
   autoResizeTextarea() {
     const textarea = this.elements.commandInput;
-    // Reset height to auto to get the correct scrollHeight
-    textarea.style.height = 'auto';
-    // Set height to scrollHeight (capped by max-height in CSS)
-    textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
+    // Store scroll position to prevent jump
+    const scrollTop = textarea.scrollTop;
+    
+    // Reset height to get accurate scrollHeight measurement
+    textarea.style.height = '0';
+    
+    // Calculate new height (minimum 24px for single line, max 200px)
+    const newHeight = Math.max(24, Math.min(textarea.scrollHeight, 200));
+    textarea.style.height = newHeight + 'px';
+    
+    // Restore scroll position
+    textarea.scrollTop = scrollTop;
+  }
+  
+  navigateHistory(direction) {
+    if (this.commandHistory.length === 0) return;
+    
+    const input = this.elements.commandInput;
+    
+    if (direction === 'up') {
+      // First up press - save current input
+      if (this.historyIndex === -1) {
+        this.currentInput = input.value;
+      }
+      
+      // Move up in history
+      if (this.historyIndex < this.commandHistory.length - 1) {
+        this.historyIndex++;
+        input.value = this.commandHistory[this.historyIndex];
+        this.autoResizeTextarea();
+        // Move cursor to end
+        input.selectionStart = input.selectionEnd = input.value.length;
+      }
+    } else if (direction === 'down') {
+      if (this.historyIndex > 0) {
+        // Move down in history
+        this.historyIndex--;
+        input.value = this.commandHistory[this.historyIndex];
+        this.autoResizeTextarea();
+        input.selectionStart = input.selectionEnd = input.value.length;
+      } else if (this.historyIndex === 0) {
+        // Back to current input
+        this.historyIndex = -1;
+        input.value = this.currentInput;
+        this.autoResizeTextarea();
+        input.selectionStart = input.selectionEnd = input.value.length;
+      }
+    }
   }
   
   async sendCommand(command) {
+    // Add to command history
+    this.addToHistory(command);
+    
     // Build command with attachments
     let fullCommand = command;
     const attachmentInfo = [];

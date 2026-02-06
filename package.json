@@ -8,7 +8,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "echo \"No tests yet\" && exit 0"
+    "test": "tsx tests/parser.test.ts",
+    "test:watch": "tsx watch tests/parser.test.ts"
   },
   "keywords": [
     "cursor",

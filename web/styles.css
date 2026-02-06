@@ -375,7 +375,7 @@ body::before {
 
 .console-input {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 0.5rem;
   padding: 1rem;
   background: var(--bg-tertiary);
@@ -398,7 +398,14 @@ body::before {
   font-size: 0.875rem;
   resize: none;
   min-height: 1.5rem;
+  max-height: 200px;
   line-height: 1.5;
+  overflow-y: auto;
+  overflow-x: hidden;
+  word-wrap: break-word;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
 }
 
 .console-input input::placeholder,
@@ -907,6 +914,12 @@ body::before {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  min-width: 0; /* Allow shrinking */
+}
+
+.input-wrapper textarea {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .attach-btn {

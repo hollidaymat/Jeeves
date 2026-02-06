@@ -1,6 +1,7 @@
 /**
  * Jeeves - Your AI Employee
  * Main entry point
+ * Updated: max_tokens now 8000 for complete file generation
  */
 
 import { config, validateConfig } from './config.js';
@@ -83,21 +84,51 @@ async function main() {
   }
   logger.info('Press Ctrl+C to stop');
 
-  // Graceful shutdown
-  process.on('SIGINT', async () => {
-    logger.info('Shutting down...');
-    await signalInterface.stop();
-    await webInterface.stop();
-    await mockInterface.stop();
+  // Graceful shutdown handler
+  let isShuttingDown = false;
+  const shutdown = async (signal: string) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    
+    logger.info(`Shutting down (${signal})...`);
+    
+    try {
+      // Close all interfaces
+      await Promise.race([
+        Promise.all([
+          signalInterface.stop().catch(() => {}),
+          webInterface.stop().catch(() => {}),
+          mockInterface.stop().catch(() => {})
+        ]),
+        new Promise(resolve => setTimeout(resolve, 2000)) // 2s timeout
+      ]);
+    } catch {
+      // Ignore errors during shutdown
+    }
+    
     process.exit(0);
+  };
+
+  // Handle various shutdown signals
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGHUP', () => shutdown('SIGHUP'));
+  
+  // Handle tsx watch restarts on Windows
+  process.on('exit', () => {
+    if (!isShuttingDown) {
+      try {
+        webInterface.stop().catch(() => {});
+      } catch {
+        // Ignore
+      }
+    }
   });
 
-  process.on('SIGTERM', async () => {
-    logger.info('Shutting down...');
-    await signalInterface.stop();
-    await webInterface.stop();
-    await mockInterface.stop();
-    process.exit(0);
+  // Handle uncaught errors gracefully
+  process.on('uncaughtException', (error) => {
+    logger.error('Uncaught exception', { error: String(error) });
+    shutdown('uncaughtException');
   });
 }
 

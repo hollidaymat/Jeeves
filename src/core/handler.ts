@@ -172,21 +172,27 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
         tokensUsed: cognitiveResult.tokensUsed
       });
       
-      // Handle cognitive decisions
+      // Handle cognitive decisions - BE PERMISSIVE
+      // Only refuse for truly dangerous operations, otherwise proceed
       switch (cognitiveResult.action) {
         case 'refuse':
-          return {
-            recipient: sender,
-            content: cognitiveResult.response || 'Cannot perform this action.',
-            replyTo: message.id
-          };
+          // Check if this is actually dangerous (file deletion, force push, etc.)
+          const isDangerous = /\b(rm\s+-rf|force\s+push|drop\s+table|delete\s+all|format\s+drive)\b/i.test(content);
+          if (isDangerous) {
+            return {
+              recipient: sender,
+              content: cognitiveResult.response || 'Cannot perform this action.',
+              replyTo: message.id
+            };
+          }
+          // Not actually dangerous - just proceed with a debug note
+          logger.debug('Cognitive refused but proceeding (not dangerous)', { content: content.substring(0, 50) });
+          break;
           
         case 'clarify':
-          return {
-            recipient: sender,
-            content: cognitiveResult.response || 'I need more information to proceed.',
-            replyTo: message.id
-          };
+          // Don't stop to ask - just proceed with best guess
+          logger.debug('Skipping clarification, proceeding with intent', { content: content.substring(0, 50) });
+          break;
           
         case 'notice':
           // Continue execution but with a notice

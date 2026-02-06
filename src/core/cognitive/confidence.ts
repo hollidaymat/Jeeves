@@ -62,13 +62,114 @@ export const THRESHOLDS = {
 };
 
 // ==========================================
+// CONFIDENCE ACTION TEMPLATES
+// ==========================================
+
+export interface ConfidenceActionTemplate {
+  action: ConfidenceAction;
+  template: string;
+  requiresConfirmation: boolean;
+}
+
+/**
+ * Get user-facing response template based on confidence score
+ */
+export function getConfidenceActionTemplate(
+  score: number, 
+  action?: string, 
+  target?: string
+): ConfidenceActionTemplate {
+  if (score >= THRESHOLDS.actAutonomously) {
+    return {
+      action: 'act_autonomous',
+      template: '', // No message needed, just execute
+      requiresConfirmation: false
+    };
+  }
+  
+  if (score >= THRESHOLDS.actWithNotice) {
+    const actionStr = action || 'perform this action';
+    const targetStr = target ? ` on "${target}"` : '';
+    return {
+      action: 'act_with_notice',
+      template: `I'll ${actionStr}${targetStr}. Let me know if that's not what you meant.`,
+      requiresConfirmation: false
+    };
+  }
+  
+  if (score >= THRESHOLDS.askFirst) {
+    const actionStr = action || 'do something';
+    const targetStr = target || 'this';
+    return {
+      action: 'ask_first',
+      template: `I think you want me to ${actionStr} "${targetStr}". Is that correct?`,
+      requiresConfirmation: true
+    };
+  }
+  
+  if (score >= THRESHOLDS.refuse) {
+    return {
+      action: 'ask_first',
+      template: `I'm not sure what you mean. Did you want to:\nA) Perform an action\nB) Ask a question\nC) Something else`,
+      requiresConfirmation: true
+    };
+  }
+  
+  return {
+    action: 'refuse',
+    template: `I didn't understand that request. Could you rephrase it?`,
+    requiresConfirmation: true
+  };
+}
+
+/**
+ * Generate clarification options based on parsed intent possibilities
+ */
+export function generateClarificationOptions(
+  possibilities: Array<{ action: string; target: string; confidence: number }>
+): string {
+  if (possibilities.length === 0) {
+    return "I didn't understand that. Could you rephrase?";
+  }
+  
+  if (possibilities.length === 1) {
+    const p = possibilities[0];
+    return `Did you mean: ${p.action} "${p.target}"?`;
+  }
+  
+  const options = possibilities
+    .slice(0, 3)
+    .map((p, i) => `${String.fromCharCode(65 + i)}) ${p.action} "${p.target}"`)
+    .join('\n');
+  
+  return `I'm not sure what you meant. Did you want to:\n${options}\nD) Something else`;
+}
+
+/**
+ * Format confirmation request for user
+ */
+export function formatConfirmationRequest(
+  action: string,
+  target: string,
+  isDestructive: boolean = false
+): string {
+  if (isDestructive) {
+    return `⚠️ This will ${action} "${target}". This action may be destructive. Are you sure? (yes/no)`;
+  }
+  
+  return `I'll ${action} "${target}". Proceed? (yes/no)`;
+}
+
+// ==========================================
 // PATTERNS FOR QUICK SCORING
 // ==========================================
 
 const TRIVIAL_PATTERNS = [
   /^(hi|hey|hello|status|help|cost|ping|test)$/i,
   /^(how are you|what's up|you there)$/i,
-  /^(list projects|show projects)$/i
+  /^(list projects|show projects)$/i,
+  /\b(what can you do|your (skills|capabilities))\b/i,
+  /\b(tell me (about yourself|what you think))\b/i
 ];
 
 const DESTRUCTIVE_PATTERNS = [
@@ -396,11 +497,52 @@ export function formatConfidenceReport(result: ConfidenceResult): string {
  * (e.g., pattern-matched commands that are always safe)
  */
 export function shouldBypassScoring(message: string): boolean {
-  const bypassPatterns = [
-    /^(status|help|cost|ping|list projects)$/i,
+  const lower = message.toLowerCase().trim();
+  
+  // Exact match patterns
+  const exactBypassPatterns = [
+    /^(status|help|cost|ping|list projects|apply|reject|yes|no)$/i,
     /^use (haiku|sonnet|opus|auto)$/i,
-    /^compact$/i
+    /^compact$/i,
+    /^clear\s+(?:conversation\s+)?history$/i,
+    // Project loading commands - always safe (allow hyphens, underscores, dots in project names)
+    /^(?:open|load|start|switch to|go to|work on)\s+[\w\-_.]+$/i,
+    // Project creation commands - always safe
+    /^(?:create|new|init|bootstrap|scaffold)\s+(?:a\s+)?(?:new\s+)?(?:project\s+)?\w+/i,
+    // Plan/PRD approval patterns - always safe
+    /^(?:yes|yep|yeah|go|go ahead|do it|proceed|execute|run it|approved?|confirm|ok|okay|sure|let'?s?\s*go|lgtm|looks good|start building)$/i,
+    // PRD/Phase continuation commands - always safe
+    /^(?:continue|next|keep going|go on|proceed|next phase|carry on|resume)$/i,
+    // Continue building project - always safe
+    /^(?:continue(?: the)?(?: (?:project|building|build|work))?|keep building|finish(?: the)?(?: (?:project|it|build))?|just build(?: it)?|build it|build to completion|finish building|complete the build|build everything)$/i,
+    // Apply last response - always safe
+    /^(?:apply (?:that|this|last|it|the code|response)|use (?:that|this) code|save (?:that|it))$/i
   ];
   
-  return bypassPatterns.some(p => p.test(message.trim()));
+  if (exactBypassPatterns.some(p => p.test(lower))) {
+    return true;
+  }
+  
+  // Conversational/introspection patterns - questions about Jeeves itself
+  const conversationalPatterns = [
+    /\b(what can you|what do you|tell me about yourself|your (skills|capabilities|features))\b/i,
+    /\b(how are you|what's new|what did you learn)\b/i,
+    /\b(take a look at|check out|review) (your|the new)\b/i,
+    /\b(new (skills|capabilities|features))\b/i,
+    /\b(what do you think|how do you feel)\b/i,
+    /\bhey|hi|hello|greetings\b/i,
+    /\b(thanks|thank you|great job|good work|nice)\b/i,
+    // Simple status questions - always safe
+    /^is it (built|done|ready|finished|complete|working)\??$/i,
+    /^(are|is) (we|it|that) (done|ready|finished)\??$/i,
+    /^(what'?s|what is) the (status|progress)\??$/i,
+    /^how('?s| is) it (going|looking)\??$/i,
+    /^did (it|that|you) (work|finish|complete)\??$/i
+  ];
+  
+  if (conversationalPatterns.some(p => p.test(lower))) {
+    return true;
+  }
+  
+  return false;
 }

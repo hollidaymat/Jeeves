@@ -126,13 +126,14 @@ const QUESTION_TEMPLATES: Record<string, string[]> = {
 export async function analyzeClarificationNeeds(
   context: ClarificationContext
 ): Promise<ClarificationResult> {
-  const { message, concerns, suggestedQuestions } = context;
+  const { message, concerns, suggestedQuestions = [] } = context;
   
   // Collect potential questions
   const allQuestions: ClarificationQuestion[] = [];
   
   // 1. Add suggested questions from confidence scoring
-  for (const q of suggestedQuestions) {
+  const questions = Array.isArray(suggestedQuestions) ? suggestedQuestions : [];
+  for (const q of questions) {
     const priority = determinePriority(q, message);
     allQuestions.push({
       question: q,
@@ -161,14 +162,21 @@ export async function analyzeClarificationNeeds(
 
 /**
  * Generate clarifying questions using LLM for complex cases
+ * NOTE: LLM call disabled due to consistent failures - using heuristics directly
+ * This saves API calls and latency while still providing good results
  */
 export async function generateSmartQuestions(
   context: ClarificationContext
 ): Promise<ClarificationResult> {
+  // Skip LLM call - heuristics work well enough and are faster
+  // The LLM call was failing consistently ("other side closed" errors)
+  return analyzeClarificationNeeds(context);
+  
+  /* DISABLED - LLM-based question generation
   try {
     const anthropic = createAnthropic({
       apiKey: process.env.ANTHROPIC_API_KEY
-    });
+    });*/
     
     const prompt = `Analyze this request and determine what clarifications are needed.
 
@@ -229,10 +237,12 @@ Respond with ONLY JSON:
       metaQuestion: parsed.needsMetaQuestion ? parsed.metaQuestion : undefined
     };
     
+  /* DISABLED - catch block for LLM-based generation
   } catch (error) {
     logger.warn('Smart question generation failed, using heuristics', { error: String(error) });
     return analyzeClarificationNeeds(context);
   }
+  */
 }
 
 // ==========================================

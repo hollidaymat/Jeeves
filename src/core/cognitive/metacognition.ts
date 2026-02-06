@@ -147,18 +147,30 @@ export async function think(
   });
   
   // ==========================================
-  // STEP 3: HANDLE REFUSE ACTION
+  // STEP 3: HANDLE REFUSE ACTION (BE PERMISSIVE)
   // ==========================================
   
-  if (confidenceResult.action === 'refuse') {
+  // Only refuse if actually dangerous - check for destructive patterns
+  const isDangerous = /\b(rm\s+-rf|force\s+push|drop\s+(table|database)|delete\s+all|format\s+(c:|drive)|truncate)\b/i.test(message);
+  
+  if (confidenceResult.action === 'refuse' && isDangerous) {
     return {
       action: 'refuse',
       confidence: confidenceResult.score,
-      response: confidenceResult.notice || 'I cannot perform this action for safety reasons.',
+      response: confidenceResult.notice || 'This appears to be a destructive operation. Please confirm.',
       processingTime: Date.now() - startTime,
       tokensUsed,
       bypassedScoring: false
     };
+  }
+  
+  // If confidence said refuse but it's not dangerous, proceed anyway
+  if (confidenceResult.action === 'refuse') {
+    logger.debug('Confidence wanted to refuse but proceeding (not dangerous)', { 
+      message: message.substring(0, 50),
+      safety: confidenceResult.score.safety 
+    });
+    // Don't refuse, fall through to proceed
   }
   
   // ==========================================

@@ -35,6 +35,10 @@ export interface LoadedSkill {
 // Cache loaded skills
 let skillsCache: Map<string, LoadedSkill> | null = null;
 
+// Track capabilities conversation state
+let capabilitiesConversationActive = false;
+let capabilitiesConversationExpiry = 0;
+
 /**
  * Parse YAML-like frontmatter from SKILL.md
  */
@@ -290,4 +294,148 @@ export async function getSkillContext(prompt: string, projectType?: string): Pro
  */
 export function clearSkillsCache(): void {
   skillsCache = null;
+}
+
+/**
+ * Check if prompt is asking about Jeeves' capabilities
+ * Also considers follow-up questions when in a capabilities conversation
+ */
+export function isCapabilitiesQuery(prompt: string): boolean {
+  const lower = prompt.toLowerCase();
+  
+  // Direct capability questions
+  const directPatterns = [
+    /what can you/,
+    /your (capabilities|features|skills|abilities)/,
+    /tell me about yourself/,
+    /what do you do/,
+    /new features/,
+    /what's new/,
+    /what did you learn/,
+    /what (are|were) (the )?(new|added)/,
+    /i added/,
+    /we added/,
+    /just added/,
+    /take a look at (your|the new)/,
+    /check out (your|the new)/,
+    /tell me what you think/,
+    /your new/
+  ];
+  
+  if (directPatterns.some(p => p.test(lower))) {
+    // Activate capabilities conversation mode for 5 minutes
+    capabilitiesConversationActive = true;
+    capabilitiesConversationExpiry = Date.now() + 5 * 60 * 1000;
+    return true;
+  }
+  
+  // Check if we're in an active capabilities conversation (for follow-ups)
+  if (capabilitiesConversationActive && Date.now() < capabilitiesConversationExpiry) {
+    // Follow-up patterns that should keep the capabilities context
+    const followUpPatterns = [
+      /what do you think/,
+      /how do you feel/,
+      /tell me more/,
+      /elaborate/,
+      /explain/,
+      /which (one|feature)/,
+      /favorite/,
+      /most (useful|important|interesting)/,
+      /excited about/,
+      /about (that|this|it|them)/,
+      /how does that/,
+      /why is that/,
+      /can you/,
+      /do you like/,
+      /opinion/,
+      /thoughts/
+    ];
+    
+    if (followUpPatterns.some(p => p.test(lower))) {
+      // Extend the conversation window
+      capabilitiesConversationExpiry = Date.now() + 5 * 60 * 1000;
+      return true;
+    }
+    
+    // Short responses that are likely follow-ups (< 15 words)
+    const wordCount = prompt.split(/\s+/).length;
+    if (wordCount < 15) {
+      // Check for pronouns that reference previous context
+      if (/\b(it|that|this|those|them|these)\b/.test(lower)) {
+        capabilitiesConversationExpiry = Date.now() + 5 * 60 * 1000;
+        return true;
+      }
+    }
+  }
+  
+  return false;
+}
+
+/**
+ * Reset capabilities conversation state (e.g., on clear history)
+ */
+export function resetCapabilitiesConversation(): void {
+  capabilitiesConversationActive = false;
+  capabilitiesConversationExpiry = 0;
+}
+
+/**
+ * Check if currently in a capabilities follow-up conversation
+ */
+export function isCapabilitiesFollowUp(): boolean {
+  return capabilitiesConversationActive && Date.now() < capabilitiesConversationExpiry;
+}
+
+/**
+ * Load Jeeves capabilities description
+ */
+export async function getCapabilitiesContext(isFollowUp: boolean = false): Promise<string> {
+  const capabilitiesPath = join(__dirname, '../../data/capabilities.md');
+  
+  logger.info('Loading capabilities', { path: capabilitiesPath, exists: existsSync(capabilitiesPath), isFollowUp });
+  
+  try {
+    if (existsSync(capabilitiesPath)) {
+      const content = await readFile(capabilitiesPath, 'utf-8');
+      logger.info('Capabilities file loaded', { contentLength: content.length });
+      
+      if (isFollowUp) {
+        // For follow-up questions, provide context without the heavy-handed instructions
+        return `
+## CONTEXT: CAPABILITIES CONVERSATION
+
+You are in a conversation about your own capabilities and features. The document below describes what you can do. Use this information to continue the discussion naturally.
+
+You already described these features. Now the user wants to discuss them further - share your thoughts, explain how features work, discuss what you find interesting or useful.
+
+---
+
+${content}
+
+---
+
+**Important**: This is a genuine conversation. Engage naturally and share your perspective on these features.`;
+      }
+      
+      // Initial query - be explicit about using the info
+      return `
+## YOUR CAPABILITIES
+
+The user is asking about your features or capabilities. Below is an accurate description of what you can do.
+
+---
+
+${content}
+
+---
+
+**Instructions**: Describe your capabilities naturally based on the above. For questions about "new features", highlight the "Recent Additions" section. Be helpful and conversational.`;
+    } else {
+      logger.warn('Capabilities file not found', { path: capabilitiesPath });
+    }
+  } catch (err) {
+    logger.error('Failed to load capabilities', { error: String(err) });
+  }
+  
+  return '';
 }

@@ -437,6 +437,17 @@ export function addGeneralMessage(
 }
 
 /**
+ * Clear general conversation history
+ */
+export function clearGeneralConversations(): { cleared: number } {
+  const store = loadMemory();
+  const count = store.generalConversations?.length || 0;
+  store.generalConversations = [];
+  saveMemory();
+  return { cleared: count };
+}
+
+/**
  * Export all conversations as downloadable data
  */
 export function exportConversations(format: 'json' | 'markdown' = 'json'): { 

@@ -377,7 +377,8 @@ export function parseTerminalRequest(input: string): TerminalCommand | null {
     };
   }
 
-  const npmTestMatch = lower.match(/(?:run\s+)?(?:the\s+)?tests?|npm\s+test/i);
+  // Only match explicit test commands, not just the word "tests" in content
+  const npmTestMatch = lower.match(/^(?:run\s+)?(?:the\s+)?tests?$|^npm\s+test$/i);
   if (npmTestMatch) {
     return {
       type: 'npm',
@@ -387,7 +388,9 @@ export function parseTerminalRequest(input: string): TerminalCommand | null {
     };
   }
 
-  const npmBuildMatch = lower.match(/(?:run\s+)?(?:a\s+)?build|npm\s+(?:run\s+)?build/i);
+  // Only match explicit build commands, not phrases like "continue the build"
+  // Must start with these patterns or be at beginning of string
+  const npmBuildMatch = lower.match(/^(?:(?:run\s+)?(?:a\s+)?build|npm\s+(?:run\s+)?build)$/i);
   if (npmBuildMatch) {
     return {
       type: 'npm',

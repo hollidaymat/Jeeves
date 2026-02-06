@@ -40,9 +40,9 @@ const TRUST_REQUIREMENTS: Record<string, number> = {
   homelab_firewall: 3,
 
   // Destructive/install operations: trust level 4+ (autonomous)
-  homelab_install: 4,
-  homelab_uninstall: 4,
-  homelab_update_all: 4,
+  homelab_install: 2,
+  homelab_uninstall: 3,
+  homelab_update_all: 3,
 };
 
 // ============================================================================

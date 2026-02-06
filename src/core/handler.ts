@@ -86,7 +86,7 @@ function formatResponse(intent: ParsedIntent, result: ExecutionResult): string {
   if (result.success) {
     return result.output || `✓ ${intent.action} completed`;
   } else {
-    return `✗ ${result.error || 'Unknown error'}`;
+    return `✗ ${result.error || result.output || 'Unknown error'}`;
   }
 }
 

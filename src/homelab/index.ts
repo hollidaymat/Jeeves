@@ -48,6 +48,7 @@ const TRUST_REQUIREMENTS: Record<string, number> = {
   media_search: 2,
   media_download: 2,
   media_select: 2,
+  media_more: 2,
   media_status: 2,
 };
 
@@ -211,6 +212,9 @@ export async function executeHomelabAction(
 
       case 'media_select':
         return await handleMediaSelect(serviceName);
+
+      case 'media_more':
+        return await handleMediaMore();
 
       case 'media_status':
         return await handleMediaStatus();
@@ -683,6 +687,18 @@ async function handleMediaSelect(indexStr: string): Promise<ExecutionResult> {
   return {
     success: result.success,
     output: `${icon} ${result.message}`,
+    duration_ms: Date.now() - startTime,
+  };
+}
+
+async function handleMediaMore(): Promise<ExecutionResult> {
+  const startTime = Date.now();
+  const media = await getMediaSearch();
+  const result = media.showNextResults();
+
+  return {
+    success: result.success,
+    output: result.success ? `✅ ${result.message}` : `${result.message}`,
     duration_ms: Date.now() - startTime,
   };
 }

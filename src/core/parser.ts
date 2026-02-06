@@ -260,6 +260,7 @@ const PATTERNS = {
   mediaSearch: /^(?:search|find|look\s*up|search\s+for)\s+(.+)/i,
   mediaDownload: /^(?:download|get|grab|add|queue)\s+(.+)/i,
   mediaSelect: /^([1-9]\d?)$/,  // Just a number (1-99) when pending media results exist
+  mediaMore: /^(?:more|next|next\s+results|more\s+results|show\s+more|next\s+page)$/i,
   mediaStatus: /^(?:download(?:s|ing)?|queue|what'?s downloading|download status|download queue|media status|media queue)$/i,
   
   // List projects patterns  
@@ -522,6 +523,11 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
     if (selectMatch) {
       // Return media_select -- the router will check if there are actually pending results
       return { action: 'media_select', target: selectMatch[1], confidence: 0.8, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Media: next page of results
+    if (PATTERNS.mediaMore.test(lower)) {
+      return { action: 'media_more', confidence: 0.9, resolutionMethod: 'pattern', estimatedCost: 0 };
     }
 
     // Media: download status / queue (check before download verb to avoid "downloads" matching)

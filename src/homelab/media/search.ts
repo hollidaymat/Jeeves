@@ -66,6 +66,9 @@ export interface MediaQueueResult {
 // ============================================================================
 
 let pendingResults: MediaResult[] = [];
+let allCandidates: MediaResult[] = [];
+let pendingPage = 0;
+const PAGE_SIZE = 5;
 let pendingQuery: { query: string; season?: number; type?: 'movie' | 'series' } | null = null;
 
 export function getPendingMediaResults(): MediaResult[] {
@@ -74,11 +77,45 @@ export function getPendingMediaResults(): MediaResult[] {
 
 export function clearPendingMedia(): void {
   pendingResults = [];
+  allCandidates = [];
+  pendingPage = 0;
   pendingQuery = null;
 }
 
 export function hasPendingMedia(): boolean {
   return pendingResults.length > 0;
+}
+
+/**
+ * Show the next page of results from a previous search.
+ */
+export function showNextResults(): { success: boolean; message: string } {
+  if (allCandidates.length === 0) {
+    return { success: false, message: 'No previous search results. Try downloading something first.' };
+  }
+
+  const nextPage = pendingPage + 1;
+  const start = nextPage * PAGE_SIZE;
+  if (start >= allCandidates.length) {
+    return { success: false, message: `No more results. Showing all ${allCandidates.length} of ${allCandidates.length}.` };
+  }
+
+  pendingPage = nextPage;
+  const top = allCandidates.slice(start, start + PAGE_SIZE);
+  pendingResults = top;
+
+  const totalShown = Math.min(start + PAGE_SIZE, allCandidates.length);
+  let message = `Results ${start + 1}-${totalShown} of ${allCandidates.length} for "${pendingQuery?.query || '?'}":\n\n`;
+  for (let i = 0; i < top.length; i++) {
+    const r = top[i];
+    const icon = r.type === 'movie' ? '🎬' : '📺';
+    const inLib = r.inLibrary ? ' ✅' : '';
+    const extra = r.type === 'series' && r.seasonCount ? ` (${r.seasonCount} seasons)` : '';
+    message += `[${i + 1}] ${icon} ${r.title} (${r.year})${extra}${inLib}\n`;
+  }
+  message += `\nReply with a number (1-${top.length}) to download, or "more" for next page.`;
+
+  return { success: true, message };
 }
 
 /**
@@ -558,15 +595,38 @@ async function getRadarrQueue(): Promise<QueueItem[]> {
 export async function searchMedia(query: string): Promise<MediaSearchResult> {
   logger.info('Media search', { query });
 
+  // Search with original query
   const [sonarrResults, radarrResults] = await Promise.all([
     searchSonarr(query),
     searchRadarr(query),
   ]);
 
-  // Combine and sort by title similarity to query (best match first)
-  const results = [...sonarrResults, ...radarrResults].sort((a, b) => {
-    const scoreA = titleSimilarity(query, a.title);
-    const scoreB = titleSimilarity(query, b.title);
+  // Also try with spaces removed (e.g., "old boy" -> "oldboy") to catch concatenated titles
+  const noSpaces = query.replace(/\s+/g, '');
+  let extraSonarr: MediaResult[] = [];
+  let extraRadarr: MediaResult[] = [];
+  if (noSpaces !== query.toLowerCase().replace(/\s+/g, '') || query.includes(' ')) {
+    [extraSonarr, extraRadarr] = await Promise.all([
+      searchSonarr(noSpaces),
+      searchRadarr(noSpaces),
+    ]);
+  }
+
+  // Merge and deduplicate by title+year
+  const seen = new Set<string>();
+  const allResults: MediaResult[] = [];
+  for (const r of [...sonarrResults, ...radarrResults, ...extraSonarr, ...extraRadarr]) {
+    const key = `${r.title.toLowerCase()}-${r.year}-${r.type}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      allResults.push(r);
+    }
+  }
+
+  // Sort by title similarity to query (best match first)
+  const results = allResults.sort((a, b) => {
+    const scoreA = Math.max(titleSimilarity(query, a.title), titleSimilarity(noSpaces, a.title));
+    const scoreB = Math.max(titleSimilarity(query, b.title), titleSimilarity(noSpaces, b.title));
     return scoreB - scoreA;
   });
 
@@ -642,7 +702,9 @@ export async function addMedia(
   }
 
   // Multiple candidates or uncertain match -- show options and let user pick
-  const top = candidates.slice(0, 5);
+  allCandidates = candidates;
+  pendingPage = 0;
+  const top = candidates.slice(0, PAGE_SIZE);
   pendingResults = top;
   pendingQuery = { query, season: options?.season, type: options?.type };
 
@@ -652,9 +714,13 @@ export async function addMedia(
     const icon = r.type === 'movie' ? '🎬' : '📺';
     const inLib = r.inLibrary ? ' ✅' : '';
     const extra = r.type === 'series' && r.seasonCount ? ` (${r.seasonCount} seasons)` : '';
-    message += `${i + 1}. ${icon} ${r.title} (${r.year})${extra}${inLib}\n`;
+    message += `[${i + 1}] ${icon} ${r.title} (${r.year})${extra}${inLib}\n`;
   }
-  message += `\nReply with a number (1-${top.length}) to download.`;
+  message += `\nReply with a number (1-${top.length}) to download`;
+  if (candidates.length > PAGE_SIZE) {
+    message += `, or "more" for next page`;
+  }
+  message += '.';
 
   return { success: true, message };
 }

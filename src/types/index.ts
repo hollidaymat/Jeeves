@@ -120,6 +120,7 @@ export type ActionType =
   | 'media_search'            // Search for movies/shows
   | 'media_download'          // Download/add media to library
   | 'media_select'            // Select from pending media results (by number)
+  | 'media_more'              // Show next page of media results
   | 'media_status'            // Check download queue status
   | 'unknown'
   | 'denied';

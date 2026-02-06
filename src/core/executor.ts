@@ -21,7 +21,9 @@ import {
   listBackups,
   restoreFromBackup
 } from './cursor-agent.js';
-import { getDailyReport, trackPatternMatch } from './cost-tracker.js';
+import { getDailyReport, trackPatternMatch, getCostSummary } from './cost-tracker.js';
+import { getBuildSummary, loadLessons } from './learning.js';
+import { executeHomelabAction, isHomelabEnabled } from '../homelab/index.js';
 import {
   executeTerminalCommand,
   stopTerminalProcess,
@@ -44,7 +46,8 @@ import {
   requestTrustUpgrade, 
   getTrustStatus,
   getTrustHistory,
-  getLearnedPreferences 
+  getLearnedPreferences,
+  getTrustLevel
 } from './trust.js';
 import {
   browse,
@@ -142,7 +145,56 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     trackPatternMatch('show_cost');
     return {
       success: true,
-      output: getDailyReport(),
+      output: getDailyReport() + '\n\n' + getCostSummary(),
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // Build history - shows past builds and their costs
+  if (intent.action === 'show_builds') {
+    trackPatternMatch('show_builds');
+    return {
+      success: true,
+      output: getBuildSummary(),
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // Lessons learned - shows optimization rules and anti-patterns
+  if (intent.action === 'show_lessons') {
+    trackPatternMatch('show_lessons');
+    const lessons = loadLessons();
+    if (!lessons) {
+      return {
+        success: true,
+        output: 'No lessons learned yet. Build some projects first!',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    let output = `## Lessons Learned\n\n`;
+    
+    output += `### Cost Optimization Rules\n`;
+    lessons.costOptimization.rules.forEach(rule => {
+      output += `- **${rule.rule}** (learned from ${rule.learnedFrom})\n`;
+      output += `  ${rule.reason}\n`;
+    });
+    
+    output += `\n### Build Anti-Patterns\n`;
+    lessons.buildExecution.antiPatterns.forEach(ap => {
+      output += `- ❌ **${ap.pattern}**\n`;
+      output += `  Problem: ${ap.problem}\n`;
+      output += `  ✅ Solution: ${ap.solution}\n`;
+    });
+    
+    output += `\n### Priority Improvements\n`;
+    lessons.nextImprovements.forEach(imp => {
+      output += `${imp.priority}. ${imp.improvement} (saves: ${imp.estimatedSavings})\n`;
+    });
+    
+    return {
+      success: true,
+      output,
       duration_ms: Date.now() - startTime
     };
   }
@@ -267,6 +319,30 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     };
   }
   
+  // ===== HOMELAB ACTIONS =====
+  if (intent.action.startsWith('homelab_')) {
+    trackPatternMatch(intent.action);
+    
+    if (!isHomelabEnabled()) {
+      return {
+        success: false,
+        error: 'Homelab mode is not enabled. Set homelab.enabled = true in config.json (Linux only).',
+        duration_ms: Date.now() - startTime
+      };
+    }
+
+    // Get current trust level for gating
+    const currentTrust = getTrustLevel();
+
+    const result = await executeHomelabAction(intent, currentTrust);
+    return {
+      success: result.success,
+      output: result.output || result.error,
+      error: result.error,
+      duration_ms: Date.now() - startTime
+    };
+  }
+
   if (intent.action === 'unknown') {
     return {
       success: false,
@@ -279,6 +355,34 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     return {
       success: false,
       error: intent.message || 'Command denied',
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // Create new project
+  if (intent.action === 'create_project') {
+    if (!intent.target) {
+      return {
+        success: false,
+        error: 'No project name specified',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    const { createProject } = await import('./project-scanner.js');
+    const result = createProject(intent.target);
+    
+    if (result.success && result.path) {
+      // Auto-start the agent session for the new project
+      const startResult = await startAgentSession(result.path);
+      return {
+        success: true,
+        output: `Created project "${intent.target}" at ${result.path}\n\n${startResult.message}`,
+        duration_ms: Date.now() - startTime
+      };
+    }
+    return {
+      success: false,
+      error: result.error || 'Failed to create project',
       duration_ms: Date.now() - startTime
     };
   }
@@ -313,6 +417,84 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     return {
       success: true,
       output: response,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // AUTONOMOUS BUILD - fully autonomous loop that builds to completion
+  if (intent.action === 'autonomous_build') {
+    const { autonomousBuild, getActiveProject } = await import('./cursor-agent.js');
+    
+    const session = getActiveProject();
+    if (!session) {
+      return {
+        success: false,
+        error: 'No project is open. Use `open <project-name>` first.',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    logger.info('Starting autonomous build', { project: session.workingDir });
+    
+    // Stream progress updates to the user via WebSocket
+    const result = await autonomousBuild(session.workingDir, intent.prompt, {
+      maxIterations: 15,
+      onProgress: (progress) => {
+        // Log progress for debugging
+        logger.info('Build progress', { 
+          iteration: progress.iteration, 
+          totalChanges: progress.totalChanges,
+          isComplete: progress.isComplete 
+        });
+      }
+    });
+    
+    return {
+      success: result.success,
+      output: result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // Special build mode - auto-applies all detected changes (legacy, kept for compatibility)
+  if (intent.action === 'agent_build') {
+    if (!intent.prompt) {
+      return {
+        success: false,
+        error: 'No prompt provided',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    const response = await sendToAgent(intent.prompt, intent.attachments);
+    
+    // Auto-apply any pending changes
+    const { applyChanges, getAgentStatus, getPendingChanges } = await import('./cursor-agent.js');
+    const pending = getPendingChanges();
+    if (pending.length > 0) {
+      logger.info('Auto-applying changes from build command', { count: pending.length });
+      const applyResult = await applyChanges();
+      return {
+        success: true,
+        output: response + '\n\n' + applyResult.message,
+        duration_ms: Date.now() - startTime
+      };
+    }
+    
+    return {
+      success: true,
+      output: response,
+      duration_ms: Date.now() - startTime
+    };
+  }
+  
+  // Apply last response - manually re-parse and apply code from last AI response
+  if (intent.action === 'apply_last') {
+    const { reParseLastResponse } = await import('./cursor-agent.js');
+    const result = await reParseLastResponse();
+    return {
+      success: result.success,
+      output: result.message,
+      error: result.success ? undefined : result.message,
       duration_ms: Date.now() - startTime
     };
   }
@@ -420,9 +602,14 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
   if (intent.action === 'memory_clear') {
     const agentStatus = getAgentStatus();
     if (!agentStatus.active || !agentStatus.workingDir) {
+      // No active project - clear general conversation history instead
+      const { clearGeneralConversations } = await import('./memory.js');
+      const { resetCapabilitiesConversation } = await import('./skill-loader.js');
+      const result = clearGeneralConversations();
+      resetCapabilitiesConversation();
       return {
-        success: false,
-        error: 'No active project. Load a project first.',
+        success: true,
+        output: `Cleared ${result.cleared} general conversation messages.`,
         duration_ms: Date.now() - startTime
       };
     }

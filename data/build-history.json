@@ -1,0 +1,86 @@
+{
+  "builds": [
+    {
+      "id": "build-1",
+      "project": "expense-tracker",
+      "date": "2026-02-04",
+      "method": "autonomous",
+      "totalCost": 0,
+      "estimatedCost": null,
+      "prdCompliance": 85,
+      "linesOfCode": 1913,
+      "phases": [],
+      "issues": ["File corruption in one file"],
+      "lessonsLearned": []
+    },
+    {
+      "id": "build-2",
+      "project": "expense-tracker",
+      "date": "2026-02-04",
+      "method": "autonomous",
+      "totalCost": 0,
+      "estimatedCost": null,
+      "prdCompliance": 45,
+      "linesOfCode": 750,
+      "phases": [],
+      "issues": ["Stopped early", "Missing charts"],
+      "lessonsLearned": []
+    },
+    {
+      "id": "build-3",
+      "project": "expensive-3rd-attempt",
+      "date": "2026-02-05",
+      "method": "create_project",
+      "totalCost": 0,
+      "estimatedCost": null,
+      "prdCompliance": 15,
+      "linesOfCode": 420,
+      "phases": [],
+      "issues": ["Vanilla JS instead of React", "Missing most features"],
+      "lessonsLearned": []
+    },
+    {
+      "id": "build-4",
+      "project": "expensive-3rd-attempt",
+      "date": "2026-02-05",
+      "method": "prd_phases",
+      "totalCost": 10.00,
+      "estimatedCost": 2.00,
+      "prdCompliance": 40,
+      "linesOfCode": 487,
+      "phases": [
+        { "name": "Setup", "status": "failed", "error": "activeStreamCallback bug", "cost": 0 },
+        { "name": "Core UI", "status": "completed", "cost": 3.50 },
+        { "name": "Charts", "status": "failed", "error": "API connection", "cost": 2.00 },
+        { "name": "Logic", "status": "failed", "error": "API connection", "cost": 2.00 },
+        { "name": "Polish", "status": "failed", "error": "API connection", "cost": 2.50 }
+      ],
+      "issues": [
+        "Used Opus for planning ($2+ just for plan)",
+        "Used Opus for all phases instead of Sonnet",
+        "API retries burned tokens without producing output",
+        "Phase 0 callback bug wasted a phase",
+        "Long prompts triggered Opus selection",
+        "No circuit breaker on repeated API failures"
+      ],
+      "lessonsLearned": [
+        "NEVER use Opus for code generation - Sonnet 4 is sufficient",
+        "Add circuit breaker after 2 consecutive API failures",
+        "Compact PRD in phase prompts to reduce tokens",
+        "Track cost per phase and abort if budget exceeded"
+      ],
+      "modelUsage": {
+        "opus": { "calls": 6, "cost": 8.50 },
+        "sonnet": { "calls": 0, "cost": 0 },
+        "haiku": { "calls": 4, "cost": 0.01 }
+      }
+    }
+  ],
+  "aggregateStats": {
+    "totalSpent": 10.00,
+    "averageCostPerBuild": 2.50,
+    "mostExpensiveBuild": "build-4",
+    "bestPrdCompliance": "build-1",
+    "averagePrdCompliance": 46.25
+  }
+}

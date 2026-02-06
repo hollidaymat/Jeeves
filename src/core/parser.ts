@@ -11,7 +11,7 @@ import { findProject, listProjects, getProjectIndex } from './project-scanner.js
 import { parseTerminalRequest, getTerminalStatus } from './terminal.js';
 import { getFormattedHistory, getFormattedPreferences, getProjectSummary } from './memory.js';
 import { getAgentStatus } from './cursor-agent.js';
-import { isPrdTrigger, getExecutionStatus } from './prd-executor.js';
+import { isPrdTrigger, getExecutionStatus, getActivePlan } from './prd-executor.js';
 import { 
   getTrustStatus, 
   getTrustHistory, 
@@ -44,6 +44,22 @@ import {
   getPendingPlan,
   clearPendingPlan
 } from './plan-state.js';
+import {
+  classifyIntent,
+  quickClassify,
+  needsLLMClassification,
+  type ClassifiedIntent
+} from './classifier.js';
+import {
+  extractEntities,
+  isPRDContent,
+  hasDestructiveIntent
+} from './entities.js';
+import {
+  applyDisambiguation,
+  hasAmbiguousPattern
+} from './disambiguation.js';
+import { referenceResolver } from './reference-resolver.js';
 import type { ParsedIntent } from '../types/index.js';
 
 // Create Anthropic provider - API key from environment
@@ -78,6 +94,14 @@ RULES:
 3. If a file is mentioned without a project, assume the most recently mentioned or most likely project
 4. For goto_line, you need both a file path and a line number
 
+PARSING RULES:
+5. "can you X" = command to do X (e.g., "can you check the auth" = command to check auth)
+6. "don't X" or "do not X" = command to STOP or PREVENT X
+7. "like X" = reference/comparison to X, NOT an action on X
+8. "it", "this", "that" = refers to the last mentioned file, project, or task
+9. If confidence < 0.6, respond with action "clarify" instead of guessing
+10. Never guess on destructive actions - ask for confirmation
+
 Response format:
 {
   "action": "open_project" | "open_file" | "goto_line" | "status" | "help" | "list_projects" | "unknown" | "denied",
@@ -97,6 +121,105 @@ If the request seems dangerous or outside scope, respond with:
 }
 
 /**
+ * Convert ClassifiedIntent to ParsedIntent
+ * Maps classifier categories to parser actions
+ */
+function classificationToIntent(
+  classified: Partial<ClassifiedIntent>,
+  originalMessage: string
+): ParsedIntent | null {
+  const { category, action, target, confidence, isNegation } = classified;
+  
+  if (!category || !confidence) {
+    return null;
+  }
+  
+  // Map categories to actions
+  switch (category) {
+    case 'prd':
+      return {
+        action: 'prd_submit',
+        prompt: originalMessage,
+        target: target || 'prd',
+        confidence,
+        message: 'PRD detected, ready for processing'
+      };
+      
+    case 'question':
+      return {
+        action: 'agent_ask',
+        prompt: originalMessage,
+        confidence,
+        message: 'Question detected'
+      };
+      
+    case 'feedback':
+      // Feedback often means user is correcting, route to ask for now
+      return {
+        action: 'agent_ask',
+        prompt: originalMessage,
+        confidence,
+        message: 'Feedback detected'
+      };
+      
+    case 'command':
+      // Handle negation commands
+      if (isNegation) {
+        return {
+          action: 'agent_ask',
+          prompt: `STOP: ${originalMessage}`,
+          confidence,
+          message: `Negation command detected: stop ${target}`
+        };
+      }
+      
+      // Map common action verbs
+      const actionMap: Record<string, string> = {
+        'open': 'open_project',
+        'load': 'open_project',
+        'start': 'agent_start',
+        'check': 'agent_ask',
+        'explain': 'agent_ask',
+        'describe': 'agent_ask',
+        'build': 'prd_submit',
+        'create': 'prd_submit',
+        'fix': 'agent_ask',
+        'update': 'agent_ask',
+        'deploy': 'agent_ask',
+        'run': 'terminal_npm',
+        'test': 'terminal_npm',
+        'approve': 'prd_approve',
+        'stop': 'agent_stop'
+      };
+      
+      const mappedAction = action ? actionMap[action.toLowerCase()] : null;
+      
+      if (mappedAction) {
+        return {
+          action: mappedAction as ParsedIntent['action'],
+          target,
+          prompt: originalMessage,
+          confidence,
+          message: `Command: ${action} ${target || ''}`
+        };
+      }
+      
+      // Default to agent_ask for unknown commands
+      return {
+        action: 'agent_ask',
+        prompt: originalMessage,
+        confidence,
+        message: `Command detected: ${action}`
+      };
+      
+    case 'unclear':
+    default:
+      // Low confidence, let it fall through to full LLM parse
+      return null;
+  }
+}
+
+/**
  * Natural language patterns for commands
  */
 const PATTERNS = {
@@ -109,14 +232,34 @@ const PATTERNS = {
   // Cost/budget patterns (new)
   cost: /^(cost|costs|budget|spending|usage|how much|token usage|tokens used|daily cost)$/i,
   
+  // Learning & history patterns (new)
+  builds: /^(builds|build history|past builds|build report|build summary)$/i,
+  lessons: /^(lessons|lessons learned|what.*learn|learning|improvements|anti.?patterns)$/i,
+  
+  // Homelab patterns
+  homelabStatus: /^(?:daemon\s+status|homelab\s+status|server\s+status|how is the server|how'?s the (?:server|daemon|box|homelab))$/i,
+  homelabContainers: /^(containers|docker ps|list containers|show containers|running containers|what'?s running)$/i,
+  homelabResources: /^(resources|ram|cpu|disk|memory|system resources|resource usage|how much (?:ram|memory|disk|cpu))$/i,
+  homelabTemps: /^(temps?|temperature|cpu temp|how hot|thermal)$/i,
+  homelabServiceControl: /^(start|stop|restart)\s+(.+)$/i,
+  homelabLogs: /^(?:logs?|show logs?|get logs?)\s+(.+)$/i,
+  homelabUpdate: /^update\s+(.+)$/i,
+  homelabUpdateAll: /^update\s+all$/i,
+  homelabInstall: /^install\s+(.+)$/i,
+  homelabUninstall: /^(?:uninstall|remove)\s+(.+)$/i,
+  homelabDiagnose: /^(?:diagnose|debug|troubleshoot|why is .+ down|what'?s wrong with)\s+(.+)$/i,
+  homelabStacks: /^(stacks|docker stacks|compose stacks|list stacks|show stacks)$/i,
+  homelabHealth: /^(?:daemon\s+health|homelab\s+health|health\s+check|check\s+health|service\s+health)$/i,
+  homelabSelfTest: /^(self[- ]?test|run tests|test (?:all|everything|system)|diagnostics)$/i,
+  
   // List projects patterns  
   listProjects: /^(list|projects|list projects|show projects|what projects)$/i,
   
   // Agent status patterns
   agentStatus: /^(agent status|ai status|is the agent running|check agent)$/i,
   
-  // Agent stop patterns
-  agentStop: /^(agent stop|stop agent|stop ai|close agent|end session)$/i,
+  // Agent stop patterns - includes "close", "close project", "close <project-name>"
+  agentStop: /^(?:agent stop|stop agent|stop ai|close agent|end session|close(?:\s+(?:the\s+)?(?:project|session|it))?|close\s+.+)$/i,
   
   // Apply/reject changes
   apply: /^(apply|yes|confirm|do it|accept|save changes|apply changes)$/i,
@@ -143,6 +286,8 @@ const PATTERNS = {
   prdResume: /^(?:resume|continue|keep going|proceed)$/i,
   prdAbort: /^(?:abort|cancel|stop everything|abandon)$/i,
   prdStatus: /^(?:prd status|build status|execution status|progress)$/i,
+  // Continue project patterns - for when user wants to continue work without PRD
+  continueProject: /^(?:continue(?: the)?(?: (?:project|building|build|work))?|keep building|finish(?: the)?(?: (?:project|it|build))?|just build(?: it)?|build it|build to completion|finish building|complete the build|build everything)$/i,
   
   // Trust system patterns
   trustStatus: /^(?:trust|trust status|trust level|my trust|autonomy)$/i,
@@ -152,7 +297,9 @@ const PATTERNS = {
   
   // Personality/remember patterns
   remember: /^(?:remember|remember that|jeeves remember|note that)[:\s]+(.+)$/i,
-  youAre: /^(?:you are|you're|your role is)[:\s]+(.+)$/i,
+  // "you are" pattern for role assignment - exclude negative feedback patterns
+  // Must NOT match: "you are wrong", "you are hallucinating", "you are broken", etc.
+  youAre: /^(?:you are|you're|your role is)[:\s]+(?!(?:wrong|bad|broken|hallucinating|stupid|incorrect|not|an idiot|dumb|useless|terrible|awful|horrible|failing|confused|mistaken|lying)\b)(.+)$/i,
   beMore: /^(?:be more|be|act more|act)[:\s]+(.+)$/i,
   dontBe: /^(?:don'?t be|stop being|never be)[:\s]+(.+)$/i,
   
@@ -199,6 +346,9 @@ const PATTERNS = {
   // Open/start project patterns - now starts AI session
   openProject: /^(?:open|start|load|switch to|go to|work on|let'?s work on)\s+(?:the\s+)?(?:project\s+)?(.+?)(?:\s+project)?$/i,
   
+  // Create new project pattern
+  createProject: /^(?:create|new|init|bootstrap|scaffold)\s+(?:a\s+)?(?:new\s+)?(?:project\s+)?(?:called\s+)?(.+?)(?:\s+project)?$/i,
+  
   // Agent start patterns - flexible
   agentStart: /^(?:agent start|start agent|start ai|analyze|load context for|start working on|let'?s analyze)\s+(.+)$/i,
   
@@ -213,6 +363,19 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
   const trimmed = message.trim();
   const lower = trimmed.toLowerCase();
   
+  // CRITICAL: Apply last response - check FIRST before ANY other parsing
+  // This handles "apply", "apply that", "use that code", etc. for manual application
+  if (/^(?:apply(?: (?:that|this|last|it|the code|response|changes?))?|use (?:that|this) code|save (?:that|it))$/i.test(lower)) {
+    logger.info('Matched apply_last pattern', { input: lower });
+    return { action: 'apply_last', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+  }
+  
+  // Status questions - route to AI as questions, not session starts
+  if (/^(?:is it (?:built|done|ready|finished|complete|working)|what'?s the status|how'?s it (?:going|looking))\??$/i.test(lower)) {
+    logger.info('Status question detected, routing to AI', { input: lower });
+    return { action: 'agent_ask', prompt: message, confidence: 1.0 };
+  }
+  
   // Status
   if (PATTERNS.status.test(lower)) {
     return { action: 'status', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
@@ -221,6 +384,106 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
   // Cost/budget - FREE (no LLM needed)
   if (PATTERNS.cost.test(lower)) {
     return { action: 'show_cost', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+  }
+  
+  // Build history - FREE (no LLM needed)
+  if (PATTERNS.builds.test(lower)) {
+    return { action: 'show_builds', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+  }
+  
+  // Lessons learned - FREE (no LLM needed)
+  if (PATTERNS.lessons.test(lower)) {
+    return { action: 'show_lessons', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+  }
+  
+  // ===== HOMELAB COMMANDS (all pattern-matched, FREE) =====
+  // Only match if homelab is enabled
+  if (config.homelab?.enabled || process.env.HOMELAB_DEV_MODE) {
+    // Status (check before general status pattern)
+    if (PATTERNS.homelabStatus.test(lower)) {
+      return { action: 'homelab_status', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Self-test (check before service control to avoid "test" matching)
+    if (PATTERNS.homelabSelfTest.test(lower)) {
+      return { action: 'homelab_self_test', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Containers
+    if (PATTERNS.homelabContainers.test(lower)) {
+      return { action: 'homelab_containers', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Resources
+    if (PATTERNS.homelabResources.test(lower)) {
+      return { action: 'homelab_resources', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Temperature
+    if (PATTERNS.homelabTemps.test(lower)) {
+      return { action: 'homelab_temps', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Update all (check before single update)
+    if (PATTERNS.homelabUpdateAll.test(lower)) {
+      return { action: 'homelab_update_all', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Update single service
+    const updateMatch = lower.match(PATTERNS.homelabUpdate);
+    if (updateMatch && !PATTERNS.homelabUpdateAll.test(lower)) {
+      return { action: 'homelab_update', target: updateMatch[1].trim(), confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Service control (start/stop/restart)
+    const svcMatch = lower.match(PATTERNS.homelabServiceControl);
+    if (svcMatch) {
+      const verb = svcMatch[1].toLowerCase();
+      const service = svcMatch[2].trim();
+      // Don't match "start dev" or "stop agent" - those are existing commands
+      if (!['dev', 'agent', 'ai', 'session', 'server', 'process'].includes(service)) {
+        const action = `homelab_service_${verb}` as 'homelab_service_start' | 'homelab_service_stop' | 'homelab_service_restart';
+        return { action, target: service, confidence: 0.9, resolutionMethod: 'pattern', estimatedCost: 0 };
+      }
+    }
+
+    // Logs
+    const logsMatch = lower.match(PATTERNS.homelabLogs);
+    if (logsMatch) {
+      return { action: 'homelab_logs', target: logsMatch[1].trim(), confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Diagnose
+    const diagnoseMatch = lower.match(PATTERNS.homelabDiagnose);
+    if (diagnoseMatch) {
+      return { action: 'homelab_diagnose', target: diagnoseMatch[1].trim(), confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Install
+    const installMatch = lower.match(PATTERNS.homelabInstall);
+    if (installMatch) {
+      // Don't match "install dependencies" or "npm install" - those are terminal commands
+      const target = installMatch[1].trim();
+      if (!['deps', 'dependencies', 'packages', 'modules'].includes(target)) {
+        return { action: 'homelab_install', target, confidence: 0.9, resolutionMethod: 'pattern', estimatedCost: 0 };
+      }
+    }
+
+    // Uninstall
+    const uninstallMatch = lower.match(PATTERNS.homelabUninstall);
+    if (uninstallMatch) {
+      return { action: 'homelab_uninstall', target: uninstallMatch[1].trim(), confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Stacks
+    if (PATTERNS.homelabStacks.test(lower)) {
+      return { action: 'homelab_stacks', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Health
+    if (PATTERNS.homelabHealth.test(lower)) {
+      return { action: 'homelab_health', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
   }
   
   // Help
@@ -279,11 +542,26 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
 **Model & Cost**:
 \`use haiku\` \`use sonnet\` \`use auto\` → Switch models
 \`cost\` → View daily cost report
+\`builds\` → View build history & costs
+\`lessons\` → View lessons learned & anti-patterns
 \`backups <file>\` → List backups
 \`restore <file>\` → Restore from backup
 
 **System**:
-\`list projects\` \`status\` \`stop\``
+\`list projects\` \`status\` \`stop\`
+
+**Homelab** (Linux daemon only):
+\`daemon status\` → Full system overview
+\`containers\` → List all Docker containers
+\`resources\` / \`ram\` / \`cpu\` / \`disk\` → System resources
+\`temps\` → CPU temperature
+\`start|stop|restart <service>\` → Service control
+\`logs <service>\` → View container logs
+\`update <service>\` → Pull & restart service
+\`diagnose <service>\` → Run diagnostics
+\`stacks\` → List compose stacks
+\`health check\` / \`daemon health\` → Run health checks
+\`self-test\` → Run system self-tests`
     };
   }
   
@@ -358,12 +636,35 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
   // "yes" should trigger plan execution if there's a pending plan
   if (PATTERNS.approvePlan.test(lower)) {
     logger.info('Approval pattern matched', { input: lower });
+    
+    // Check for PRD execution plan awaiting approval FIRST
+    const prdPlan = getActivePlan();
+    if (prdPlan && prdPlan.status === 'awaiting_approval') {
+      logger.info('PRD plan awaiting approval', { planId: prdPlan.id, phases: prdPlan.phases.length });
+      return { action: 'prd_approve', confidence: 1.0, requiresAsync: true };
+    }
+    
+    // Check for simple command plan
     const plan = getPendingPlan();
     logger.info('Pending plan check', { hasPlan: !!plan, commands: plan?.commands?.length });
     if (plan) {
       return { action: 'execute_plan', confidence: 1.0, requiresAsync: true };
     }
-    // No pending plan - fall through to apply_changes
+    
+    // No pending plan - check if there are pending code changes
+    const agentStatus = getAgentStatus();
+    if (agentStatus.pendingChanges && agentStatus.pendingChanges > 0) {
+      // Fall through to apply_changes
+    } else {
+      // No plan and no pending changes - treat "yes" as continuation
+      // Send it to the AI as a response to continue the conversation
+      logger.info('No plan or changes, treating "yes" as continuation');
+      return {
+        action: 'agent_ask',
+        prompt: 'yes, please proceed',
+        confidence: 0.9
+      };
+    }
   }
   
   // Plan rejection: Cancel pending plan
@@ -413,15 +714,29 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
     };
   }
   
-  // Try to parse as terminal command (npm/git)
-  const terminalCmd = parseTerminalRequest(trimmed);
-  if (terminalCmd) {
+  // Check for natural language patterns BEFORE terminal commands
+  // This prevents "ask jeeves..." from being parsed as a terminal command
+  const askMatch = trimmed.match(PATTERNS.ask);
+  if (askMatch) {
     return {
-      action: terminalCmd.type === 'npm' ? 'terminal_npm' : 'terminal_git',
-      terminal_command: terminalCmd,
-      confidence: 0.95,
-      message: `Running: ${terminalCmd.type} ${terminalCmd.args.join(' ')}`
+      action: 'agent_ask',
+      prompt: askMatch[1].trim(),
+      confidence: 0.9
     };
+  }
+
+  // Try to parse as terminal command (npm/git) - only short commands
+  // Skip terminal parsing for long messages (likely natural language/PRDs)
+  if (trimmed.length < 100) {
+    const terminalCmd = parseTerminalRequest(trimmed);
+    if (terminalCmd) {
+      return {
+        action: terminalCmd.type === 'npm' ? 'terminal_npm' : 'terminal_git',
+        terminal_command: terminalCmd,
+        confidence: 0.95,
+        message: `Running: ${terminalCmd.type} ${terminalCmd.args.join(' ')}`
+      };
+    }
   }
   
   // Memory commands
@@ -524,6 +839,17 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
       message: 'No PRD execution in progress.'
     };
   }
+  
+  // Continue project - AUTONOMOUS BUILD - loops until complete
+  if (PATTERNS.continueProject.test(lower)) {
+    return {
+      action: 'autonomous_build',  // Fully autonomous build loop - no user intervention needed
+      confidence: 1.0
+    };
+  }
+  
+  // NOTE: apply_last pattern is now checked at the TOP of handleSimpleCommand
+  // to ensure it runs before reference resolution can transform "that"
   
   // Check if this is a PRD submission (long text with PRD triggers)
   if (isPrdTrigger(trimmed) || (trimmed.length > 200 && isPrdTrigger(trimmed))) {
@@ -860,6 +1186,19 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
     };
   }
   
+  // Create new project - must check before open to avoid false matches
+  const createMatch = trimmed.match(PATTERNS.createProject);
+  if (createMatch) {
+    const projectName = createMatch[1].trim()
+      .replace(/[^a-zA-Z0-9-_]/g, '-')  // Sanitize to valid folder name
+      .toLowerCase();
+    return {
+      action: 'create_project',
+      target: projectName,
+      confidence: 0.95
+    };
+  }
+  
   // Open project - now starts AI session by default (more useful)
   const openMatch = trimmed.match(PATTERNS.openProject);
   if (openMatch) {
@@ -877,7 +1216,7 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
     return {
       action: 'unknown',
       confidence: 0,
-      message: `Project not found: "${projectName}". Try "list projects" to see available projects.`
+      message: `Project not found: "${projectName}". Try "list projects" to see available projects, or "create project ${projectName}" to create a new one.`
     };
   }
   
@@ -892,15 +1231,7 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
     };
   }
   
-  // Ask patterns - capture as AI request
-  const askMatch = trimmed.match(PATTERNS.ask);
-  if (askMatch) {
-    return {
-      action: 'agent_ask',
-      prompt: askMatch[1].trim(),
-      confidence: 0.9
-    };
-  }
+  // Ask patterns check moved earlier in the function (before terminal commands)
   
   // Edit patterns - "add X", "fix Y", "update Z", etc.
   const editMatch = trimmed.match(/^(add|fix|update|change|modify|create|remove|delete|refactor|implement|write|insert)\s+(.+)$/i);
@@ -945,29 +1276,149 @@ function tryLocalParse(message: string): ParsedIntent | null {
  * Parse a message using Claude
  */
 export async function parseIntent(message: string): Promise<ParsedIntent> {
+  // ==========================================
+  // STAGE 0: Critical Commands (check BEFORE reference resolution)
+  // ==========================================
+  
+  // apply_last must be checked on ORIGINAL message before "that" gets resolved to a file
+  const originalLower = message.trim().toLowerCase();
+  if (/^(?:apply(?: (?:that|this|last|it|the code|response|changes?))?|use (?:that|this) code|save (?:that|it))$/i.test(originalLower)) {
+    logger.info('apply_last matched (pre-resolution)', { input: originalLower });
+    return { action: 'apply_last', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+  }
+  
+  // Status questions - route to AI as questions, not session starts
+  if (/^(?:is it (?:built|done|ready|finished|complete|working)|what'?s the status|how'?s it (?:going|looking))\??$/i.test(originalLower)) {
+    logger.info('Status question detected (pre-resolution), routing to AI', { input: originalLower });
+    return { action: 'agent_ask', prompt: message, confidence: 1.0 };
+  }
+  
+  // BUILD COMMANDS - Must check BEFORE reference resolution because "it" would be resolved
+  // to a file, breaking the pattern match
+  if (/^(?:build it|finish it|continue|build|just build|build everything|build to completion|finish building|complete the build|keep building)$/i.test(originalLower)) {
+    logger.info('Autonomous build command detected (pre-resolution)', { input: originalLower });
+    return { action: 'autonomous_build', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+  }
+  
+  // ==========================================
+  // STAGE 1: Pre-processing (FREE)
+  // ==========================================
+  
+  // Resolve pronouns (it, this, that) to last mentioned items
+  const resolved = referenceResolver.resolve(message);
+  const processedMessage = resolved.resolved;
+  
+  if (resolved.hadPronouns) {
+    logger.debug('Resolved pronouns', { 
+      original: message, 
+      resolved: processedMessage,
+      resolutions: resolved.resolutions 
+    });
+  }
+  
+  // Extract entities for context
+  const entities = extractEntities(processedMessage);
+  
+  // ==========================================
+  // STAGE 2: Disambiguation (FREE)
+  // ==========================================
+  
+  // Apply disambiguation rules for known patterns
+  const disambiguated = applyDisambiguation(processedMessage);
+  if (disambiguated && disambiguated.confidence && disambiguated.confidence >= 0.85) {
+    logger.debug('Disambiguated intent', { disambiguated });
+    
+    // Convert classification to ParsedIntent
+    const intent = classificationToIntent(disambiguated as ClassifiedIntent, processedMessage);
+    if (intent) {
+      intent.resolutionMethod = 'pattern';
+      referenceResolver.update(intent);
+      return intent;
+    }
+  }
+  
+  // ==========================================
+  // STAGE 3: Simple Commands (FREE)
+  // ==========================================
+  
   // Check for simple commands first
-  const simple = handleSimpleCommand(message);
-  if (simple) return simple;
+  const simple = handleSimpleCommand(processedMessage);
+  if (simple) {
+    simple.resolutionMethod = 'pattern';
+    referenceResolver.update(simple);
+    return simple;
+  }
   
   // Try local parsing for simple open commands
-  const local = tryLocalParse(message);
-  if (local) return local;
+  const local = tryLocalParse(processedMessage);
+  if (local) {
+    local.resolutionMethod = 'pattern';
+    referenceResolver.update(local);
+    return local;
+  }
+  
+  // ==========================================
+  // STAGE 4: Quick Classify (FREE)
+  // ==========================================
+  
+  // Try pattern-based classification (no LLM cost)
+  const quickIntent = quickClassify(processedMessage);
+  if (quickIntent && quickIntent.confidence >= 0.85) {
+    logger.debug('Quick classified intent', { quickIntent });
+    
+    const intent = classificationToIntent(quickIntent, processedMessage);
+    if (intent) {
+      intent.resolutionMethod = 'pattern';
+      referenceResolver.update(intent);
+      return intent;
+    }
+  }
+  
+  // ==========================================
+  // STAGE 5: LLM Classification (Haiku - cheap)
+  // ==========================================
+  
+  // For complex messages, use LLM classifier first
+  if (needsLLMClassification(processedMessage)) {
+    try {
+      const { intent: classified, cost } = await classifyIntent(processedMessage);
+      logger.debug('LLM classified intent', { classified, cost });
+      
+      // If high confidence, convert to ParsedIntent
+      if (classified.confidence >= 0.7) {
+        const intent = classificationToIntent(classified, processedMessage);
+        if (intent) {
+          intent.resolutionMethod = 'llm';
+          intent.estimatedCost = cost;
+          referenceResolver.update(intent);
+          return intent;
+        }
+      }
+    } catch (error) {
+      logger.warn('LLM classification failed, falling back', { error });
+    }
+  }
+  
+  // ==========================================
+  // STAGE 6: Full LLM Parse (Claude - expensive)
+  // ==========================================
   
   // Fall back to Claude for complex interpretation
   try {
-    logger.debug('Sending to Claude for parsing', { message });
+    logger.debug('Sending to Claude for parsing', { message: processedMessage });
     
     // Use Anthropic provider with model from config
     const { text } = await generateText({
       model: anthropic(config.claude.model),
       system: buildSystemPrompt(),
-      prompt: message,
+      prompt: processedMessage,
       maxTokens: config.claude.max_tokens
     });
     
     // Parse JSON response
     const parsed = JSON.parse(text) as ParsedIntent;
     parsed.raw_response = text;
+    parsed.resolutionMethod = 'llm';
     
     logger.debug('Claude parsed intent', { action: parsed.action, confidence: parsed.confidence });
     
@@ -980,10 +1431,13 @@ export async function parseIntent(message: string): Promise<ParsedIntent> {
       }
     }
     
+    // Update reference resolver with parsed result
+    referenceResolver.update(parsed);
+    
     return parsed;
     
   } catch (error) {
-    logger.error('Error parsing intent', { error: String(error), message });
+    logger.error('Error parsing intent', { error: String(error), message: processedMessage });
     return {
       action: 'unknown',
       confidence: 0,

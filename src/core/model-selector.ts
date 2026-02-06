@@ -74,24 +74,14 @@ const SIMPLE_PATTERNS = [
   /^check/i,
 ];
 
-// Patterns that indicate complex tasks (use Opus)
+// Patterns that indicate complex tasks (use Sonnet - Opus is too expensive)
+// Note: Sonnet 4 is highly capable for code generation, Opus reserved for truly exceptional cases
 const COMPLEX_PATTERNS = [
-  /architect/i,
-  /design.*system/i,
-  /plan.*implement/i,
-  /refactor.*entire/i,
-  /migrate.*database/i,
-  /security.*audit/i,
-  /performance.*optimi/i,
-  /build.*from.*scratch/i,
-  /PRD|product.*requirements/i,
-  /compare.*approaches/i,
-  /trade-?offs/i,
-  /best.*practice.*for.*large/i,
-  /scalab/i,
-  /microservice/i,
-  /kubernetes.*deploy/i,
-  /infrastructure.*as.*code/i,
+  /architect.*enterprise/i,      // Only enterprise-scale architecture
+  /design.*distributed.*system/i, // Distributed systems only
+  /migrate.*entire.*database/i,   // Full database migrations
+  /security.*penetration/i,       // Penetration testing only
+  // Removed: PRD, refactor, build from scratch - Sonnet handles these fine
 ];
 
 // Keywords that require actual work (use Sonnet)
@@ -119,7 +109,7 @@ export function selectModel(prompt: string, forceModel?: ModelTier): ModelInfo {
 
   const trimmedPrompt = prompt.trim();
   
-  // Check for complex patterns first (Opus) - these are rare
+  // Check for complex patterns first (Opus) - very rare, reserved for exceptional cases
   for (const pattern of COMPLEX_PATTERNS) {
     if (pattern.test(trimmedPrompt)) {
       logger.debug('Selected model', { tier: 'opus', reason: 'complex pattern' });
@@ -127,10 +117,11 @@ export function selectModel(prompt: string, forceModel?: ModelTier): ModelInfo {
     }
   }
 
-  // Very long prompts might need more capability (Opus)
+  // Long prompts use Sonnet (not Opus) - Sonnet 4 handles large context well
+  // PRD execution, code generation, etc. all work great with Sonnet
   if (trimmedPrompt.length > 2000) {
-    logger.debug('Selected model', { tier: 'opus', reason: 'long prompt' });
-    return MODELS.opus;
+    logger.debug('Selected model', { tier: 'sonnet', reason: 'long prompt' });
+    return MODELS.sonnet;
   }
 
   // Check for work patterns (Sonnet) - actual tasks that modify things

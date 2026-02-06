@@ -1,9 +1,19 @@
 /**
  * Cost Tracker
  * Tracks LLM usage, tokens, and costs for optimization
+ * 
+ * LESSON LEARNED (build-4): Persist costs to disk to survive restarts
+ * and enable post-mortem analysis of expensive builds.
  */
 
+import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { logger } from '../utils/logger.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const COST_LOG_PATH = join(__dirname, '../../data/cost-log.json');
 
 // Pricing per 1M tokens (as of 2026)
 const PRICING = {
@@ -214,4 +224,101 @@ export function getSessionStats() {
     cacheHits: dailyCosts.cacheHits,
     uptimeMs: Date.now() - sessionStartTime
   };
+}
+
+/**
+ * Persist current session costs to disk
+ */
+export function persistCosts(): void {
+  try {
+    const costLog = loadCostLog();
+    
+    // Add today's session
+    const today = new Date().toISOString().split('T')[0];
+    const existing = costLog.sessions.find(s => s.date === today);
+    
+    if (existing) {
+      // Update existing session
+      existing.cost += dailyCosts.cost;
+      existing.tokens += dailyCosts.tokens;
+      existing.calls += dailyCosts.calls;
+    } else {
+      // New session for today
+      costLog.sessions.push({
+        date: today,
+        cost: dailyCosts.cost,
+        tokens: dailyCosts.tokens,
+        calls: dailyCosts.calls,
+        byModel: { ...costsByCategory.byModel }
+      });
+    }
+    
+    // Update totals
+    costLog.totalSpent = costLog.sessions.reduce((sum, s) => sum + s.cost, 0);
+    costLog.lastUpdated = new Date().toISOString();
+    
+    writeFileSync(COST_LOG_PATH, JSON.stringify(costLog, null, 2));
+    logger.debug('Costs persisted to disk', { total: costLog.totalSpent });
+  } catch (error) {
+    logger.error('Failed to persist costs', { error: String(error) });
+  }
+}
+
+/**
+ * Load persisted cost log
+ */
+function loadCostLog(): CostLog {
+  try {
+    if (existsSync(COST_LOG_PATH)) {
+      return JSON.parse(readFileSync(COST_LOG_PATH, 'utf-8'));
+    }
+  } catch (error) {
+    logger.error('Failed to load cost log', { error: String(error) });
+  }
+  return { 
+    sessions: [], 
+    totalSpent: 0, 
+    lastUpdated: new Date().toISOString() 
+  };
+}
+
+/**
+ * Get total historical spend
+ */
+export function getTotalHistoricalSpend(): number {
+  const costLog = loadCostLog();
+  return costLog.totalSpent + dailyCosts.cost;
+}
+
+/**
+ * Get cost summary for user
+ */
+export function getCostSummary(): string {
+  const costLog = loadCostLog();
+  const recentSessions = costLog.sessions.slice(-7);
+  
+  let summary = `## Cost Summary\n\n`;
+  summary += `**All-time Spend:** $${(costLog.totalSpent + dailyCosts.cost).toFixed(2)}\n`;
+  summary += `**Today's Session:** $${dailyCosts.cost.toFixed(2)}\n\n`;
+  
+  if (recentSessions.length > 0) {
+    summary += `### Last 7 Days\n`;
+    recentSessions.forEach(s => {
+      summary += `- ${s.date}: $${s.cost.toFixed(2)} (${s.calls} calls)\n`;
+    });
+  }
+  
+  return summary;
+}
+
+interface CostLog {
+  sessions: Array<{
+    date: string;
+    cost: number;
+    tokens: number;
+    calls: number;
+    byModel?: Record<string, number>;
+  }>;
+  totalSpent: number;
+  lastUpdated: string;
 }

@@ -1,0 +1,17 @@
+{
+  "sessions": [
+    {
+      "date": "2026-02-05",
+      "cost": 10.00,
+      "tokens": 125000,
+      "calls": 15,
+      "byModel": {
+        "claude-opus-4-20250514": 8.50,
+        "claude-sonnet-4-20250514": 1.49,
+        "claude-3-5-haiku-20241022": 0.01
+      }
+    }
+  ],
+  "totalSpent": 10.00,
+  "lastUpdated": "2026-02-05T18:00:00Z"
+}

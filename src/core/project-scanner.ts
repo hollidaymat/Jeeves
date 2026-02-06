@@ -3,7 +3,7 @@
  * Auto-discovers projects by scanning directories for markers
  */
 
-import { readdirSync, statSync, existsSync } from 'fs';
+import { readdirSync, statSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join, basename } from 'path';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
@@ -158,11 +158,35 @@ function similarity(a: string, b: string): number {
   return 0;
 }
 
+// Project aliases - common nicknames for projects
+const PROJECT_ALIASES: Record<string, string> = {
+  'jeeves': 'signal-cursor-controller',
+  'controller': 'signal-cursor-controller',
+  'cursor controller': 'signal-cursor-controller',
+  'dive': 'Dive_Connect',
+  'diveconnect': 'Dive_Connect',
+  'dive connect': 'Dive_Connect',
+  'mobile': 'diveconnect-mobile',
+  'legends': 'Legends-Agile',
+  'agile': 'Legends-Agile',
+};
+
 /**
  * Find a project by name (fuzzy matching)
  * Handles natural language like "dive connect ai", "diveconnect", "Dive_Connect"
  */
 export function findProject(query: string): Project | undefined {
+  // Check aliases first
+  const lowerQuery = query.toLowerCase().trim();
+  if (PROJECT_ALIASES[lowerQuery]) {
+    const aliasTarget = PROJECT_ALIASES[lowerQuery];
+    for (const [name, project] of projectIndex.projects) {
+      if (name.toLowerCase() === aliasTarget.toLowerCase()) {
+        return project;
+      }
+    }
+  }
+  
   const normalizedQuery = normalizeForMatch(query);
   
   // Score all projects
@@ -200,4 +224,91 @@ export function listProjects(): string {
     lines.push(`  - ${name} (${project.type})`);
   }
   return lines.join('\n');
+}
+
+/**
+ * Create a new project
+ * Creates folder in first project directory, initializes with package.json
+ */
+export function createProject(name: string): { success: boolean; path?: string; error?: string } {
+  // Sanitize name
+  const safeName = name.replace(/[^a-zA-Z0-9-_]/g, '-').toLowerCase();
+  
+  // Get workspace directory (first projects directory)
+  const workspaceDir = config.projects.directories[0];
+  if (!workspaceDir || !existsSync(workspaceDir)) {
+    return { success: false, error: 'No workspace directory configured' };
+  }
+  
+  const projectPath = join(workspaceDir, safeName);
+  
+  // Check if already exists
+  if (existsSync(projectPath)) {
+    return { success: false, error: `Project "${safeName}" already exists at ${projectPath}` };
+  }
+  
+  try {
+    // Create directory
+    mkdirSync(projectPath, { recursive: true });
+    
+    // Create basic package.json
+    const packageJson = {
+      name: safeName,
+      version: '0.1.0',
+      description: `${safeName} - created by Jeeves`,
+      main: 'index.js',
+      scripts: {
+        dev: 'echo "No dev script configured"',
+        build: 'echo "No build script configured"',
+        test: 'echo "No tests configured"'
+      },
+      keywords: [],
+      author: '',
+      license: 'MIT'
+    };
+    
+    writeFileSync(
+      join(projectPath, 'package.json'),
+      JSON.stringify(packageJson, null, 2)
+    );
+    
+    // Create README
+    writeFileSync(
+      join(projectPath, 'README.md'),
+      `# ${safeName}\n\nProject created by Jeeves.\n\n## Getting Started\n\nTODO: Add setup instructions\n`
+    );
+    
+    // Create .gitignore
+    writeFileSync(
+      join(projectPath, '.gitignore'),
+      `node_modules/\ndist/\n.env\n.env.local\n*.log\n`
+    );
+    
+    // Register the new project
+    const project: Project = {
+      name: safeName,
+      path: projectPath,
+      type: 'node',
+      last_modified: new Date()
+    };
+    
+    projectIndex.projects.set(safeName, project);
+    
+    // Also add to aliases
+    PROJECT_ALIASES[safeName] = safeName;
+    
+    logger.info('Created new project', { name: safeName, path: projectPath });
+    
+    return { success: true, path: projectPath };
+  } catch (err) {
+    logger.error('Failed to create project', { name: safeName, error: String(err) });
+    return { success: false, error: `Failed to create project: ${String(err)}` };
+  }
+}
+
+/**
+ * Get workspace directory for new projects
+ */
+export function getWorkspaceDir(): string | undefined {
+  return config.projects.directories[0];
 }

@@ -1,0 +1,157 @@
+{
+  "version": "1.0.0",
+  "lastUpdated": "2026-02-05T18:00:00Z",
+  
+  "costOptimization": {
+    "rules": [
+      {
+        "id": "cost-001",
+        "rule": "NEVER use Opus for code generation",
+        "reason": "Sonnet 4 produces equivalent quality code at 1/5 the cost",
+        "learnedFrom": "build-4",
+        "savings": "~80% per phase"
+      },
+      {
+        "id": "cost-002", 
+        "rule": "Use Haiku for simple classifications and parsing",
+        "reason": "Pattern matching and intent classification don't need large models",
+        "learnedFrom": "general",
+        "savings": "~95% on classification tasks"
+      },
+      {
+        "id": "cost-003",
+        "rule": "Compact PRD content in phase prompts",
+        "reason": "Including full PRD in every phase wastes input tokens",
+        "learnedFrom": "build-4",
+        "savings": "~50% input tokens per phase"
+      },
+      {
+        "id": "cost-004",
+        "rule": "Set budget caps per build",
+        "reason": "Runaway builds with API errors can burn $10+ without output",
+        "learnedFrom": "build-4",
+        "implementation": "Abort if cost exceeds 2x estimate"
+      }
+    ],
+    "modelGuidelines": {
+      "haiku": [
+        "Intent classification",
+        "Simple pattern matching",
+        "Confidence scoring",
+        "Quick lookups"
+      ],
+      "sonnet": [
+        "Code generation",
+        "PRD planning",
+        "Phase execution",
+        "Complex reasoning",
+        "Long prompts (>2000 chars)"
+      ],
+      "opus": [
+        "Enterprise architecture only",
+        "Security audits requiring deep analysis",
+        "Never for code generation",
+        "Never for PRD execution"
+      ]
+    }
+  },
+
+  "buildExecution": {
+    "rules": [
+      {
+        "id": "build-001",
+        "rule": "Implement circuit breaker for API failures",
+        "reason": "3 consecutive failures should pause, not auto-continue",
+        "learnedFrom": "build-4",
+        "implementation": "After 2 failures, pause and notify user"
+      },
+      {
+        "id": "build-002",
+        "rule": "Validate phase outputs before continuing",
+        "reason": "Empty or error responses waste subsequent phases",
+        "learnedFrom": "build-4",
+        "implementation": "Check response length > 100 chars"
+      },
+      {
+        "id": "build-003",
+        "rule": "Track cost per phase in real-time",
+        "reason": "User should know if build is getting expensive",
+        "learnedFrom": "build-4",
+        "implementation": "Send cost checkpoint after each phase"
+      },
+      {
+        "id": "build-004",
+        "rule": "Use Sonnet for PRD planning, not Opus",
+        "reason": "Planning doesn't need Opus-level reasoning",
+        "learnedFrom": "build-4",
+        "savings": "$1.50+ per plan"
+      }
+    ],
+    "antiPatterns": [
+      {
+        "pattern": "Including full PRD in every phase prompt",
+        "problem": "Wastes 2000+ tokens per phase",
+        "solution": "Include only phase-relevant PRD sections"
+      },
+      {
+        "pattern": "Auto-continuing after API errors",
+        "problem": "Burns money without producing output",
+        "solution": "Pause after consecutive failures"
+      },
+      {
+        "pattern": "Using Opus for long prompts",
+        "problem": "5x cost increase with no benefit",
+        "solution": "Sonnet 4 handles long prompts equally well"
+      }
+    ]
+  },
+
+  "parsingPatterns": {
+    "falsePositives": [
+      {
+        "input": "you are hallucinating",
+        "wrongInterpretation": "Role assignment",
+        "correctInterpretation": "Negative feedback",
+        "fix": "Added negative lookahead for criticism words"
+      },
+      {
+        "input": "create project X",
+        "wrongInterpretation": "PRD build request",
+        "correctInterpretation": "Project creation",
+        "fix": "Excluded 'project' from PRD trigger pattern"
+      }
+    ]
+  },
+
+  "metricsToTrack": [
+    "Cost per phase",
+    "Cost per line of code",
+    "PRD compliance percentage",
+    "API failure rate",
+    "Token efficiency (tokens per feature)",
+    "Model usage distribution"
+  ],
+
+  "nextImprovements": [
+    {
+      "priority": 1,
+      "improvement": "Add budget cap enforcement",
+      "estimatedSavings": "$5-10 per runaway build"
+    },
+    {
+      "priority": 2,
+      "improvement": "Implement PRD compaction for phase prompts",
+      "estimatedSavings": "50% input tokens"
+    },
+    {
+      "priority": 3,
+      "improvement": "Add circuit breaker for API failures",
+      "estimatedSavings": "Prevents wasted retries"
+    },
+    {
+      "priority": 4,
+      "improvement": "Track cost in real-time with user notifications",
+      "estimatedSavings": "Early abort on expensive builds"
+    }
+  ]
+}

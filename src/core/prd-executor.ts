@@ -14,6 +14,14 @@ import { logger } from '../utils/logger.js';
 import { isAgentAvailable, startAgentSession, sendToAgent, applyChanges } from './cursor-agent.js';
 import { recordTask, recordRollback, getTrustPermissions } from './trust.js';
 import { MODELS } from './model-selector.js';
+import { 
+  startBuildTracking, 
+  recordPhase, 
+  completeBuildTracking,
+  getCurrentBuildCost,
+  resetCircuitBreaker
+} from './learning.js';
+import { persistCosts } from './cost-tracker.js';
 import type { 
   ExecutionPlan, 
   PrdPhase, 
@@ -62,7 +70,10 @@ export async function submitPrd(
 Analyze this PRD and create a detailed execution plan. Break it into 3-6 phases, each with:
 - Clear deliverables
 - Time estimate
-- Decision points (questions that may need user input)
+- Technical decisions (what YOU decided, not questions - pick sensible defaults)
+
+IMPORTANT: Do NOT ask questions. Make your own best decisions for each technical choice.
+Pick the simplest, most maintainable approach. Use industry best practices.
 
 ## PRD CONTENT:
 ${prdContent}
@@ -75,7 +86,7 @@ ${prdContent}
       "name": "Database Schema",
       "description": "Create tables and RLS policies",
       "estimatedDuration": "30min",
-      "decisionPoints": ["Use junction table or array for tags?"]
+      "decisions": ["Using junction table for better query performance", "UUID for IDs"]
     }
   ],
   "totalEstimate": "4 hours",
@@ -85,11 +96,13 @@ ${prdContent}
 
 Respond with ONLY valid JSON, no markdown or explanation.`;
 
-    // PRD planning is complex work - always use Opus
-    logger.info('Using Opus for PRD planning', { model: MODELS.opus.modelId });
+    // LESSON LEARNED (build-4): Use Sonnet for PRD planning, not Opus
+    // Sonnet 4 produces equivalent quality plans at 1/5 the cost
+    // Opus should ONLY be used for enterprise architecture decisions
+    logger.info('Using Sonnet for PRD planning', { model: MODELS.sonnet.modelId });
     
     const { text } = await generateText({
-      model: anthropic(MODELS.opus.modelId),
+      model: anthropic(MODELS.sonnet.modelId),
       prompt: planningPrompt,
       maxTokens: 2000
     });
@@ -168,9 +181,11 @@ function formatPlanForDisplay(plan: ExecutionPlan): string {
   plan.phases.forEach((phase, i) => {
     lines.push(`### Phase ${i + 1}: ${phase.name} (${phase.estimatedDuration})`);
     lines.push(phase.description);
-    if (phase.decisionPoints.length > 0) {
-      lines.push(`**Decision points:**`);
-      phase.decisionPoints.forEach(dp => lines.push(`- ${dp}`));
+    // Show decisions made (not questions) - support both old and new format
+    const decisions = phase.decisions || phase.decisionPoints || [];
+    if (decisions.length > 0) {
+      lines.push(`**Approach:**`);
+      decisions.forEach(d => lines.push(`- ${d}`));
     }
     lines.push('');
   });
@@ -182,7 +197,7 @@ function formatPlanForDisplay(plan: ExecutionPlan): string {
   }
 
   lines.push('---');
-  lines.push('Say **"approve"** to start execution, or **"adjust"** with feedback.');
+  lines.push('Say **"approve"** to start building, or provide feedback to adjust the plan.');
 
   return lines.join('\n');
 }
@@ -206,6 +221,10 @@ export async function approvePlan(constraints?: string[]): Promise<{ success: bo
 
   activePlan.approvedAt = new Date().toISOString();
   activePlan.status = 'executing';
+
+  // Start build tracking for cost monitoring
+  startBuildTracking(activePlan.projectName, 'prd_phases');
+  logger.info('Build tracking started for cost monitoring');
 
   // Create feature branch if configured
   if (config.prd.branch_strategy === 'feature-branch') {
@@ -267,6 +286,29 @@ async function executeNextPhase(): Promise<void> {
     phase.completedAt = new Date().toISOString();
     phase.result = response;
 
+    // Record phase for learning system (cost tracking & circuit breaker)
+    const phaseCost = getCurrentBuildCost();
+    const learningResult = recordPhase(phase.name, 'completed', phaseCost);
+    
+    if (learningResult.warning) {
+      logger.warn('Learning system warning', { warning: learningResult.warning });
+      notifyCheckpoint({
+        phaseId: phase.id,
+        phaseName: phase.name,
+        message: learningResult.warning,
+        decisions: [],
+        filesChanged: [],
+        timestamp: new Date().toISOString(),
+        requiresResponse: !learningResult.shouldContinue
+      });
+    }
+    
+    if (!learningResult.shouldContinue) {
+      activePlan.status = 'paused';
+      persistCosts();
+      return;
+    }
+
     // Record successful task for trust escalation
     recordTask({
       type: 'prd',
@@ -294,36 +336,50 @@ async function executeNextPhase(): Promise<void> {
     // Move to next phase
     activePlan.currentPhaseIndex++;
 
-    // Auto-continue or wait for checkpoint confirmation
-    // Trust level affects checkpoint frequency
-    const permissions = getTrustPermissions();
-    const needsCheckpoint = 
-      config.prd.checkpoint_frequency === 'per-phase' ||
-      permissions.checkpointFrequency === 'every-change' ||
-      (permissions.checkpointFrequency === 'per-phase' && phaseIndex > 0);
-
-    if (needsCheckpoint) {
-      // Wait for user to continue (or timeout)
-      logger.info('Waiting for checkpoint confirmation', { 
-        timeout: config.prd.pause_timeout_minutes,
-        trustLevel: permissions.checkpointFrequency
-      });
-      
-      // Auto-continue after timeout
-      setTimeout(() => {
-        if (activePlan?.status === 'executing') {
-          executeNextPhase();
-        }
-      }, config.prd.pause_timeout_minutes * 60 * 1000);
-    } else {
-      // Immediate continue (higher trust levels)
-      executeNextPhase();
-    }
+    // Always auto-continue to next phase - no waiting for user confirmation
+    // User can still say "pause" if they want to stop
+    logger.info('Auto-continuing to next phase', { 
+      nextPhase: activePlan.currentPhaseIndex + 1,
+      totalPhases: activePlan.phases.length
+    });
+    
+    // Small delay to allow UI to update, then continue
+    setTimeout(() => {
+      if (activePlan?.status === 'executing') {
+        executeNextPhase();
+      }
+    }, 500);
 
   } catch (error) {
     logger.error('Phase execution failed', { phase: phase.name, error: String(error) });
     phase.status = 'failed';
-    activePlan.status = 'failed';
+    
+    // Record failure for learning system (circuit breaker)
+    const phaseCost = getCurrentBuildCost();
+    const learningResult = recordPhase(phase.name, 'failed', phaseCost, String(error));
+    
+    // Persist costs immediately on failure
+    persistCosts();
+
+    // Check if circuit breaker triggered
+    if (!learningResult.shouldContinue) {
+      activePlan.status = 'paused';
+      logger.warn('Circuit breaker triggered - pausing build', { 
+        phase: phase.name, 
+        cost: phaseCost 
+      });
+      
+      notifyCheckpoint({
+        phaseId: phase.id,
+        phaseName: phase.name,
+        message: learningResult.warning || `Phase failed and circuit breaker triggered. Build paused to prevent wasted costs.\nSay "resume" to continue or "abort" to stop.`,
+        decisions: [],
+        filesChanged: [],
+        timestamp: new Date().toISOString(),
+        requiresResponse: true
+      });
+      return;
+    }
 
     // Record failure for trust de-escalation
     recordRollback(`Phase "${phase.name}" failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -331,12 +387,20 @@ async function executeNextPhase(): Promise<void> {
     notifyCheckpoint({
       phaseId: phase.id,
       phaseName: phase.name,
-      message: `Phase failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      message: `Phase failed: ${error instanceof Error ? error.message : 'Unknown error'}. Auto-continuing to next phase...`,
       decisions: [],
       filesChanged: [],
       timestamp: new Date().toISOString(),
-      requiresResponse: true
+      requiresResponse: false
     });
+    
+    // Auto-continue to next phase (but circuit breaker will stop if too many failures)
+    activePlan.currentPhaseIndex++;
+    setTimeout(() => {
+      if (activePlan?.status === 'executing') {
+        executeNextPhase();
+      }
+    }, 1000);
   }
 }
 
@@ -359,16 +423,16 @@ ${plan.constraints.map(c => `- ${c}`).join('\n')}
 
 ${completedPhases ? `## COMPLETED PHASES\n${completedPhases}` : ''}
 
-## DECISION POINTS TO ADDRESS
-${phase.decisionPoints.map(dp => `- ${dp}`).join('\n') || 'None specified'}
+## TECHNICAL APPROACH
+${(phase.decisions || phase.decisionPoints || []).map(d => `- ${d}`).join('\n') || 'Use best practices'}
 
 ## ORIGINAL PRD
 ${plan.prdContent}
 
 ## INSTRUCTIONS
-1. Implement the deliverables for this phase
-2. Document any decisions you make
-3. Flag any deviations from the PRD
+1. Implement the deliverables for this phase using the technical approach above
+2. Make your own decisions for any unspecified details - pick sensible defaults
+3. Do NOT ask questions - just build and explain your choices
 4. Provide code changes using the edit format
 
 Be thorough but efficient. Show your work.`;
@@ -382,6 +446,29 @@ async function completePlan(): Promise<void> {
 
   activePlan.status = 'completed';
   activePlan.completedAt = new Date().toISOString();
+
+  // Complete build tracking and analyze
+  const completedPhases = activePlan.phases.filter(p => p.status === 'completed').length;
+  const totalPhases = activePlan.phases.length;
+  const prdCompliance = Math.round((completedPhases / totalPhases) * 100);
+  const linesOfCode = activePlan.phases.reduce((sum, p) => sum + (p.filesModified?.length || 0) * 50, 0); // Estimate
+  
+  const analysis = completeBuildTracking(
+    activePlan.projectName,
+    'prd_phases',
+    prdCompliance,
+    linesOfCode,
+    activePlan.deviations.map(d => d.prdSaid)
+  );
+  
+  // Persist costs
+  persistCosts();
+  
+  logger.info('Build analysis complete', { 
+    efficiency: analysis.efficiency,
+    costPerLine: analysis.costPerLine,
+    newLessons: analysis.newLessons.length
+  });
 
   // Generate summary
   const summary = generateCompletionSummary(activePlan);

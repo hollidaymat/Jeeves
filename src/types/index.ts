@@ -90,7 +90,30 @@ export type ActionType =
   | 'list_backups'      // List available backups for a file
   | 'restore_backup'    // Restore a file from backup
   | 'show_cost'         // Show cost/budget information
+  | 'show_builds'       // Show build history
+  | 'show_lessons'      // Show lessons learned
   | 'compact_session'   // Compact/summarize long conversation history
+  | 'create_project'    // Create a new project
+  | 'autonomous_build'  // Autonomous build from PRD
+  | 'agent_build'       // Build with agent
+  | 'apply_last'        // Apply last suggested changes
+  // Homelab actions
+  | 'homelab_status'          // Full system status
+  | 'homelab_containers'      // List containers
+  | 'homelab_resources'       // CPU/RAM/disk usage
+  | 'homelab_temps'           // CPU temperature
+  | 'homelab_service_start'   // Start a service
+  | 'homelab_service_stop'    // Stop a service
+  | 'homelab_service_restart' // Restart a service
+  | 'homelab_logs'            // Get service logs
+  | 'homelab_update'          // Update a service
+  | 'homelab_update_all'      // Update all services
+  | 'homelab_install'         // Install a service
+  | 'homelab_uninstall'       // Uninstall a service
+  | 'homelab_diagnose'        // Run diagnostics on a service
+  | 'homelab_stacks'          // List docker compose stacks
+  | 'homelab_health'          // Run health checks
+  | 'homelab_self_test'       // Run self-test suite
   | 'unknown'
   | 'denied';
 
@@ -215,7 +238,7 @@ export interface Config {
     enabled: boolean;
     triggers: string[];
     auto_approve: boolean;
-    checkpoint_frequency: 'per-phase' | 'hourly' | 'on-decision';
+    checkpoint_frequency: 'per-phase' | 'hourly' | 'on-decision' | 'none';
     auto_commit: boolean;
     branch_strategy: 'feature-branch' | 'direct' | 'none';
     pause_timeout_minutes: number;
@@ -246,6 +269,7 @@ export interface Config {
     atomicWrites: boolean;
     gitAutoStash: boolean;
   };
+  homelab: HomelabConfig;
 }
 
 // ============================================================================
@@ -275,6 +299,7 @@ export interface AgentStatus {
   workingDir?: string;
   uptime?: number;
   contextSize?: number;
+  pendingChanges?: number;
 }
 
 export interface SystemStatus {
@@ -339,7 +364,8 @@ export interface PrdPhase {
   name: string;
   description: string;
   estimatedDuration: string;  // e.g., "30min", "1hr"
-  decisionPoints: string[];   // Questions that may need user input
+  decisions?: string[];       // Technical decisions made (what was chosen)
+  decisionPoints?: string[];  // Legacy: Questions (deprecated, use decisions)
   status: PrdPhaseStatus;
   startedAt?: string;
   completedAt?: string;
@@ -569,4 +595,148 @@ export interface InjectionPattern {
   pattern: RegExp;
   severity: 'low' | 'medium' | 'high';
   description: string;
+}
+
+// ============================================================================
+// Homelab Types
+// ============================================================================
+
+export type ServiceTier = 'core' | 'media' | 'services' | 'databases' | 'monitoring';
+export type ServicePriority = 'critical' | 'high' | 'medium' | 'low';
+export type ServiceState = 'running' | 'stopped' | 'error' | 'unknown' | 'restarting';
+
+export interface ServiceDefinition {
+  name: string;
+  tier: ServiceTier;
+  image: string;
+  ports: number[];
+  ram: string;                   // e.g., '256MB'
+  purpose: string;
+  priority: ServicePriority;
+  depends: string[];
+  type?: 'container' | 'system-service';
+  devices?: string[];            // e.g., ['/dev/dri:/dev/dri']
+  networkMode?: string;          // e.g., 'host'
+  healthEndpoint?: string;       // HTTP health check URL
+  healthPort?: number;           // TCP health check port
+}
+
+export interface ServiceStatus {
+  name: string;
+  state: ServiceState;
+  uptime?: string;
+  cpu?: string;
+  memory?: string;
+  memoryLimit?: string;
+  restarts?: number;
+  lastError?: string;
+}
+
+export interface ContainerInfo {
+  id: string;
+  name: string;
+  image: string;
+  state: ServiceState;
+  status: string;               // Docker's status string (e.g., "Up 3 hours")
+  ports: string[];
+  created: string;
+  health?: string;              // healthy | unhealthy | starting | none
+}
+
+export interface ContainerStats {
+  name: string;
+  cpuPercent: string;
+  memUsage: string;
+  memLimit: string;
+  memPercent: string;
+  netIO: string;
+  blockIO: string;
+}
+
+export interface SystemResourceStatus {
+  cpu: {
+    usagePercent: number;
+    loadAverage: [number, number, number];   // 1m, 5m, 15m
+    cores: number;
+  };
+  ram: {
+    totalMB: number;
+    usedMB: number;
+    freeMB: number;
+    availableMB: number;
+    usagePercent: number;
+  };
+  disk: {
+    filesystem: string;
+    totalGB: number;
+    usedGB: number;
+    availableGB: number;
+    usagePercent: number;
+    mountPoint: string;
+  }[];
+  temperature: {
+    celsius: number;
+    status: 'normal' | 'warning' | 'critical';
+  } | null;
+  network?: {
+    interface: string;
+    rxBytes: number;
+    txBytes: number;
+  }[];
+}
+
+export interface HomelabThresholds {
+  cpu: { warning: number; critical: number };
+  ram: { warning: number; critical: number };
+  disk: { warning: number; critical: number };
+  temp: { warning: number; critical: number };
+}
+
+export interface ThresholdAlert {
+  metric: 'cpu' | 'ram' | 'disk' | 'temp';
+  level: 'warning' | 'critical';
+  value: number;
+  threshold: number;
+  message: string;
+}
+
+export interface HealthCheckResult {
+  service: string;
+  healthy: boolean;
+  checks: {
+    type: 'http' | 'tcp' | 'docker' | 'command';
+    target: string;
+    passed: boolean;
+    responseTime?: number;
+    error?: string;
+  }[];
+  timestamp: string;
+}
+
+export interface StackInfo {
+  name: string;
+  path: string;
+  services: string[];
+  running: boolean;
+}
+
+export interface ShellCommandResult {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  timedOut: boolean;
+  duration_ms: number;
+  command: string;
+}
+
+export interface HomelabConfig {
+  enabled: boolean;
+  stacksDir: string;
+  configsDir: string;
+  backupsDir: string;
+  dataDir: string;
+  maxRamMB: number;
+  monitorInterval: number;
+  thresholds: HomelabThresholds;
 }

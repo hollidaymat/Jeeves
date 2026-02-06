@@ -32,7 +32,7 @@ import { getProjectIndex } from './project-scanner.js';
 import { getLastBrowseResult } from './browser.js';
 import { trackLLMUsage } from './cost-tracker.js';
 import type { ImageAttachment } from '../types/index.js';
-import { buildSkillsSummary, getSkillContext, loadAllSkills } from './skill-loader.js';
+import { buildSkillsSummary, getSkillContext, loadAllSkills, isCapabilitiesQuery, getCapabilitiesContext, isCapabilitiesFollowUp } from './skill-loader.js';
 
 interface FileChange {
   filePath: string;
@@ -47,10 +47,15 @@ interface AgentSession {
   lastActivity: Date;
   projectContext: string;
   pendingChanges: FileChange[];
+  lastResponse?: string;  // Store the last AI response for "apply that" command
 }
 
 // Active session
 let activeSession: AgentSession | null = null;
+
+// Global last response storage (works even without active session)
+// This is used for "apply that" command when askGeneral is used instead of sendToAgent
+let globalLastResponse: { text: string; workingDir: string | null; timestamp: Date } | null = null;
 
 // Forced model override (user can say "use haiku" etc.)
 let forcedModel: ModelTier | null = null;
@@ -815,7 +820,7 @@ export async function sendToAgent(prompt: string, attachments?: ImageAttachment[
   activeSession.lastActivity = new Date();
 
   // Check if this is a request for code changes
-  const isEditRequest = /\b(fix|add|update|change|modify|create|remove|delete|refactor|implement|write)\b/i.test(prompt);
+  const isEditRequest = /\b(fix|add|update|change|modify|create|remove|delete|refactor|implement|write|build|continue|finish)\b/i.test(prompt);
 
   // Build conversation context from memory
   let conversationContext = '';
@@ -832,7 +837,25 @@ export async function sendToAgent(prompt: string, attachments?: ImageAttachment[
       apiKey: process.env.ANTHROPIC_API_KEY
     });
 
+    // Get personality context (includes self-awareness when working on Jeeves' own codebase)
+    const { getPersonalityContext } = await import('./trust.js');
+    const personalityContext = getPersonalityContext();
+    
+    // Detect if this is Jeeves' own codebase for enhanced self-awareness
+    const projectName = activeSession.workingDir.split(/[\\/]/).pop() || '';
+    const isSelfCodebase = projectName === 'signal-cursor-controller' || activeSession.workingDir.includes('signal-cursor-controller');
+    const selfAwarenessContext = isSelfCodebase ? `
+## CRITICAL: SELF-AWARENESS
+This is YOUR codebase. You are Jeeves, and the signal-cursor-controller project IS YOU.
+- Files in src/core/ are YOUR internal systems
+- data/lessons-learned.json contains YOUR learned lessons
+- data/build-history.json contains YOUR build history
+- Changes here are upgrades to YOUR capabilities
+- The user is helping YOU improve. Acknowledge this.
+` : '';
+
     const systemPrompt = `You are Jeeves, an AI coding assistant with FULL ACCESS to this project's source code.
+${selfAwarenessContext}
 
 ## THINKING
 Start your response with a [Thinking] section that shows your search process:
@@ -852,33 +875,48 @@ Example: "[Thinking] User wants to modify the text input. Searching for 'input',
 7. **BE SPECIFIC**: Propose edits to the actual code you see, not hypothetical code that might exist
 
 ${isEditRequest ? `
-## CODE CHANGES
-Format edits using ONE of these formats:
+## CODE CHANGES - MANDATORY FORMAT
+You MUST use this EXACT format for ALL file changes. No exceptions.
 
-### Format 1: ORIGINAL/MODIFIED (for precise replacements)
+### For EDITING existing files:
 \`\`\`edit:relative/path/to/file.ts
 <<<<<<< ORIGINAL
-// paste the exact original code here
+// paste the EXACT original code here (copy from project files above)
 =======
 // paste the modified code here
 >>>>>>> MODIFIED
 \`\`\`
 
-### Format 2: Partial Edit (for quick changes)
-\`\`\`edit:relative/path/to/file.ts
-// ... existing code ...
-const newFunction = () => {
-  // <CHANGE> Added new authentication check
-  return authenticated;
-}
-// ... existing code ...
+### For CREATING new files:
+\`\`\`newfile:relative/path/to/newfile.ts
+// entire file content here
 \`\`\`
 
-Rules:
-- Use relative paths from project root (e.g., lib/scanners/ssl.ts)
-- Include 3-5 lines of context around changes
-- Add <CHANGE> comments to explain non-obvious edits
-- You can include multiple edit blocks for multiple files
+### CRITICAL RULES:
+1. EVERY file change MUST use \`\`\`edit: or \`\`\`newfile: prefix
+2. The path MUST be relative from project root (e.g., src/components/Button.tsx)
+3. For edits, ORIGINAL content must EXACTLY match the existing file
+4. One file per block - use multiple blocks for multiple files
+5. DO NOT use bare <<<<<<< ORIGINAL without the \`\`\`edit:path wrapper
+6. DO NOT invent XML tags like <file_write> or <bash>
+
+Example of CORRECT multi-file output:
+\`\`\`edit:src/App.js
+<<<<<<< ORIGINAL
+function App() {
+  return <div>Hello</div>;
+}
+=======
+function App() {
+  return <div>Hello World!</div>;
+}
+>>>>>>> MODIFIED
+\`\`\`
+
+\`\`\`newfile:src/components/Button.js
+import React from 'react';
+export const Button = ({ children }) => <button>{children}</button>;
+\`\`\`
 ` : ''}
 
 ## DESIGN GUIDELINES (when working on frontend)
@@ -893,6 +931,7 @@ REMEMBER: You have the actual project files loaded. ALWAYS search them and refer
 PROJECT: ${activeSession.workingDir.split(/[\\/]/).pop()}
 PROJECT ROOT: ${activeSession.workingDir}
 
+${personalityContext ? `## USER PREFERENCES & MEMORY\n${personalityContext}\n` : ''}
 ${conversationContext}
 === PROJECT FILES ===
 ${activeSession.projectContext}
@@ -951,6 +990,9 @@ ${activeSession.projectContext}
       isEditRequest,
       hasEditMarkers: text.includes('<<<') || text.includes('ORIGINAL')
     });
+    
+    // Store the raw response for "apply that" command
+    activeSession.lastResponse = text;
 
     // Store assistant response in memory
     if (config.memory.enabled) {
@@ -966,7 +1008,15 @@ ${activeSession.projectContext}
         logger.info('Pending changes set', { count: changes.length });
         return text + `\n\n---\n**${changes.length} file(s) ready to modify.** Say "apply" to apply changes, "reject" to discard, or "show diff" to review.`;
       } else {
-        logger.info('No edit blocks found in response');
+        // Normal parsing failed - try aggressive extraction
+        logger.info('No edit blocks found, trying aggressive extraction');
+        const aggressiveResult = await reParseLastResponse();
+        if (aggressiveResult.success) {
+          logger.info('Aggressive extraction succeeded');
+          return text + '\n\n---\n' + aggressiveResult.message;
+        } else {
+          logger.info('Aggressive extraction also failed', { reason: aggressiveResult.message });
+        }
       }
     }
 
@@ -986,75 +1036,246 @@ ${activeSession.projectContext}
  */
 function parseEditBlocks(text: string, workingDir: string): FileChange[] {
   const changes: FileChange[] = [];
-  
-  // Format 1: ```edit:filepath with ORIGINAL/MODIFIED markers (full replacement)
-  const editBlockRegex1 = /```edit:([^\n]+)\n<<<<<<<?[^\n]*\n([\s\S]*?)\n======*\n([\s\S]*?)\n>>>>>>>[^\n]*\n```/gi;
-  
-  // Format 2: ```edit:filepath with // ... existing code ... markers (partial edit)
-  const editBlockRegex2 = /```(?:edit:|lang\s+file=["']?)([^\n"']+)["']?\n([\s\S]*?)```/gi;
-  
-  // Format 3: Just look for ORIGINAL/MODIFIED blocks anywhere
-  const editBlockRegex3 = /(?:file|path)?:?\s*`?([^\n`]+\.[a-z]+)`?\n*```[a-z]*\n*<<<<<<<?[^\n]*\n([\s\S]*?)\n======*\n([\s\S]*?)\n>>>>>>>[^\n]*\n*```/gi;
-  
   let match;
   
-  // Try format 1 (ORIGINAL/MODIFIED)
-  while ((match = editBlockRegex1.exec(text)) !== null) {
-    const filePath = join(workingDir, match[1].trim());
-    logger.info('Parsed edit block (ORIGINAL/MODIFIED)', { file: match[1].trim() });
+  // Format 1: ```newfile:filepath - Create new file with full content
+  const newFileRegex = /```newfile:([^\n]+)\n([\s\S]*?)```/gi;
+  while ((match = newFileRegex.exec(text)) !== null) {
+    const relativePath = match[1].trim();
+    const filePath = join(workingDir, relativePath);
+    logger.info('Parsed new file block', { file: relativePath });
     changes.push({
       filePath,
-      originalContent: match[2].trim(),
-      newContent: match[3].trim(),
-      description: `Update ${match[1].trim()}`
+      originalContent: null,  // null means new file
+      newContent: match[2].trim(),
+      description: `Create ${relativePath}`
     });
   }
   
-  // Try format 2 (partial edit with ... existing code ...)
+  // Format 2: ```edit:filepath with ORIGINAL/MODIFIED markers
+  const editBlockRegex = /```edit:([^\n]+)\n<<<<<<<?[^\n]*\n([\s\S]*?)\n?======*\n([\s\S]*?)\n?>>>>>>>[^\n]*\n?```/gi;
+  while ((match = editBlockRegex.exec(text)) !== null) {
+    const relativePath = match[1].trim();
+    const filePath = join(workingDir, relativePath);
+    logger.info('Parsed edit block (ORIGINAL/MODIFIED)', { file: relativePath });
+    changes.push({
+      filePath,
+      originalContent: match[2].trim() || null,  // Empty string means replace entire file
+      newContent: match[3].trim(),
+      description: `Update ${relativePath}`
+    });
+  }
+  
+  // Format 3: ```edit:filepath with partial content (no ORIGINAL/MODIFIED)
   if (changes.length === 0) {
-    while ((match = editBlockRegex2.exec(text)) !== null) {
-      const filePath = join(workingDir, match[1].trim());
-      const content = match[2];
+    const partialEditRegex = /```edit:([^\n]+)\n([\s\S]*?)```/gi;
+    while ((match = partialEditRegex.exec(text)) !== null) {
+      // Skip if it has ORIGINAL markers (already handled above)
+      if (match[2].includes('<<<<<<') || match[2].includes('ORIGINAL')) continue;
       
-      // Check if this uses the ... existing code ... pattern
+      const relativePath = match[1].trim();
+      const filePath = join(workingDir, relativePath);
+      const content = match[2].trim();
+      
       if (content.includes('... existing code ...') || content.includes('// ...')) {
-        logger.info('Parsed edit block (partial)', { file: match[1].trim() });
-        changes.push({
-          filePath,
-          originalContent: null,  // null indicates partial edit
-          newContent: content.trim(),
-          description: `Partial update ${match[1].trim()}`
-        });
-      } else {
-        // Full file replacement
-        logger.info('Parsed edit block (full file)', { file: match[1].trim() });
+        logger.info('Parsed partial edit block', { file: relativePath });
         changes.push({
           filePath,
           originalContent: null,
-          newContent: content.trim(),
-          description: `Update ${match[1].trim()}`
+          newContent: content,
+          description: `Partial update ${relativePath}`
+        });
+      } else {
+        logger.info('Parsed full file edit block', { file: relativePath });
+        changes.push({
+          filePath,
+          originalContent: null,
+          newContent: content,
+          description: `Replace ${relativePath}`
         });
       }
     }
   }
   
-  // Try format 3 if still nothing found
-  if (changes.length === 0) {
-    while ((match = editBlockRegex3.exec(text)) !== null) {
-      const filePath = join(workingDir, match[1].trim());
-      logger.info('Parsed edit block (format 3)', { file: match[1].trim() });
-      changes.push({
-        filePath,
-        originalContent: match[2].trim(),
-        newContent: match[3].trim(),
-        description: `Update ${match[1].trim()}`
-      });
+  // Helper to infer file path from content - prioritize existing files
+  const inferFileType = (content: string): string | null => {
+    // Try to find existing files in project that match the content type
+    const existingFiles = activeSession?.projectContext || '';
+    
+    // CSS patterns - look for existing CSS files first
+    if (/^\s*\.[a-zA-Z][\w-]*\s*\{|^\s*#[a-zA-Z][\w-]*\s*\{|^\s*@media|^\s*:root/m.test(content)) {
+      // Check for common CSS file names in project context
+      const cssMatch = existingFiles.match(/(?:^|\n)===\s*([^\n]*\.css)\s*===/m);
+      if (cssMatch) return cssMatch[1];
+      // Check for inline mentions
+      const cssFiles = ['styles.css', 'style.css', 'App.css', 'index.css', 'src/App.css', 'src/styles.css', 'src/index.css'];
+      for (const f of cssFiles) {
+        if (existingFiles.includes(f)) return f;
+      }
+      return 'src/index.css';
+    }
+    // TSX/React patterns
+    if (/import\s+React|from\s+['"]react['"]|<[A-Z][a-zA-Z]*|useState|useEffect/m.test(content)) {
+      const jsxMatch = existingFiles.match(/(?:^|\n)===\s*([^\n]*(?:App|index)\.(jsx?|tsx?))\s*===/m);
+      if (jsxMatch) return jsxMatch[1];
+      return 'src/App.tsx';
+    }
+    // HTML patterns
+    if (/<html|<head|<body|<!DOCTYPE/i.test(content)) {
+      const htmlMatch = existingFiles.match(/(?:^|\n)===\s*([^\n]*\.html)\s*===/m);
+      if (htmlMatch) return htmlMatch[1];
+      return 'index.html';
+    }
+    // JavaScript/TypeScript patterns
+    if (/function\s+\w+|const\s+\w+\s*=|let\s+\w+\s*=|class\s+\w+|export\s+/m.test(content)) {
+      const jsMatch = existingFiles.match(/(?:^|\n)===\s*([^\n]*\.(?:ts|js)x?)\s*===/m);
+      if (jsMatch) return jsMatch[1];
+      return 'src/utils.ts';
+    }
+    // JSON patterns
+    if (/^\s*\{[\s\S]*"[^"]+"\s*:/m.test(content)) {
+      return 'data.json';
+    }
+    return null;
+  };
+
+  // Format 4: Fallback - look for bare ORIGINAL/MODIFIED with file path mentioned nearby
+  if (changes.length === 0 && text.includes('<<<<<<')) {
+    logger.info('Format 4: Attempting to parse bare ORIGINAL/MODIFIED blocks');
+    
+    // Debug: log the actual markers in the text
+    const originalIndex = text.indexOf('ORIGINAL');
+    const modifiedIndex = text.indexOf('MODIFIED');
+    const equalsIndex = text.indexOf('=======');
+    logger.info('Format 4 debug', { 
+      hasOriginal: originalIndex !== -1,
+      hasModified: modifiedIndex !== -1,
+      hasEquals: equalsIndex !== -1,
+      textSnippet: text.substring(Math.max(0, originalIndex - 20), originalIndex + 50)
+    });
+    
+    // More flexible regex - handle various marker styles
+    // Some AI outputs don't include the closing >>>>>>> MODIFIED marker
+    // So we match until we hit another <<<<<<< or end of text
+    const bareEditRegex = /<<<+\s*ORIGINAL[^\n]*\n([\s\S]*?)\n===+\n([\s\S]*?)(?=\n<<<+\s*ORIGINAL|\n```|$)/gi;
+    // Look for file paths like "src/App.js" or "components/Button.tsx"
+    const filePathRegex = /(?:^|\s|`|"|')([a-zA-Z0-9_\-./]+\.[a-zA-Z]{2,4})(?:\s|`|"|'|$|:|\n)/gm;
+    
+    // Find all mentioned file paths in the entire response
+    const allFilePaths = [...text.matchAll(filePathRegex)].map(m => m[1]);
+    let fileIndex = 0;
+    
+    while ((match = bareEditRegex.exec(text)) !== null) {
+      // Try to find a relevant file path
+      let targetPath: string | null = null;
+      
+      // Look in the 500 chars before this block for a file path
+      const contextBefore = text.substring(Math.max(0, match.index - 500), match.index);
+      const nearbyPaths = [...contextBefore.matchAll(filePathRegex)];
+      
+      if (nearbyPaths.length > 0) {
+        targetPath = nearbyPaths[nearbyPaths.length - 1][1];
+      } else if (allFilePaths[fileIndex]) {
+        targetPath = allFilePaths[fileIndex];
+        fileIndex++;
+      }
+      
+      // If still no path, try to infer from content
+      if (!targetPath) {
+        const originalContent = match[1].trim();
+        const newContent = match[2].trim();
+        targetPath = inferFileType(newContent) || inferFileType(originalContent);
+        if (targetPath) {
+          logger.info('Inferred file type from content', { inferredPath: targetPath });
+        }
+      }
+      
+      if (targetPath) {
+        const filePath = join(workingDir, targetPath);
+        const originalContent = match[1].trim();
+        const newContent = match[2].trim();
+        
+        logger.info('Parsed bare ORIGINAL/MODIFIED block', { file: targetPath });
+        changes.push({
+          filePath,
+          originalContent: originalContent || null,
+          newContent,
+          description: `Update ${targetPath}`
+        });
+      } else {
+        logger.warn('Found ORIGINAL/MODIFIED block but could not determine file path', {
+          contentPreview: match[2].substring(0, 100)
+        });
+      }
     }
   }
   
-  logger.info('Parsed edit blocks', { 
-    count: changes.length, 
-    hasEditMarkers: text.includes('ORIGINAL') || text.includes('=======') || text.includes('existing code')
+  // Format 5: Plain markdown code blocks with language hints and file path in nearby text
+  // e.g. "Here's `src/components/ExpenseList.tsx`:" followed by ```tsx
+  if (changes.length === 0) {
+    const langMap: Record<string, string> = {
+      'typescript': '.ts', 'ts': '.ts', 'tsx': '.tsx',
+      'javascript': '.js', 'js': '.js', 'jsx': '.jsx',
+      'css': '.css', 'scss': '.scss', 'less': '.less',
+      'html': '.html', 'json': '.json', 'md': '.md'
+    };
+    
+    // Match code blocks with language tags
+    const codeBlockRegex = /```(typescript|ts|tsx|javascript|js|jsx|css|scss|less|html|json)\n([\s\S]*?)```/gi;
+    const filePathInText = /[`"']?((?:src\/|components\/|lib\/|utils\/)?[\w\-./]+\.(?:tsx?|jsx?|css|html|json))[`"']?/gi;
+    
+    // Find all file paths mentioned in the text
+    const mentionedFiles = [...text.matchAll(filePathInText)].map(m => m[1]);
+    let usedPaths = new Set<string>();
+    
+    while ((match = codeBlockRegex.exec(text)) !== null) {
+      const lang = match[1].toLowerCase();
+      const content = match[2].trim();
+      
+      if (content.length < 20) continue; // Skip tiny blocks
+      
+      // Look for file path in the 300 chars before this block
+      const contextBefore = text.substring(Math.max(0, match.index - 300), match.index);
+      const nearbyFileMatch = contextBefore.match(/[`"']?((?:src\/|components\/|lib\/)?[\w\-./]+\.(?:tsx?|jsx?|css|html|json))[`"']?\s*:?\s*$/i);
+      
+      let targetPath: string | null = null;
+      
+      if (nearbyFileMatch && !usedPaths.has(nearbyFileMatch[1])) {
+        targetPath = nearbyFileMatch[1];
+        usedPaths.add(targetPath);
+      } else {
+        // Try to find an unused path from mentioned files that matches the language
+        const ext = langMap[lang];
+        for (const fp of mentionedFiles) {
+          if (fp.endsWith(ext) && !usedPaths.has(fp)) {
+            targetPath = fp;
+            usedPaths.add(fp);
+            break;
+          }
+        }
+      }
+      
+      // If still no path, infer from content
+      if (!targetPath) {
+        targetPath = inferFileType(content);
+      }
+      
+      if (targetPath) {
+        const filePath = join(workingDir, targetPath);
+        logger.info('Parsed plain code block', { file: targetPath, lang });
+        changes.push({
+          filePath,
+          originalContent: null,  // Full file replacement
+          newContent: content,
+          description: `Create ${targetPath}`
+        });
+      }
+    }
+  }
+  
+  logger.info('Parsed edit blocks total', { 
+    count: changes.length,
+    hasEditMarkers: text.includes('ORIGINAL') || text.includes('newfile:') || text.includes('```')
   });
   
   return changes;
@@ -1283,7 +1504,7 @@ export async function stopAgentSession(): Promise<{ success: boolean; message: s
 /**
  * Get status of the AI session
  */
-export function getAgentStatus(): { active: boolean; workingDir?: string; uptime?: number; contextSize?: number } {
+export function getAgentStatus(): { active: boolean; workingDir?: string; uptime?: number; contextSize?: number; pendingChanges?: number } {
   if (!activeSession) {
     return { active: false };
   }
@@ -1313,6 +1534,258 @@ export function getPendingChanges(): FileChange[] {
 }
 
 /**
+ * Re-parse the last AI response with aggressive extraction
+ * Used when automatic parsing failed but user wants to apply the code
+ */
+export async function reParseLastResponse(): Promise<{ success: boolean; message: string }> {
+  // Try active session first, then fall back to global response
+  let text: string;
+  let workingDir: string;
+  
+  if (activeSession?.lastResponse) {
+    text = activeSession.lastResponse;
+    workingDir = activeSession.workingDir;
+  } else if (globalLastResponse) {
+    text = globalLastResponse.text;
+    // CRITICAL: Do NOT use process.cwd() as fallback - that would be the Jeeves folder!
+    if (!globalLastResponse.workingDir) {
+      return { success: false, message: 'No project is currently open. Please open a project first with `open <project-name>`.' };
+    }
+    workingDir = globalLastResponse.workingDir;
+    logger.info('Using global response (no active session)', { age: Date.now() - globalLastResponse.timestamp.getTime() });
+  } else {
+    return { success: false, message: 'No previous AI response to parse. Try asking the AI to generate code first.' };
+  }
+  
+  const changes: FileChange[] = [];
+  
+  logger.info('Re-parsing last response', { length: text.length });
+  
+  // Strategy 0: Look for our preferred format (```newfile: and ```edit:)
+  const newFileRegex = /```newfile:([^\n]+)\n([\s\S]*?)```/gi;
+  let match;
+  while ((match = newFileRegex.exec(text)) !== null) {
+    const relativePath = match[1].trim();
+    logger.info('Found newfile block', { file: relativePath });
+    changes.push({
+      filePath: join(workingDir, relativePath),
+      originalContent: null,
+      newContent: match[2].trim(),
+      description: 'Create ' + relativePath
+    });
+  }
+  
+  const editRegex = /```edit:([^\n]+)\n([\s\S]*?)```/gi;
+  while ((match = editRegex.exec(text)) !== null) {
+    const relativePath = match[1].trim();
+    const content = match[2].trim();
+    // Skip ORIGINAL/MODIFIED sections, handle them separately
+    if (content.includes('<<<<<<') || content.includes('ORIGINAL')) continue;
+    logger.info('Found edit block', { file: relativePath });
+    changes.push({
+      filePath: join(workingDir, relativePath),
+      originalContent: null,
+      newContent: content,
+      description: 'Update ' + relativePath
+    });
+  }
+  
+  // Strategy 1: Look for ORIGINAL/MODIFIED blocks (without closing marker)
+  if (changes.length === 0) {
+    const origModBlocks = text.split(/<<<+\s*ORIGINAL/).slice(1);
+    for (const block of origModBlocks) {
+    const parts = block.split(/===+/);
+    if (parts.length >= 2) {
+      const originalContent = parts[0].trim();
+      // Get content until next block or descriptive text
+      const newContent = parts[1].split(/<<<+\s*ORIGINAL|>>>+|^\s*\n\s*\n[A-Z]/m)[0].trim();
+      
+      // Try to find file path from context
+      const contextBefore = text.substring(0, text.indexOf(block)).slice(-500);
+      const fileMatch = contextBefore.match(/[`"']?((?:src\/|components\/)?[\w\-./]+\.(?:tsx?|jsx?|css|html))[`"']?\s*:?\s*$/i);
+      
+      let filePath: string;
+      if (fileMatch) {
+        filePath = fileMatch[1];
+      } else {
+        // Infer from content
+        if (/^\s*\.[a-zA-Z]|^\s*@media|^\s*:root/m.test(newContent)) {
+          filePath = 'src/index.css';
+        } else if (/import\s+React|from\s+['"]react|<[A-Z]/m.test(newContent)) {
+          filePath = 'src/App.tsx';
+        } else {
+          filePath = 'src/temp.tsx';
+        }
+      }
+      
+      logger.info('Extracted ORIGINAL/MODIFIED block', { file: filePath, origLen: originalContent.length, newLen: newContent.length });
+      changes.push({
+        filePath: join(workingDir, filePath),
+        originalContent,
+        newContent,
+        description: 'Update ' + filePath
+      });
+    }
+  }
+  }  // end Strategy 1 if block
+  
+  // Strategy 2: Look for plain code blocks with file paths
+  if (changes.length === 0) {
+    const codeBlockRegex = /```(?:tsx?|jsx?|css|html|json)\n([\s\S]*?)```/gi;
+    const filePathInTextRegex = /[`"']?((?:src\/|components\/)?[\w\-./]+\.(?:tsx?|jsx?|css|html|json))[`"']?/gi;
+    const allFiles = [...text.matchAll(filePathInTextRegex)].map(m => m[1]);
+    
+    let match;
+    let fileIndex = 0;
+    while ((match = codeBlockRegex.exec(text)) !== null) {
+      const content = match[1].trim();
+      if (content.length < 50) continue;
+      
+      // Find nearby file path
+      const beforeBlock = text.substring(Math.max(0, match.index - 200), match.index);
+      const nearbyFile = beforeBlock.match(/[`"']?((?:src\/|components\/)?[\w\-./]+\.(?:tsx?|jsx?|css|html|json))[`"']?\s*:?\s*$/i);
+      
+      const filePath = nearbyFile ? nearbyFile[1] : allFiles[fileIndex++] || 'src/temp.tsx';
+      
+      logger.info('Extracted code block', { file: filePath, len: content.length });
+      changes.push({
+        filePath: join(workingDir, filePath),
+        originalContent: null,
+        newContent: content,
+        description: 'Create/Update ' + filePath
+      });
+    }
+  }
+  
+  // Strategy 3: Detect raw code without backticks (AI sometimes forgets markdown)
+  if (changes.length === 0) {
+    logger.info('Trying raw code detection (no backticks found)');
+    
+    // Split by React component starts or CSS file starts
+    const segments: Array<{ type: 'css' | 'react'; content: string; name?: string }> = [];
+    
+    // Look for CSS content (starts with selector like .ClassName { or body {)
+    const cssPattern = /^(\.[A-Z][a-zA-Z-]*\s*\{|[a-z]+\s*\{|@media|\*\s*\{)/m;
+    // Look for React component (import React or export default/const ComponentName)
+    const reactPattern = /^(import\s+React|import\s+\{[^}]+\}\s+from\s+['"]react|const\s+[A-Z][a-zA-Z]+\s*=|export\s+default\s+|function\s+[A-Z])/m;
+    
+    // Find all component/css boundaries
+    const importReactMatches = [...text.matchAll(/import\s+React[^;]*;/gi)];
+    const exportDefaultMatches = [...text.matchAll(/export\s+default\s+\w+;?\s*$/gm)];
+    
+    // Try to extract React components by finding import...export pairs
+    for (let i = 0; i < importReactMatches.length; i++) {
+      const importMatch = importReactMatches[i];
+      const startIdx = importMatch.index!;
+      
+      // Find the end - next import React or end of meaningful code
+      let endIdx = text.length;
+      if (i + 1 < importReactMatches.length) {
+        endIdx = importReactMatches[i + 1].index!;
+      }
+      
+      // Also check for CSS boundary (raw CSS often starts with .)
+      const cssStart = text.indexOf('\n.', startIdx + 100);
+      if (cssStart > startIdx && cssStart < endIdx) {
+        endIdx = cssStart;
+      }
+      
+      const content = text.substring(startIdx, endIdx).trim();
+      if (content.length > 100) {
+        // Try to extract component name
+        const nameMatch = content.match(/(?:const|function)\s+([A-Z][a-zA-Z]+)/);
+        const name = nameMatch ? nameMatch[1] : 'Component' + (i + 1);
+        segments.push({ type: 'react', content, name });
+      }
+    }
+    
+    // Look for CSS blocks (starts with . or element selector, has { } pairs)
+    const cssMatches = text.match(/(?:^|\n)(\.[A-Z][a-zA-Z-]*\s*\{[\s\S]*?\}(?:\s*\.[A-Za-z-]+\s*\{[\s\S]*?\})*)/gm);
+    if (cssMatches) {
+      for (const cssBlock of cssMatches) {
+        if (cssBlock.length > 100 && !cssBlock.includes('import ')) {
+          // Try to extract main class name for file naming
+          const classMatch = cssBlock.match(/\.([A-Z][a-zA-Z-]+)/);
+          const name = classMatch ? classMatch[1] : 'styles';
+          segments.push({ type: 'css', content: cssBlock.trim(), name });
+        }
+      }
+    }
+    
+    // Also try simpler extraction: any CSS-like content
+    if (segments.length === 0) {
+      // Check if text looks mostly like CSS
+      const hasCssPatterns = (text.match(/\{[^}]+\}/g) || []).length > 3;
+      const hasSelectors = (text.match(/\.[a-zA-Z-]+\s*\{/g) || []).length > 2;
+      const hasReactImport = /import\s+React/.test(text);
+      
+      if (hasSelectors && hasCssPatterns && !hasReactImport) {
+        // Whole thing is probably CSS
+        segments.push({ type: 'css', content: text.trim(), name: 'App' });
+      } else if (hasReactImport) {
+        // Try to split into React and CSS parts
+        const reactEndMatch = text.match(/export\s+default\s+\w+;?\s*\n/);
+        if (reactEndMatch && reactEndMatch.index) {
+          const reactEnd = reactEndMatch.index + reactEndMatch[0].length;
+          const reactPart = text.substring(0, reactEnd).trim();
+          const cssPart = text.substring(reactEnd).trim();
+          
+          const nameMatch = reactPart.match(/(?:const|function)\s+([A-Z][a-zA-Z]+)/);
+          const name = nameMatch ? nameMatch[1] : 'Component';
+          
+          if (reactPart.length > 100) {
+            segments.push({ type: 'react', content: reactPart, name });
+          }
+          if (cssPart.length > 100 && /\{[^}]+\}/.test(cssPart)) {
+            segments.push({ type: 'css', content: cssPart, name });
+          }
+        }
+      }
+    }
+    
+    // Convert segments to file changes
+    for (const seg of segments) {
+      let filePath: string;
+      if (seg.type === 'css') {
+        filePath = seg.name ? 'src/' + seg.name + '.css' : 'src/App.css';
+      } else {
+        filePath = seg.name ? 'src/' + seg.name + '.tsx' : 'src/App.tsx';
+      }
+      
+      logger.info('Extracted raw code segment', { type: seg.type, file: filePath, len: seg.content.length });
+      changes.push({
+        filePath: join(workingDir, filePath),
+        originalContent: null,
+        newContent: seg.content,
+        description: 'Create/Update ' + filePath
+      });
+    }
+  }
+  
+  if (changes.length === 0) {
+    return { success: false, message: 'Could not extract any code blocks from the last response' };
+  }
+  
+  // Create temporary session if needed for applyChanges to work
+  if (!activeSession) {
+    activeSession = {
+      workingDir,
+      startedAt: new Date(),
+      lastActivity: new Date(),
+      projectContext: '',
+      pendingChanges: changes
+    };
+    logger.info('Created temporary session for apply-that', { workingDir });
+  } else {
+    activeSession.pendingChanges = changes;
+  }
+  
+  const applyResult = await applyChanges();
+  
+  return applyResult;
+}
+
+/**
  * Answer general questions without needing a project session
  * Used for questions about Jeeves itself, trust system, capabilities, etc.
  */
@@ -1333,8 +1806,8 @@ interface PromptAnalysis {
 // Token limits per tier - prevents verbose responses
 const TOKEN_LIMITS: Record<PromptTier, number> = {
   minimal: 150,   // Greetings, status checks - keep it brief
-  standard: 800,  // Normal questions - moderate response
-  full: 2000      // Complex technical work - allow detailed responses
+  standard: 1500, // Normal questions - moderate response
+  full: 8000      // Complex technical work, code generation - allow complete file output
 };
 
 /**
@@ -1474,7 +1947,26 @@ ${trustConstraints}`;
 - DevOps: Terraform, Ansible, k8s, AWS/DO, monitoring
 - Databases: PostgreSQL, MySQL, Redis
 - Web: browse sites, screenshots, click/type for testing
-- API: test endpoints (GET any, POST/PUT/DELETE need L3+)`;
+- API: test endpoints (GET any, POST/PUT/DELETE need L3+)
+
+## CODE OUTPUT FORMAT (MANDATORY)
+When outputting code, you MUST use this exact format:
+
+For NEW files:
+\`\`\`newfile:src/path/to/file.tsx
+// file contents
+\`\`\`
+
+For EDITING existing files:
+\`\`\`edit:src/path/to/file.tsx
+// complete new file contents
+\`\`\`
+
+RULES:
+- ALWAYS use \`\`\`newfile: or \`\`\`edit: prefix
+- NEVER output raw code without the prefix
+- Include the FULL file path after the colon
+- Output COMPLETE file contents, not snippets`;
 
   let prompt = `${corePrompt}
 ${capabilities}
@@ -1546,11 +2038,25 @@ export async function askGeneral(prompt: string, attachments?: ImageAttachment[]
   // Load relevant skills context (only for standard/full tiers to save tokens)
   let skillsContext = '';
   if (analysis.tier !== 'minimal') {
-    // Detect relevant skills based on prompt content
-    skillsContext = await getSkillContext(prompt);
+    // Check if we're already in a capabilities conversation (for follow-ups)
+    const wasInCapConvo = isCapabilitiesFollowUp();
+    
+    // Check if asking about capabilities
+    const isCapQuery = isCapabilitiesQuery(prompt);
+    logger.info('Checking capabilities query', { isCapQuery, wasInCapConvo, promptStart: prompt.substring(0, 50) });
+    
+    if (isCapQuery) {
+      // Pass whether this is a follow-up for different instructions
+      const isFollowUp = wasInCapConvo;
+      skillsContext = await getCapabilitiesContext(isFollowUp);
+      logger.info('Loaded capabilities context', { length: skillsContext.length, isFollowUp });
+    } else {
+      // Detect relevant skills based on prompt content
+      skillsContext = await getSkillContext(prompt);
+    }
     
     if (skillsContext) {
-      logger.debug('Loaded skills context', { length: skillsContext.length });
+      logger.debug('Loaded context', { length: skillsContext.length });
     }
   }
   
@@ -1684,6 +2190,38 @@ export async function askGeneral(prompt: string, attachments?: ImageAttachment[]
     // Extract and store any proposed plan (validates trust constraints)
     await extractAndStorePlan(text);
 
+    // Store globally for "apply that" command
+    // CRITICAL: Only use a valid project path, never process.cwd() which would be the Jeeves folder
+    const workingDir = activeSession?.workingDir || null;
+    globalLastResponse = {
+      text,
+      workingDir,
+      timestamp: new Date()
+    };
+    logger.debug('Stored response for apply-that', { length: text.length, hasWorkingDir: !!workingDir });
+
+    // Auto-detect and apply code if this looks like a build/edit request
+    const isBuildRequest = /\b(build|continue|finish|implement|create|write)\b/i.test(prompt);
+    const hasCodeBlocks = /```(?:tsx?|jsx?|css|html|json|newfile:|edit:)/i.test(text);
+    // Also detect raw code patterns (CSS selectors, React imports, etc.)
+    const hasRawCode = /import\s+React|from\s+['"]react|^\s*\.[A-Z][a-zA-Z-]*\s*\{|export\s+default/m.test(text);
+    
+    if (isBuildRequest && (hasCodeBlocks || hasRawCode || text.length > 500)) {
+      // Require a valid project path for build commands
+      if (!workingDir) {
+        logger.warn('Build request without active project - cannot apply changes');
+        return text + '\n\n---\n⚠️ No project is currently open. Please open a project first with `open <project-name>` before building.';
+      }
+      
+      logger.info('Build request detected, auto-parsing response');
+      const parseResult = await reParseLastResponse();
+      if (parseResult.success) {
+        return text + '\n\n---\n' + parseResult.message;
+      } else {
+        logger.debug('Auto-parse failed', { reason: parseResult.message });
+      }
+    }
+
     return text;
   } catch (error) {
     logger.error('General question failed', { error: String(error) });
@@ -1693,3 +2231,545 @@ export async function askGeneral(prompt: string, attachments?: ImageAttachment[]
 
 // Re-export FileChange type for external use
 export type { FileChange };
+
+// ============================================================================
+// AUTONOMOUS BUILD LOOP
+// Plans from PRD, then builds entire project without user intervention
+// Includes safety features to prevent token waste
+// ============================================================================
+
+interface BuildProgress {
+  phase: 'planning' | 'building' | 'complete' | 'stopped';
+  iteration: number;
+  filesCreated: string[];
+  filesUpdated: string[];
+  totalChanges: number;
+  isComplete: boolean;
+  estimatedCost: number;
+  lastResponse: string;
+}
+
+interface BuildPlan {
+  components: string[];
+  files: string[];
+  order?: string[];
+  estimatedIterations: number;
+  // NEW: Store original requirements for context persistence
+  originalPrd?: string;
+  // NEW: Track which items have been completed
+  completedComponents: string[];
+  completedFiles: string[];
+}
+
+/**
+ * Helper: Get remaining plan items that haven't been completed yet
+ */
+function getRemainingPlanItems(plan: BuildPlan, filesCreated: string[], filesUpdated: string[]): {
+  remainingComponents: string[];
+  remainingFiles: string[];
+  completionPercentage: number;
+} {
+  const allCreatedFiles = [...filesCreated, ...filesUpdated].map(f => f.toLowerCase());
+  
+  // Check which planned files have been created
+  const remainingFiles = plan.files.filter(f => {
+    const fLower = f.toLowerCase();
+    // Check if any created file matches this planned file (fuzzy match)
+    return !allCreatedFiles.some(cf => 
+      cf.includes(fLower) || fLower.includes(cf) || 
+      cf.endsWith(fLower) || fLower.endsWith(cf)
+    );
+  });
+  
+  // Check which components have been implemented (by checking if related files exist)
+  const remainingComponents = plan.components.filter(comp => {
+    const compWords = comp.toLowerCase().split(/[\s-_]+/);
+    // A component is done if at least one file mentions it
+    const isDone = allCreatedFiles.some(f => 
+      compWords.some(word => word.length > 3 && f.includes(word))
+    );
+    return !isDone;
+  });
+  
+  const totalItems = plan.components.length + plan.files.length;
+  const completedItems = (plan.components.length - remainingComponents.length) + 
+                         (plan.files.length - remainingFiles.length);
+  const completionPercentage = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
+  
+  return { remainingComponents, remainingFiles, completionPercentage };
+}
+
+/**
+ * Helper: Validate if build is truly complete against the original plan
+ */
+function validateBuildCompletion(
+  plan: BuildPlan | null, 
+  filesCreated: string[], 
+  filesUpdated: string[]
+): { isComplete: boolean; missingItems: string[]; completionPercentage: number } {
+  if (!plan) {
+    // No plan = can't validate, assume complete if we have files
+    return { 
+      isComplete: filesCreated.length > 0 || filesUpdated.length > 0, 
+      missingItems: [],
+      completionPercentage: 100
+    };
+  }
+  
+  const { remainingComponents, remainingFiles, completionPercentage } = 
+    getRemainingPlanItems(plan, filesCreated, filesUpdated);
+  
+  const missingItems = [
+    ...remainingComponents.map(c => `Component: ${c}`),
+    ...remainingFiles.map(f => `File: ${f}`)
+  ];
+  
+  // Consider complete if at least 80% done (allows for minor variations in naming)
+  const isComplete = completionPercentage >= 80 || missingItems.length === 0;
+  
+  return { isComplete, missingItems, completionPercentage };
+}
+
+type BuildProgressCallback = (progress: BuildProgress) => void;
+
+/**
+ * Autonomously build a project to completion
+ * 1. First creates a plan from the PRD/context
+ * 2. Then builds iteratively until complete
+ * 3. Has safety features to stop when done
+ */
+export async function autonomousBuild(
+  projectPath: string,
+  prdOrPrompt?: string,
+  options: {
+    maxIterations?: number;
+    maxCostDollars?: number;
+    onProgress?: BuildProgressCallback;
+  } = {}
+): Promise<{ success: boolean; message: string; totalChanges: number; estimatedCost: number }> {
+  const maxIterations = options.maxIterations || 10;
+  const maxCostDollars = options.maxCostDollars || 2.0; // Safety limit: $2 max
+  const onProgress = options.onProgress;
+  
+  logger.info('Starting autonomous build', { projectPath, maxIterations, maxCostDollars });
+  
+  // Ensure we have an active session for this project
+  if (!activeSession || activeSession.workingDir !== projectPath) {
+    const sessionResult = await startAgentSession(projectPath);
+    if (!sessionResult.success) {
+      return { success: false, message: sessionResult.message, totalChanges: 0, estimatedCost: 0 };
+    }
+  }
+  
+  const filesCreated: string[] = [];
+  const filesUpdated: string[] = [];
+  let totalChanges = 0;
+  let isComplete = false;
+  let estimatedCost = 0;
+  let consecutiveEmptyIterations = 0;
+  let lastResponseHash = '';
+  
+  // ============================================================================
+  // PHASE 1: PLANNING
+  // ============================================================================
+  
+  logger.info('Phase 1: Planning build');
+  
+  if (onProgress) {
+    onProgress({
+      phase: 'planning',
+      iteration: 0,
+      filesCreated: [],
+      filesUpdated: [],
+      totalChanges: 0,
+      isComplete: false,
+      estimatedCost: 0,
+      lastResponse: 'Creating build plan...'
+    });
+  }
+  
+  const planPrompt = prdOrPrompt
+    ? `Analyze this project and the following requirements to create a BUILD PLAN.
+
+REQUIREMENTS:
+${prdOrPrompt}
+
+OUTPUT FORMAT - respond with ONLY this JSON structure:
+{
+  "components": ["list of components/features to build"],
+  "files": ["list of files that need to be created or modified"],
+  "order": ["build order - what to create first, second, etc"],
+  "estimatedIterations": <number 1-10>
+}
+
+Be concise. List only what's needed. Do NOT output any code yet.`
+    : `Analyze the current project state and create a BUILD PLAN to complete it.
+
+Review the existing files and determine what's missing.
+
+OUTPUT FORMAT - respond with ONLY this JSON structure:
+{
+  "components": ["list of components/features still needed"],
+  "files": ["list of files that need to be created or modified"],
+  "order": ["build order - what to create first, second, etc"],
+  "estimatedIterations": <number 1-10>
+}
+
+Be concise. List only what's needed. Do NOT output any code yet.`;
+
+  let buildPlan: BuildPlan | null = null;
+  
+  try {
+    const planResponse = await sendToAgent(planPrompt);
+    estimatedCost += 0.02; // Rough estimate for planning call
+    
+    // Try to parse the plan
+    const jsonMatch = planResponse.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        buildPlan = {
+          components: parsed.components || [],
+          files: parsed.files || [],
+          order: parsed.order || undefined,
+          estimatedIterations: Math.min(parsed.estimatedIterations || 5, maxIterations),
+          // Store original PRD for context persistence
+          originalPrd: prdOrPrompt || undefined,
+          // Initialize completion tracking
+          completedComponents: [],
+          completedFiles: []
+        };
+        logger.info('Build plan created', { 
+          components: buildPlan.components.length,
+          files: buildPlan.files.length,
+          estimatedIterations: buildPlan.estimatedIterations
+        });
+      } catch {
+        logger.warn('Could not parse build plan JSON, proceeding with defaults');
+      }
+    }
+  } catch (error) {
+    logger.error('Planning phase failed', { error: String(error) });
+    // Continue anyway with no plan
+  }
+  
+  // ============================================================================
+  // PHASE 2: BUILDING
+  // ============================================================================
+  
+  logger.info('Phase 2: Building');
+  
+  // Completion detection patterns - AGGRESSIVE
+  const completionPatterns = [
+    /BUILD\s+COMPLETE/i,
+    /project\s+is\s+(?:now\s+)?complete/i,
+    /all\s+(?:features?|files?|components?)\s+(?:have been\s+)?(?:are\s+)?(?:now\s+)?(?:implemented|created|complete|built)/i,
+    /nothing\s+(?:more\s+)?(?:left\s+)?to\s+(?:implement|add|create|build)/i,
+    /fully\s+(?:implemented|functional|complete)/i,
+    /implementation\s+is\s+complete/i,
+    /everything\s+(?:is\s+)?(?:now\s+)?(?:in place|complete|done|built)/i,
+    /no\s+(?:additional|more|further)\s+(?:files?|components?|features?)\s+(?:are\s+)?(?:needed|required)/i,
+    /the\s+(?:application|app|project)\s+(?:is\s+)?(?:now\s+)?(?:fully\s+)?(?:functional|complete|ready)/i
+  ];
+  
+  // Limit iterations based on plan
+  const effectiveMaxIterations = buildPlan 
+    ? Math.min(buildPlan.estimatedIterations + 2, maxIterations) // +2 buffer
+    : maxIterations;
+  
+  for (let iteration = 1; iteration <= effectiveMaxIterations && !isComplete; iteration++) {
+    // SAFETY: Check cost limit
+    if (estimatedCost >= maxCostDollars) {
+      logger.warn('Cost limit reached, stopping build', { estimatedCost, maxCostDollars });
+      break;
+    }
+    
+    // SAFETY: Check consecutive empty iterations (stall detection)
+    if (consecutiveEmptyIterations >= 2) {
+      logger.info('Stall detected (2 consecutive iterations with no changes), assuming complete');
+      isComplete = true;
+      break;
+    }
+    
+    logger.info('Build iteration', { iteration, effectiveMaxIterations, estimatedCost });
+    
+    if (onProgress) {
+      onProgress({
+        phase: 'building',
+        iteration,
+        filesCreated: [...filesCreated],
+        filesUpdated: [...filesUpdated],
+        totalChanges,
+        isComplete: false,
+        estimatedCost,
+        lastResponse: `Building iteration ${iteration}/${effectiveMaxIterations}...`
+      });
+    }
+    
+    // Build the prompt based on iteration
+    // IMPROVEMENT: Always include full plan context and remaining items
+    let buildPrompt: string;
+    
+    // Calculate remaining items from plan (for context persistence)
+    const planContext = buildPlan ? (() => {
+      const { remainingComponents, remainingFiles, completionPercentage } = 
+        getRemainingPlanItems(buildPlan, filesCreated, filesUpdated);
+      
+      let context = `\n\n📋 BUILD PLAN STATUS (${completionPercentage}% complete):\n`;
+      
+      // Always show original requirements for context
+      if (buildPlan.originalPrd) {
+        context += `\n--- ORIGINAL REQUIREMENTS ---\n${buildPlan.originalPrd.substring(0, 1500)}${buildPlan.originalPrd.length > 1500 ? '...' : ''}\n--- END REQUIREMENTS ---\n`;
+      }
+      
+      context += `\nFULL PLAN:\n`;
+      context += `Components to build: ${buildPlan.components.join(', ')}\n`;
+      context += `Files to create: ${buildPlan.files.join(', ')}\n`;
+      
+      if (remainingComponents.length > 0 || remainingFiles.length > 0) {
+        context += `\n⚠️ REMAINING (NOT YET IMPLEMENTED):\n`;
+        if (remainingComponents.length > 0) {
+          context += `  Components: ${remainingComponents.join(', ')}\n`;
+        }
+        if (remainingFiles.length > 0) {
+          context += `  Files: ${remainingFiles.join(', ')}\n`;
+        }
+        context += `\nYou MUST implement all remaining items before declaring BUILD COMPLETE.\n`;
+      }
+      
+      return context;
+    })() : '';
+    
+    if (iteration === 1) {
+      // First iteration - start building based on plan
+      buildPrompt = buildPlan
+        ? `Execute the build plan. Create the following in order:
+${buildPlan.order ? buildPlan.order.map((item, i) => `${i + 1}. ${item}`).join('\n') : buildPlan.files.slice(0, 3).map((f, i) => `${i + 1}. ${f}`).join('\n')}
+${planContext}
+Start with the first items now. Output the COMPLETE file contents.`
+        : `Build this project to completion. Start creating the necessary files NOW.`;
+    } else {
+      // Subsequent iterations - continue building with plan context
+      buildPrompt = `Continue building. You have created: ${filesCreated.concat(filesUpdated).join(', ') || 'nothing yet'}.
+${planContext}
+What's NEXT? 
+
+⚠️ IMPORTANT: Do NOT say "BUILD COMPLETE" unless ALL items from the plan above have been implemented.
+Check the REMAINING items list above - if there are remaining items, implement them NOW.
+
+If truly everything from the plan is complete and functional, respond with: "BUILD COMPLETE - all features implemented."
+
+Otherwise, create the next file(s) needed. Focus on what's MISSING from the plan.`;
+    }
+    
+    // Add format instructions - VERY EMPHATIC to ensure AI follows format
+    const formattedPrompt = `${buildPrompt}
+
+⚠️ MANDATORY OUTPUT FORMAT ⚠️
+You MUST use this EXACT format. Code without this format WILL BE IGNORED:
+
+For NEW files:
+\`\`\`newfile:src/components/ExampleComponent.tsx
+import React from 'react';
+
+const ExampleComponent = () => {
+  return <div>Example</div>;
+};
+
+export default ExampleComponent;
+\`\`\`
+
+For EXISTING files:
+\`\`\`edit:src/App.tsx
+// Complete new file contents go here
+\`\`\`
+
+RULES:
+1. EVERY code block MUST start with \`\`\`newfile: or \`\`\`edit:
+2. Include the FULL file path after the colon
+3. Output COMPLETE file contents - no partial snippets
+4. One file per code block
+5. NO explanatory text between code blocks
+6. Do NOT use \`\`\`tsx or \`\`\`css - use \`\`\`newfile: or \`\`\`edit:
+
+NOW OUTPUT THE FILES:`;
+
+    try {
+      const response = await sendToAgent(formattedPrompt);
+      estimatedCost += 0.05; // Rough estimate per iteration
+      
+      // SAFETY: Detect duplicate responses (stall)
+      const responseHash = response.substring(0, 200);
+      if (responseHash === lastResponseHash) {
+        logger.info('Duplicate response detected, incrementing stall counter');
+        consecutiveEmptyIterations++;
+      }
+      lastResponseHash = responseHash;
+      
+      // Check for completion - BUT VALIDATE AGAINST PLAN FIRST
+      let aiClaimsComplete = false;
+      for (const pattern of completionPatterns) {
+        if (pattern.test(response)) {
+          aiClaimsComplete = true;
+          logger.info('AI claims build complete', { pattern: pattern.toString() });
+          break;
+        }
+      }
+      
+      // IMPROVEMENT: Validate completion against the original plan
+      if (aiClaimsComplete && buildPlan) {
+        const validation = validateBuildCompletion(buildPlan, filesCreated, filesUpdated);
+        
+        if (validation.isComplete) {
+          isComplete = true;
+          logger.info('Build completion VALIDATED', { 
+            completionPercentage: validation.completionPercentage 
+          });
+        } else {
+          // AI said complete but plan items are missing - continue building
+          logger.warn('AI claimed complete but plan items missing', { 
+            missingItems: validation.missingItems.slice(0, 5),
+            completionPercentage: validation.completionPercentage
+          });
+          
+          // Don't mark as complete - the next iteration prompt will remind AI
+          // of the remaining items
+          isComplete = false;
+        }
+      } else if (aiClaimsComplete) {
+        // No plan to validate against, trust the AI
+        isComplete = true;
+        logger.info('Build completion accepted (no plan to validate)');
+      }
+      
+      // Parse and apply changes
+      const parseResult = await reParseLastResponse();
+      
+      if (parseResult.success) {
+        consecutiveEmptyIterations = 0; // Reset stall counter
+        
+        // Extract file names from the result message
+        const createdMatches = [...parseResult.message.matchAll(/Create\s+(\S+)/gi)];
+        const updatedMatches = [...parseResult.message.matchAll(/Update\s+(\S+)/gi)];
+        
+        for (const match of createdMatches) {
+          if (!filesCreated.includes(match[1])) filesCreated.push(match[1]);
+          totalChanges++;
+        }
+        for (const match of updatedMatches) {
+          if (!filesUpdated.includes(match[1])) filesUpdated.push(match[1]);
+          totalChanges++;
+        }
+        
+        logger.info('Iteration complete', { 
+          iteration, 
+          changesThisIteration: createdMatches.length + updatedMatches.length,
+          totalChanges 
+        });
+      } else {
+        // No changes extracted
+        consecutiveEmptyIterations++;
+        logger.info('No changes extracted', { 
+          consecutiveEmpty: consecutiveEmptyIterations,
+          reason: parseResult.message 
+        });
+        
+        // If no code blocks at all, likely complete
+        if (!response.includes('```') && iteration > 1) {
+          logger.info('No code blocks in response, assuming complete');
+          isComplete = true;
+        }
+      }
+      
+      // Small delay between iterations
+      if (!isComplete && iteration < effectiveMaxIterations) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
+    } catch (error) {
+      logger.error('Build iteration failed', { iteration, error: String(error) });
+      return {
+        success: false,
+        message: `Build failed at iteration ${iteration}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        totalChanges,
+        estimatedCost
+      };
+    }
+  }
+  
+  // ============================================================================
+  // SUMMARY - Now includes plan validation
+  // ============================================================================
+  
+  // Final validation against plan
+  const finalValidation = buildPlan 
+    ? validateBuildCompletion(buildPlan, filesCreated, filesUpdated)
+    : { isComplete: true, missingItems: [], completionPercentage: 100 };
+  
+  const stopReason = isComplete 
+    ? 'complete'
+    : consecutiveEmptyIterations >= 2 
+      ? 'stalled'
+      : estimatedCost >= maxCostDollars
+        ? 'cost_limit'
+        : 'max_iterations';
+  
+  let summary = isComplete
+    ? `✓ Build complete! Created ${filesCreated.length} files, updated ${filesUpdated.length} files.`
+    : stopReason === 'stalled'
+      ? `✓ Build finished (no more changes detected). Created ${filesCreated.length} files, updated ${filesUpdated.length} files.`
+      : stopReason === 'cost_limit'
+        ? `⚠️ Build stopped (cost limit $${maxCostDollars} reached). Created ${filesCreated.length} files, updated ${filesUpdated.length} files.`
+        : `⚠️ Build stopped (max iterations). Created ${filesCreated.length} files, updated ${filesUpdated.length} files.`;
+  
+  // Add plan completion percentage
+  if (buildPlan) {
+    summary += ` Plan completion: ${finalValidation.completionPercentage}%`;
+    
+    // Warn about missing items
+    if (finalValidation.missingItems.length > 0 && !isComplete) {
+      summary += `\n\n⚠️ Missing from plan (${finalValidation.missingItems.length} items):\n`;
+      summary += finalValidation.missingItems.slice(0, 10).map(item => `  • ${item}`).join('\n');
+      if (finalValidation.missingItems.length > 10) {
+        summary += `\n  ... and ${finalValidation.missingItems.length - 10} more`;
+      }
+    }
+  }
+  
+  logger.info('Autonomous build finished', { 
+    isComplete, 
+    stopReason,
+    filesCreated: filesCreated.length,
+    filesUpdated: filesUpdated.length,
+    totalChanges,
+    estimatedCost 
+  });
+  
+  if (onProgress) {
+    onProgress({
+      phase: isComplete || stopReason === 'stalled' ? 'complete' : 'stopped',
+      iteration: effectiveMaxIterations,
+      filesCreated: [...filesCreated],
+      filesUpdated: [...filesUpdated],
+      totalChanges,
+      isComplete: isComplete || stopReason === 'stalled',
+      estimatedCost,
+      lastResponse: summary
+    });
+  }
+  
+  const fileList = filesCreated.length > 0
+    ? '\n\nFiles created:\n' + filesCreated.map(f => '  ✓ ' + f).join('\n')
+    : '';
+  const updateList = filesUpdated.length > 0
+    ? '\n\nFiles updated:\n' + filesUpdated.map(f => '  ✓ ' + f).join('\n')
+    : '';
+  const costNote = `\n\nEstimated cost: ~$${estimatedCost.toFixed(2)}`;
+  
+  return {
+    success: true,
+    message: summary + fileList + updateList + costNote,
+    totalChanges,
+    estimatedCost
+  };
+}

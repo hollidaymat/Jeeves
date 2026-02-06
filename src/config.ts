@@ -71,10 +71,10 @@ const defaultConfig: Config = {
       "prd:"
     ],
     auto_approve: false,
-    checkpoint_frequency: 'per-phase',
+    checkpoint_frequency: 'none',  // Auto-continue through all phases without waiting
     auto_commit: true,
     branch_strategy: 'feature-branch',
-    pause_timeout_minutes: 5
+    pause_timeout_minutes: 0  // No timeout since we auto-continue
   },
   trust: {
     enabled: true,
@@ -101,6 +101,21 @@ const defaultConfig: Config = {
     validateContent: true,
     atomicWrites: true,
     gitAutoStash: false  // Opt-in - can cause confusion
+  },
+  homelab: {
+    enabled: false,  // Only enable on Linux homelab box
+    stacksDir: '/opt/stacks',
+    configsDir: '/opt/configs',
+    backupsDir: '/opt/backups',
+    dataDir: '/data',
+    maxRamMB: 14336,             // 14GB hard limit (reserve 2GB for OS + Jeeves)
+    monitorInterval: 60000,      // Check every 60 seconds
+    thresholds: {
+      cpu: { warning: 80, critical: 95 },
+      ram: { warning: 85, critical: 95 },
+      disk: { warning: 80, critical: 90 },
+      temp: { warning: 75, critical: 85 }  // N150 throttles at ~90C
+    }
   }
 };
 
@@ -133,7 +148,15 @@ function loadConfig(): Config {
       trust: { ...defaultConfig.trust, ...fileConfig.trust },
       server: { ...defaultConfig.server, ...fileConfig.server },
       rate_limits: { ...defaultConfig.rate_limits, ...fileConfig.rate_limits },
-      safety: { ...defaultConfig.safety, ...fileConfig.safety }
+      safety: { ...defaultConfig.safety, ...fileConfig.safety },
+      homelab: {
+        ...defaultConfig.homelab,
+        ...(fileConfig as Record<string, unknown>).homelab as Partial<Config['homelab']> || {},
+        thresholds: {
+          ...defaultConfig.homelab.thresholds,
+          ...((((fileConfig as Record<string, unknown>).homelab as Partial<Config['homelab']>)?.thresholds) || {})
+        }
+      }
     };
 
     return merged;

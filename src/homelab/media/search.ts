@@ -655,16 +655,33 @@ export function parseMediaQuery(input: string): { query: string; season?: number
   let type: 'movie' | 'series' | undefined;
   if (/\b(?:movie|film)\b/i.test(cleaned)) {
     type = 'movie';
-    cleaned = cleaned.replace(/\b(?:movie|film)\b/i, '').trim();
+    cleaned = cleaned.replace(/\b(?:the\s+)?(?:movie|film)\b/i, '').trim();
   } else if (/\b(?:show|series|tv)\b/i.test(cleaned)) {
     type = 'series';
-    cleaned = cleaned.replace(/\b(?:show|series|tv)\b/i, '').trim();
+    cleaned = cleaned.replace(/\b(?:the\s+)?(?:show|series|tv)\b/i, '').trim();
   } else if (season !== undefined) {
     type = 'series'; // If a season is specified, it's definitely a series
   }
 
-  // Clean up extra whitespace and articles
-  cleaned = cleaned.replace(/\s+/g, ' ').replace(/^(?:the\s+)?(?:movie|show|series)\s+/i, '').trim();
+  // Strip descriptive qualifiers that aren't part of the title
+  // e.g., "the korean version", "the original", "the 2003 one", "in english"
+  cleaned = cleaned.replace(/,?\s*(?:the\s+)?(?:korean|japanese|chinese|french|spanish|english|american|original|new|old|remake|dubbed|subbed|subtitled)\s*(?:version|one|edition|cut|dub)?/gi, '');
+
+  // Strip "the X one" / "from YYYY" / "by director"
+  cleaned = cleaned.replace(/,?\s*(?:from\s+\d{4}|the\s+\d{4}\s+one|by\s+\w+)/gi, '');
+
+  // Strip year references like "the 2003 one" but keep years that are part of titles
+  cleaned = cleaned.replace(/,?\s*(?:the\s+)?\d{4}\s+(?:one|version|film|movie)/gi, '');
+
+  // Clean up extra whitespace, commas, and trailing articles
+  cleaned = cleaned
+    .replace(/^(?:the\s+)?(?:movie|show|series)\s+/i, '')
+    .replace(/,+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Remove trailing "the" left over from stripping
+  cleaned = cleaned.replace(/\s+the$/i, '').trim();
 
   return { query: cleaned, season, type };
 }

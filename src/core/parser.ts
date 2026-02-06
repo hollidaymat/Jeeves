@@ -1437,7 +1437,15 @@ export async function parseIntent(message: string): Promise<ParsedIntent> {
     return parsed;
     
   } catch (error) {
-    const errDetail = error instanceof Error ? { message: error.message, cause: String((error as Record<string, unknown>).cause || ''), stack: error.stack?.split('\n').slice(0, 3).join(' ') } : { message: String(error) };
+    const err = error as Record<string, unknown>;
+    const errDetail = {
+      message: err?.message || String(error),
+      statusCode: err?.statusCode || err?.status,
+      responseBody: err?.responseBody ? JSON.stringify(err.responseBody).substring(0, 500) : undefined,
+      data: err?.data ? JSON.stringify(err.data).substring(0, 500) : undefined,
+      url: err?.url,
+      cause: err?.cause ? String(err.cause) : undefined,
+    };
     logger.error('Error parsing intent', { ...errDetail, input: processedMessage });
     return {
       action: 'unknown',

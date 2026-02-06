@@ -513,7 +513,12 @@ export async function searchMedia(query: string): Promise<MediaSearchResult> {
     searchRadarr(query),
   ]);
 
-  const results = [...sonarrResults, ...radarrResults];
+  // Combine and sort by title similarity to query (best match first)
+  const results = [...sonarrResults, ...radarrResults].sort((a, b) => {
+    const scoreA = titleSimilarity(query, a.title);
+    const scoreB = titleSimilarity(query, b.title);
+    return scoreB - scoreA;
+  });
 
   if (results.length === 0) {
     const missingKeys: string[] = [];
@@ -619,6 +624,30 @@ export async function getDownloadQueue(): Promise<MediaQueueResult> {
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/**
+ * Score how similar a title is to a search query (0-1).
+ * Handles cases like "old boy" matching "Oldboy".
+ */
+function titleSimilarity(query: string, title: string): number {
+  const q = query.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const t = title.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  // Exact match (ignoring spaces/punctuation)
+  if (q === t) return 1.0;
+
+  // Query is contained within title or vice versa
+  if (t.includes(q)) return 0.9;
+  if (q.includes(t)) return 0.8;
+
+  // Check word-level overlap
+  const qWords = query.toLowerCase().split(/\s+/);
+  const tWords = title.toLowerCase().split(/\s+/);
+  const matches = qWords.filter(w => tWords.some(tw => tw.includes(w) || w.includes(tw)));
+  const wordScore = matches.length / Math.max(qWords.length, 1);
+
+  return wordScore * 0.7;
+}
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';

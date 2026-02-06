@@ -398,8 +398,11 @@ export async function checkServiceHealth(name: string): Promise<HealthCheckResul
     const dockerResult = await dockerHealthCheck(name);
     checks.push(dockerResult);
 
-    // 2. TCP port checks for each exposed port
-    for (const port of service.ports) {
+    // 2. TCP port checks for each exposed port (extract host port from "host:container" strings)
+    for (const rawPort of service.ports) {
+      const port = typeof rawPort === 'string'
+        ? parseInt(rawPort.split(':')[0], 10)
+        : rawPort;
       const tcpResult = await tcpPortCheck(DEFAULT_HOST, port);
       checks.push(tcpResult);
     }

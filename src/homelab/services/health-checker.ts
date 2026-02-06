@@ -553,13 +553,23 @@ export async function runSelfTests(): Promise<SelfTestResult[]> {
 export async function getHealthReport(): Promise<HealthReport> {
   const serviceResults = await checkAllServices();
 
+  // Identify system-services (e.g. tailscale) that aren't Docker containers
+  const systemServiceNames = new Set(
+    getAllServices()
+      .filter(s => s.type === 'system-service')
+      .map(s => s.name)
+  );
+
   let healthy = 0;
   let unhealthy = 0;
   let degraded = 0;
   let unknown = 0;
   const alerts: string[] = [];
 
-  for (const result of serviceResults) {
+  // Filter out system-services from health counts (they're not Docker containers)
+  const containerResults = serviceResults.filter(r => !systemServiceNames.has(r.service));
+
+  for (const result of containerResults) {
     switch (result.status) {
       case 'healthy':  healthy++;  break;
       case 'unhealthy':
@@ -574,7 +584,13 @@ export async function getHealthReport(): Promise<HealthReport> {
     }
   }
 
-  // Determine overall health
+  // Note system services separately
+  if (systemServiceNames.size > 0) {
+    const skipped = Array.from(systemServiceNames).join(', ');
+    alerts.push(`[INFO] Skipped system services (not Docker): ${skipped}`);
+  }
+
+  // Determine overall health (based only on container services)
   let overall: HealthStatus;
   if (unhealthy > 0) {
     overall = 'unhealthy';
@@ -589,12 +605,12 @@ export async function getHealthReport(): Promise<HealthReport> {
   return {
     timestamp: new Date().toISOString(),
     overall,
-    totalServices: serviceResults.length,
+    totalServices: containerResults.length,
     healthy,
     unhealthy,
     degraded,
     unknown,
-    services: serviceResults,
+    services: containerResults,
     alerts,
   };
 }

@@ -320,7 +320,7 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
   }
   
   // ===== HOMELAB ACTIONS =====
-  if (intent.action.startsWith('homelab_')) {
+  if (intent.action.startsWith('homelab_') || intent.action.startsWith('media_')) {
     trackPatternMatch(intent.action);
     
     if (!isHomelabEnabled()) {

@@ -234,7 +234,7 @@ function initRegistry(): void {
       dependencies: [],
       volumes: [
         'qbittorrent_config:/config',
-        '/data/downloads/torrents:/downloads',
+        '/data/downloads:/data/downloads',
       ],
       environment: { PUID: '1000', PGID: '1000', TZ: 'America/New_York', WEBUI_PORT: '8085' },
     },

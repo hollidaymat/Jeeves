@@ -1002,3 +1002,278 @@ body::before {
   object-fit: cover;
   border: 1px solid rgba(168, 85, 247, 0.3);
 }
+
+/* ============ HOMELAB DASHBOARD ============ */
+.homelab-dashboard {
+  border-color: var(--accent-cyan);
+}
+
+.homelab-dashboard .panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.homelab-refresh-btn {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 1.1rem;
+  transition: color 0.2s, transform 0.3s;
+  user-select: none;
+}
+
+.homelab-refresh-btn:hover {
+  color: var(--accent-cyan);
+  transform: rotate(180deg);
+}
+
+.homelab-content {
+  padding: 0.5rem 0;
+}
+
+/* Resource Gauges */
+.resource-gauges {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.gauge {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.7rem;
+}
+
+.gauge-label {
+  color: var(--text-dim);
+  width: 32px;
+  text-align: right;
+  font-size: 0.65rem;
+  letter-spacing: 0.05em;
+}
+
+.gauge-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-primary);
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid rgba(34, 211, 238, 0.1);
+}
+
+.gauge-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.6s ease, background 0.3s ease;
+  background: var(--accent-cyan);
+  width: 0%;
+}
+
+.gauge-fill.warning {
+  background: var(--warning);
+}
+
+.gauge-fill.critical {
+  background: var(--error);
+  animation: pulse-bar 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-bar {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.gauge-value {
+  color: var(--text-secondary);
+  font-size: 0.65rem;
+  width: 36px;
+  text-align: left;
+}
+
+/* Health Summary */
+.health-summary {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  padding: 0.4rem 0;
+  margin-bottom: 0.5rem;
+  border-top: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.health-stat {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.health-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.health-dot.green {
+  background: var(--success);
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.5);
+}
+
+.health-dot.red {
+  background: var(--error);
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
+}
+
+.health-dot.gray {
+  background: var(--text-dim);
+}
+
+/* Service Grid */
+.service-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.service-card {
+  background: var(--bg-primary);
+  border: 1px solid rgba(34, 211, 238, 0.1);
+  border-radius: 6px;
+  padding: 0.5rem;
+  font-size: 0.7rem;
+  transition: border-color 0.2s;
+  cursor: default;
+  position: relative;
+}
+
+.service-card:hover {
+  border-color: var(--accent-cyan);
+}
+
+.service-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.25rem;
+}
+
+.service-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.service-status-dot.running {
+  background: var(--success);
+  box-shadow: 0 0 4px rgba(16, 185, 129, 0.5);
+}
+
+.service-status-dot.stopped {
+  background: var(--error);
+}
+
+.service-status-dot.error {
+  background: var(--error);
+  animation: pulse-bar 1s ease-in-out infinite;
+}
+
+.service-status-dot.unknown {
+  background: var(--text-dim);
+}
+
+.service-name {
+  color: var(--text-primary);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.service-detail {
+  color: var(--text-dim);
+  font-size: 0.6rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.service-actions {
+  display: none;
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  gap: 2px;
+}
+
+.service-card:hover .service-actions {
+  display: flex;
+}
+
+.svc-action-btn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-dim);
+  font-size: 0.55rem;
+  padding: 1px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.svc-action-btn:hover {
+  color: var(--accent-cyan);
+  border-color: var(--accent-cyan);
+}
+
+.svc-action-btn.danger:hover {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+/* Alerts */
+.homelab-alerts {
+  margin-top: 0.5rem;
+}
+
+.homelab-alert {
+  font-size: 0.7rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  margin-bottom: 0.25rem;
+  border-left: 3px solid;
+}
+
+.homelab-alert.warning {
+  color: var(--warning);
+  border-color: var(--warning);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.homelab-alert.critical {
+  color: var(--error);
+  border-color: var(--error);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* Scrollbar for service grid */
+.service-grid::-webkit-scrollbar {
+  width: 4px;
+}
+
+.service-grid::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+
+.service-grid::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 2px;
+}

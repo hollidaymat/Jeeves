@@ -466,7 +466,8 @@ export function getEmphasisStyles(
   type: 'text' | 'interactive' | 'container',
   level: EmphasisLevel
 ): Record<string, unknown> {
-  return emphasisPresets[type][level] || emphasisPresets[type].secondary;
+  const presets = emphasisPresets[type] as Record<string, Record<string, unknown>>;
+  return presets[level] || presets['secondary'];
 }
 
 /**

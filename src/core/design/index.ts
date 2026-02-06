@@ -19,6 +19,11 @@
  * - cognitive-integration: OODA loop integration for design decisions
  */
 
+import type { DesignTokens } from './tokens.js';
+import type { FontPairingName } from './typography.js';
+import type { LayoutPatternName } from './layout-patterns.js';
+import type { AestheticName } from './aesthetic-presets.js';
+
 // Design Tokens
 export {
   type DesignTokens,
@@ -56,7 +61,6 @@ export {
   type TextStyle,
   fontPairings,
   defaultTypeScale,
-  getTextStyle,
   textStyleToCSS,
   textStyleToTailwind,
   recommendFontPairing,

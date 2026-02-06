@@ -253,7 +253,12 @@ export class ProactiveIntelligence {
         matched = patternDef.pattern(context);
       } else {
         // Regex pattern - check recent messages
-        matched = context.recentMessages.some(m => patternDef.pattern.test(m));
+        matched = context.recentMessages.some(m => {
+          if (patternDef.pattern instanceof RegExp) {
+            return patternDef.pattern.test(m);
+          }
+          return false;
+        });
       }
       
       if (!matched) continue;

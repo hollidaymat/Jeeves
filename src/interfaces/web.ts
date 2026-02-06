@@ -16,6 +16,7 @@ import { getProjectIndex, listProjects } from '../core/project-scanner.js';
 import { getPendingChanges, setStreamCallback } from '../core/cursor-agent.js';
 import { exportConversations } from '../core/memory.js';
 import { onCheckpoint, getExecutionStatus } from '../core/prd-executor.js';
+import { isHomelabEnabled, getDashboardStatus } from '../homelab/index.js';
 import type { IncomingMessage, OutgoingMessage, MessageInterface, WSMessage, PrdCheckpoint } from '../types/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -33,6 +34,7 @@ export class WebInterface implements MessageInterface {
   private wss = new WebSocketServer({ server: this.server });
   private messageHandler: MessageHandler | null = null;
   private clients = new Set<WebSocket>();
+  private homelabBroadcastTimer: ReturnType<typeof setInterval> | null = null;
   
   constructor() {
     this.setupRoutes();
@@ -92,6 +94,16 @@ export class WebInterface implements MessageInterface {
       res.send(content);
     });
     
+    // API: Homelab status (dashboard data)
+    this.app.get('/api/homelab/status', async (_req: Request, res: Response) => {
+      try {
+        const status = await getDashboardStatus();
+        res.json(status);
+      } catch (error) {
+        res.json({ enabled: false, error: String(error) });
+      }
+    });
+
     // API: Send command
     this.app.post('/api/command', async (req: Request, res: Response) => {
       const { content, attachments } = req.body;
@@ -279,13 +291,37 @@ export class WebInterface implements MessageInterface {
       
       this.server.listen(config.server.port, config.server.host, () => {
         logger.info(`Web interface started at http://${config.server.host}:${config.server.port}`);
+        this.startHomelabBroadcast();
         resolve();
       });
     });
   }
   
+  private startHomelabBroadcast(): void {
+    if (!isHomelabEnabled()) return;
+
+    const broadcastInterval = config.homelab.monitorInterval || 30000;
+    this.homelabBroadcastTimer = setInterval(async () => {
+      if (this.clients.size === 0) return; // No one listening
+      try {
+        const status = await getDashboardStatus();
+        this.broadcast({ type: 'homelab_status', payload: status });
+      } catch {
+        // Non-critical, skip this cycle
+      }
+    }, broadcastInterval);
+
+    logger.info('Homelab dashboard broadcast started', { interval: broadcastInterval });
+  }
+
   async stop(): Promise<void> {
     return new Promise((resolve) => {
+      // Stop homelab broadcast
+      if (this.homelabBroadcastTimer) {
+        clearInterval(this.homelabBroadcastTimer);
+        this.homelabBroadcastTimer = null;
+      }
+
       // Close all WebSocket connections first
       for (const client of this.clients) {
         try {

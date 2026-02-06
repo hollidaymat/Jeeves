@@ -42,7 +42,7 @@ export interface MetacognitiveDecision {
   
   // What to do
   response?: string;
-  plan?: Reasoning.ExecutionPlan;
+  plan?: Reasoning.ReasoningPlan;
   questions?: Clarification.ClarificationQuestion[];
   
   // Metadata
@@ -129,14 +129,12 @@ export async function think(
   let confidenceResult: Confidence.ConfidenceResult;
   
   const confidenceContext: Partial<Confidence.ConfidenceContext> = {
-    projectPath: context?.projectPath,
-    previousMessages: context?.previousMessages || [],
-    hasActiveTask: !!context?.activeTask
+    hasActiveProject: !!context?.projectPath,
+    hasRelevantMemory: (context?.previousMessages?.length || 0) > 0
   };
   
   if (cfg.enableDeepScoring && !isSimpleRequest(message)) {
     confidenceResult = await Confidence.deepScore(message, confidenceContext);
-    tokensUsed += confidenceResult.tokensUsed || 0;
   } else {
     confidenceResult = Confidence.quickScore(message, confidenceContext);
   }
@@ -157,7 +155,7 @@ export async function think(
     return {
       action: 'refuse',
       confidence: confidenceResult.score,
-      response: confidenceResult.notice || 'This appears to be a destructive operation. Please confirm.',
+      response: confidenceResult.concerns.join('. ') || 'This appears to be a destructive operation. Please confirm.',
       processingTime: Date.now() - startTime,
       tokensUsed,
       bypassedScoring: false
@@ -193,30 +191,24 @@ export async function think(
     
     reasoningResult = await Reasoning.reason({
       message,
-      projectContext: context?.projectPath,
-      previousActions: context?.sessionHistory,
-      userProfile: {
-        communicationStyle: 'technical',
-        riskTolerance: 'moderate',
-        expertise: 'intermediate'
-      }
+      hasActiveProject: !!context?.projectPath,
+      projectPath: context?.projectPath,
+      hasRelevantMemory: (context?.previousMessages?.length || 0) > 0,
+      relevantMemories: context?.previousMessages
     });
-    tokensUsed += reasoningResult.tokensUsed || 0;
     
-    // If reasoning says we need clarification
-    if (reasoningResult.needsClarification && reasoningResult.clarifications.length > 0) {
+    // If reasoning says we should ask
+    if (reasoningResult.shouldAsk && reasoningResult.questions && reasoningResult.questions.length > 0) {
       return {
         action: 'clarify',
         confidence: confidenceResult.score,
         reasoning: reasoningResult,
-        questions: reasoningResult.clarifications.map((q, i) => ({
-          id: `q${i}`,
+        questions: reasoningResult.questions.map((q: string, i: number) => ({
           question: q,
-          priority: 'critical' as const,
-          category: 'scope' as const,
-          reasoning: 'Identified during OODA reasoning'
+          priority: 'critical' as Clarification.QuestionPriority,
+          context: 'Identified during OODA reasoning'
         })),
-        response: formatClarificationMessage(reasoningResult.clarifications),
+        response: formatClarificationMessage(reasoningResult.questions),
         processingTime: Date.now() - startTime,
         tokensUsed,
         bypassedScoring: false
@@ -235,15 +227,12 @@ export async function think(
     
     clarificationResult = await Clarification.generateSmartQuestions({
       message,
-      confidenceScores: {
-        understanding: confidenceResult.score.understanding,
-        capability: confidenceResult.score.capability,
-        safety: confidenceResult.score.safety
-      },
-      identifiedAmbiguities: reasoningResult?.ambiguities || [],
-      identifiedRisks: reasoningResult?.risks || []
+      understanding: reasoningResult?.understanding || message,
+      concerns: confidenceResult.concerns || [],
+      suggestedQuestions: confidenceResult.suggestedQuestions || [],
+      hasActiveProject: !!context?.projectPath,
+      relevantMemories: context?.previousMessages || []
     });
-    tokensUsed += clarificationResult.tokensUsed || 0;
     
     if (clarificationResult.questions.length > 0) {
       return {
@@ -321,7 +310,7 @@ export async function think(
     clarification: clarificationResult,
     simulation: simulationResult,
     plan: reasoningResult?.plan,
-    response: confidenceResult.notice,
+    response: confidenceResult.concerns.length > 0 ? confidenceResult.concerns.join('. ') : undefined,
     processingTime: Date.now() - startTime,
     tokensUsed,
     bypassedScoring: false
@@ -358,36 +347,36 @@ function isComplexRequest(message: string): boolean {
   return complexIndicators.some(p => p.test(message)) || message.split(' ').length > 20;
 }
 
-function hasFileChanges(plan: Reasoning.ExecutionPlan): boolean {
-  return plan.steps.some(step => 
-    /create|modify|delete|rename|update|edit|write/i.test(step.action)
+function hasFileChanges(plan: Reasoning.ReasoningPlan): boolean {
+  return plan.steps.some((step: string) => 
+    /create|modify|delete|rename|update|edit|write/i.test(step)
   );
 }
 
-function extractFileChanges(plan: Reasoning.ExecutionPlan): Simulation.FileChange[] {
+function extractFileChanges(plan: Reasoning.ReasoningPlan): Simulation.FileChange[] {
   const changes: Simulation.FileChange[] = [];
   
   for (const step of plan.steps) {
-    const actionLower = step.action.toLowerCase();
+    const stepLower = step.toLowerCase();
     
-    // Try to extract file paths from the description
-    const fileMatch = step.description.match(/['"`]([^'"`]+\.(ts|tsx|js|jsx|json|md|css|html))['"`]/);
+    // Try to extract file paths from the step description
+    const fileMatch = step.match(/['"`]([^'"`]+\.(ts|tsx|js|jsx|json|md|css|html))['"`]/);
     
     if (fileMatch) {
       let changeType: 'create' | 'modify' | 'delete' | 'rename' = 'modify';
       
-      if (/create|new|add/i.test(actionLower)) {
+      if (/create|new|add/i.test(stepLower)) {
         changeType = 'create';
-      } else if (/delete|remove/i.test(actionLower)) {
+      } else if (/delete|remove/i.test(stepLower)) {
         changeType = 'delete';
-      } else if (/rename|move/i.test(actionLower)) {
+      } else if (/rename|move/i.test(stepLower)) {
         changeType = 'rename';
       }
       
       changes.push({
         path: fileMatch[1],
         type: changeType,
-        description: step.description
+        description: step
       });
     }
   }

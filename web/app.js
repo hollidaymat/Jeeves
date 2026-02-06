@@ -47,6 +47,7 @@ class CommandCenter {
     
     this.pendingChanges = [];
     this.attachedFiles = [];  // Store attached files
+    this.homelabDashboard = null;
     
     // Command history
     this.commandHistory = [];
@@ -194,6 +195,11 @@ class CommandCenter {
         break;
       case 'prd_checkpoint':
         this.handlePrdCheckpoint(message.payload);
+        break;
+      case 'homelab_status':
+        if (this.homelabDashboard) {
+          this.homelabDashboard.handleWSMessage(message);
+        }
         break;
     }
   }
@@ -920,9 +926,154 @@ class CommandCenter {
   }
 }
 
+/**
+ * Homelab Dashboard - Real-time service monitoring panel
+ */
+class HomelabDashboard {
+  constructor(commandCenter) {
+    this.cc = commandCenter;
+    this.panel = document.getElementById('homelab-dashboard');
+    this.refreshBtn = document.getElementById('homelab-refresh');
+    this.serviceGrid = document.getElementById('service-grid');
+    this.alertsContainer = document.getElementById('homelab-alerts');
+    this.refreshInterval = null;
+    this.lastData = null;
+
+    if (this.refreshBtn) {
+      this.refreshBtn.addEventListener('click', () => this.refresh());
+    }
+  }
+
+  async init() {
+    try {
+      const res = await fetch('/api/homelab/status');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.enabled) {
+        this.panel.style.display = '';
+        this.update(data);
+        this.refreshInterval = setInterval(() => this.refresh(), 30000);
+      }
+    } catch {
+      // Homelab not available
+    }
+  }
+
+  async refresh() {
+    try {
+      const res = await fetch('/api/homelab/status');
+      if (res.ok) {
+        const data = await res.json();
+        this.update(data);
+      }
+    } catch { /* ignore */ }
+  }
+
+  update(data) {
+    this.lastData = data;
+    this.updateGauges(data.resources);
+    this.updateHealth(data.health);
+    this.updateServices(data.services);
+    this.updateAlerts(data.alerts);
+  }
+
+  updateGauges(resources) {
+    if (!resources) return;
+
+    const setGauge = (id, percent, label) => {
+      const fill = document.getElementById('gauge-fill-' + id);
+      const value = document.getElementById('gauge-value-' + id);
+      if (!fill || !value) return;
+      const pct = Math.min(100, Math.max(0, percent));
+      fill.style.width = pct + '%';
+      fill.className = 'gauge-fill' + (pct >= 95 ? ' critical' : pct >= 80 ? ' warning' : '');
+      value.textContent = label || Math.round(pct) + '%';
+    };
+
+    if (resources.cpu) setGauge('cpu', resources.cpu.usagePercent);
+    if (resources.ram) setGauge('ram', resources.ram.usagePercent);
+    if (resources.disk && resources.disk.length > 0) {
+      setGauge('disk', resources.disk[0].usagePercent);
+    }
+    if (resources.temperature) {
+      const t = resources.temperature.celsius;
+      const tempPct = Math.min(100, (t / 100) * 100);
+      setGauge('temp', tempPct, t + '\u00B0C');
+    }
+  }
+
+  updateHealth(health) {
+    if (!health) return;
+    const ok = document.getElementById('health-ok');
+    const bad = document.getElementById('health-bad');
+    const unk = document.getElementById('health-unknown');
+    if (ok) ok.textContent = health.healthy;
+    if (bad) bad.textContent = health.unhealthy;
+    if (unk) unk.textContent = health.unknown;
+  }
+
+  updateServices(services) {
+    if (!services || !this.serviceGrid) return;
+
+    // Sort: running first, then by priority
+    const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+    const sorted = [...services].sort((a, b) => {
+      if (a.state === 'running' && b.state !== 'running') return -1;
+      if (a.state !== 'running' && b.state === 'running') return 1;
+      return (priorityOrder[a.priority] || 9) - (priorityOrder[b.priority] || 9);
+    });
+
+    this.serviceGrid.innerHTML = sorted.map(svc => {
+      const stateClass = svc.state || 'unknown';
+      const detail = svc.state === 'running' 
+        ? (svc.memUsage || svc.ramMB + 'MB') 
+        : svc.state;
+      return `<div class="service-card" data-service="${svc.name}">
+        <div class="service-card-header">
+          <span class="service-status-dot ${stateClass}"></span>
+          <span class="service-name" title="${svc.purpose || svc.name}">${svc.name}</span>
+        </div>
+        <div class="service-detail">${detail}</div>
+        <div class="service-actions">
+          ${svc.state === 'running' 
+            ? `<button class="svc-action-btn danger" onclick="window.commandCenter.sendCommand('restart ${svc.name}')">R</button>
+               <button class="svc-action-btn danger" onclick="window.commandCenter.sendCommand('stop ${svc.name}')">S</button>`
+            : `<button class="svc-action-btn" onclick="window.commandCenter.sendCommand('start ${svc.name}')">&#9654;</button>`
+          }
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  updateAlerts(alerts) {
+    if (!this.alertsContainer) return;
+    if (!alerts || alerts.length === 0) {
+      this.alertsContainer.innerHTML = '';
+      return;
+    }
+    this.alertsContainer.innerHTML = alerts.map(a => {
+      const cls = a.toLowerCase().includes('critical') ? 'critical' : 'warning';
+      return `<div class="homelab-alert ${cls}">${a}</div>`;
+    }).join('');
+  }
+
+  handleWSMessage(data) {
+    if (data.type === 'homelab_status' && data.payload) {
+      if (data.payload.enabled) {
+        this.panel.style.display = '';
+        this.update(data.payload);
+      }
+    }
+  }
+}
+
 // Initialize on DOM ready
 document.addEventListener('DOMContentLoaded', () => {
   window.commandCenter = new CommandCenter();
+  
+  // Initialize homelab dashboard
+  window.commandCenter.homelabDashboard = new HomelabDashboard(window.commandCenter);
+  window.commandCenter.homelabDashboard.init();
   
   // Download buttons
   document.getElementById('download-json')?.addEventListener('click', () => {

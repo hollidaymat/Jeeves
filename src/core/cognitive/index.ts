@@ -26,6 +26,6 @@ export * as Simulation from './simulation.js';
 
 // Re-export key types for convenience
 export type { ConfidenceScore, ConfidenceAction, ConfidenceResult } from './confidence.js';
-export type { ReasoningResult, ExecutionPlan, PlanStep } from './reasoning.js';
+export type { ReasoningResult, ReasoningPlan, ReasoningStep } from './reasoning.js';
 export type { ClarificationQuestion, ClarificationResult, QuestionPriority } from './clarification.js';
 export type { FileChange, SimulationResult, BreakageRisk } from './simulation.js';

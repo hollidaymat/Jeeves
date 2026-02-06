@@ -114,6 +114,8 @@ export type ActionType =
   | 'homelab_stacks'          // List docker compose stacks
   | 'homelab_health'          // Run health checks
   | 'homelab_self_test'       // Run self-test suite
+  | 'homelab_security_status' // Security overview
+  | 'homelab_firewall'        // Firewall management
   | 'unknown'
   | 'denied';
 
@@ -290,7 +292,7 @@ export interface LogEntry {
 // ============================================================================
 
 export interface WSMessage {
-  type: 'command' | 'status' | 'log' | 'projects' | 'response' | 'agent_status' | 'pending_changes' | 'prd_status' | 'prd_checkpoint' | 'stream_start' | 'stream_chunk' | 'stream_end';
+  type: 'command' | 'status' | 'log' | 'projects' | 'response' | 'agent_status' | 'pending_changes' | 'prd_status' | 'prd_checkpoint' | 'stream_start' | 'stream_chunk' | 'stream_end' | 'homelab_status';
   payload: unknown;
 }
 
@@ -739,4 +741,49 @@ export interface HomelabConfig {
   maxRamMB: number;
   monitorInterval: number;
   thresholds: HomelabThresholds;
+}
+
+// ============================================================================
+// Homelab Dashboard API Types
+// ============================================================================
+
+export interface HomelabDashboardStatus {
+  enabled: boolean;
+  resources: {
+    cpu: { usagePercent: number; cores: number; loadAverage: number[] };
+    ram: { totalMB: number; usedMB: number; usagePercent: number };
+    disk: { mountPoint: string; totalGB: number; usedGB: number; usagePercent: number }[];
+    temperature: { celsius: number; status: 'normal' | 'warning' | 'critical' } | null;
+  } | null;
+  services: HomelabServiceStatus[];
+  health: {
+    healthy: number;
+    unhealthy: number;
+    unknown: number;
+    total: number;
+  };
+  security: {
+    firewallActive: boolean;
+    sshHardened: boolean;
+    certsValid: number;
+    certsExpiring: number;
+    lastAuditCommand: string | null;
+  } | null;
+  alerts: string[];
+  timestamp: string;
+}
+
+export interface HomelabServiceStatus {
+  name: string;
+  tier: ServiceTier;
+  priority: ServicePriority;
+  state: ServiceState;
+  image: string;
+  ramMB: number;
+  ports: number[];
+  purpose: string;
+  uptime?: string;
+  cpuPercent?: string;
+  memUsage?: string;
+  healthy?: boolean;
 }

@@ -251,6 +251,10 @@ const PATTERNS = {
   homelabStacks: /^(stacks|docker stacks|compose stacks|list stacks|show stacks)$/i,
   homelabHealth: /^(?:daemon\s+health|homelab\s+health|health\s+check|check\s+health|service\s+health)$/i,
   homelabSelfTest: /^(self[- ]?test|run tests|test (?:all|everything|system)|diagnostics)$/i,
+  homelabSecurityStatus: /^(?:security\s+status|security\s+report|security|show\s+security)$/i,
+  homelabFirewallStatus: /^(?:firewall\s+status|firewall|show\s+firewall|ufw\s+status)$/i,
+  homelabFirewallAllow: /^firewall\s+allow\s+(\d+)(?:\/(tcp|udp))?$/i,
+  homelabFirewallDeny: /^firewall\s+deny\s+(\d+)$/i,
   
   // List projects patterns  
   listProjects: /^(list|projects|list projects|show projects|what projects)$/i,
@@ -484,6 +488,28 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
     if (PATTERNS.homelabHealth.test(lower)) {
       return { action: 'homelab_health', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
     }
+
+    // Security status
+    if (PATTERNS.homelabSecurityStatus.test(lower)) {
+      return { action: 'homelab_security_status', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Firewall status
+    if (PATTERNS.homelabFirewallStatus.test(lower)) {
+      return { action: 'homelab_firewall', confidence: 1.0, data: { subcommand: 'status' }, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Firewall allow
+    const fwAllowMatch = lower.match(PATTERNS.homelabFirewallAllow);
+    if (fwAllowMatch) {
+      return { action: 'homelab_firewall', confidence: 1.0, data: { subcommand: 'allow', port: parseInt(fwAllowMatch[1], 10), proto: fwAllowMatch[2] || 'tcp' }, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Firewall deny
+    const fwDenyMatch = lower.match(PATTERNS.homelabFirewallDeny);
+    if (fwDenyMatch) {
+      return { action: 'homelab_firewall', confidence: 1.0, data: { subcommand: 'deny', port: parseInt(fwDenyMatch[1], 10) }, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
   }
   
   // Help
@@ -558,10 +584,17 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
 \`start|stop|restart <service>\` → Service control
 \`logs <service>\` → View container logs
 \`update <service>\` → Pull & restart service
+\`update all\` → Update all running services
+\`install <service>\` → Deploy a new service
+\`uninstall <service>\` → Remove a service (keeps data)
 \`diagnose <service>\` → Run diagnostics
 \`stacks\` → List compose stacks
 \`health check\` / \`daemon health\` → Run health checks
-\`self-test\` → Run system self-tests`
+\`self-test\` → Run system self-tests
+\`security status\` → Security overview (firewall, SSH, SSL)
+\`firewall status\` → Show firewall rules
+\`firewall allow <port>\` → Open a port
+\`firewall deny <port>\` → Close a port`
     };
   }
   

@@ -6,7 +6,7 @@
  * Rule: Presets are starting points, not constraints. Customize based on brand.
  */
 
-import type { DesignTokens, ColorTokens } from './tokens.js';
+import type { DesignTokens, ColorTokens, SpacingTokens } from './tokens.js';
 import type { FontPairingName } from './typography.js';
 import type { LayoutPatternName } from './layout-patterns.js';
 
@@ -89,13 +89,14 @@ export const aestheticPresets: Record<AestheticName, AestheticPreset> = {
         success: { DEFAULT: '#00ff88', foreground: '#000000' },
         warning: { DEFAULT: '#ffcc00', foreground: '#000000' },
         info: { DEFAULT: '#00ccff', foreground: '#000000' },
-      } as ColorTokens,
+      } as unknown as ColorTokens,
       radius: {
+        none: '0',
         sm: '2px',
-        DEFAULT: '4px',
         md: '6px',
         lg: '8px',
         xl: '12px',
+        '2xl': '16px',
         full: '9999px',
       },
     },
@@ -145,13 +146,14 @@ export const aestheticPresets: Record<AestheticName, AestheticPreset> = {
         success: { DEFAULT: '#22c55e', foreground: '#ffffff' },
         warning: { DEFAULT: '#f59e0b', foreground: '#ffffff' },
         info: { DEFAULT: '#3b82f6', foreground: '#ffffff' },
-      } as ColorTokens,
+      } as unknown as ColorTokens,
       radius: {
+        none: '0',
         sm: '4px',
-        DEFAULT: '8px',
         md: '12px',
         lg: '16px',
         xl: '24px',
+        '2xl': '32px',
         full: '9999px',
       },
     },
@@ -200,7 +202,7 @@ export const aestheticPresets: Record<AestheticName, AestheticPreset> = {
         success: { DEFAULT: '#16a34a', foreground: '#ffffff' },
         warning: { DEFAULT: '#ca8a04', foreground: '#ffffff' },
         info: { DEFAULT: '#2563eb', foreground: '#ffffff' },
-      } as ColorTokens,
+      } as unknown as ColorTokens,
     },
     typography: {
       fontPairing: 'serif-sans',
@@ -247,7 +249,7 @@ export const aestheticPresets: Record<AestheticName, AestheticPreset> = {
         success: { DEFAULT: '#22c55e', foreground: '#000000' },
         warning: { DEFAULT: '#eab308', foreground: '#000000' },
         info: { DEFAULT: '#0ea5e9', foreground: '#ffffff' },
-      } as ColorTokens,
+      } as unknown as ColorTokens,
       spacing: {
         xs: '0.25rem',
         sm: '0.5rem',
@@ -255,7 +257,7 @@ export const aestheticPresets: Record<AestheticName, AestheticPreset> = {
         lg: '1rem',
         xl: '1.5rem',
         '2xl': '2rem',
-      },
+      } as unknown as SpacingTokens,
     },
     typography: {
       fontPairing: 'geist',
@@ -302,7 +304,7 @@ export const aestheticPresets: Record<AestheticName, AestheticPreset> = {
         success: { DEFAULT: '#10b981', foreground: '#ffffff' },
         warning: { DEFAULT: '#f59e0b', foreground: '#ffffff' },
         info: { DEFAULT: '#3b82f6', foreground: '#ffffff' },
-      } as ColorTokens,
+      } as unknown as ColorTokens,
     },
     typography: {
       fontPairing: 'rounded',
@@ -349,7 +351,7 @@ export const aestheticPresets: Record<AestheticName, AestheticPreset> = {
         success: { DEFAULT: '#22c55e', foreground: '#ffffff' },
         warning: { DEFAULT: '#f59e0b', foreground: '#ffffff' },
         info: { DEFAULT: '#3b82f6', foreground: '#ffffff' },
-      } as ColorTokens,
+      } as unknown as ColorTokens,
     },
     typography: {
       fontPairing: 'mono-heavy',
@@ -396,7 +398,7 @@ export const aestheticPresets: Record<AestheticName, AestheticPreset> = {
         success: { DEFAULT: '#16a34a', foreground: '#ffffff' },
         warning: { DEFAULT: '#ca8a04', foreground: '#ffffff' },
         info: { DEFAULT: '#2563eb', foreground: '#ffffff' },
-      } as ColorTokens,
+      } as unknown as ColorTokens,
     },
     typography: {
       fontPairing: 'system',
@@ -443,7 +445,7 @@ export const aestheticPresets: Record<AestheticName, AestheticPreset> = {
         success: { DEFAULT: '#00cc66', foreground: '#ffffff' },
         warning: { DEFAULT: '#ffcc00', foreground: '#000000' },
         info: { DEFAULT: '#0066ff', foreground: '#ffffff' },
-      } as ColorTokens,
+      } as unknown as ColorTokens,
     },
     typography: {
       fontPairing: 'geist',

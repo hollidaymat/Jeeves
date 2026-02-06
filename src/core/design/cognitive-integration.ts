@@ -275,8 +275,6 @@ export function decide(
   // Choose typography
   const recommendedTypography = recommendFontPairing({
     aesthetic: recommendedAesthetic,
-    contentType: observation.contentDensity === 'high' ? 'data' : 'mixed',
-    technicalAudience: observation.technicalLevel === 'expert',
   });
   
   // Apply token overrides
@@ -286,7 +284,7 @@ export function decide(
   if (context.existingBrandColors && context.existingBrandColors.length > 0) {
     tokenOverrides.colors = {
       ...defaultTokens.colors,
-      primary: { DEFAULT: context.existingBrandColors[0], foreground: '#ffffff' },
+      primary: context.existingBrandColors[0],
     };
   }
   

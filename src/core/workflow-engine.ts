@@ -163,7 +163,7 @@ function interpolate(template: string, context: WorkflowContext, stepResults: Re
         let value = stepResult;
         for (const field of fieldPath) {
           if (typeof value === 'object' && value !== null) {
-            value = (value as Record<string, unknown>)[field];
+            value = (value as Record<string, unknown>)[field] as {} | null;
           } else {
             return match; // Keep original if path doesn't exist
           }

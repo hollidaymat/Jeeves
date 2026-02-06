@@ -130,6 +130,51 @@
           </div>
         </section>
 
+        <!-- Homelab Dashboard -->
+        <section class="panel homelab-dashboard" id="homelab-dashboard" style="display: none;">
+          <div class="panel-header">
+            <h2>HOMELAB</h2>
+            <div class="homelab-refresh-btn" id="homelab-refresh" title="Refresh">↻</div>
+          </div>
+          <div class="homelab-content">
+            <!-- Resource Gauges -->
+            <div class="resource-gauges" id="resource-gauges">
+              <div class="gauge" id="gauge-cpu">
+                <div class="gauge-label">CPU</div>
+                <div class="gauge-bar"><div class="gauge-fill" id="gauge-fill-cpu"></div></div>
+                <div class="gauge-value" id="gauge-value-cpu">--%</div>
+              </div>
+              <div class="gauge" id="gauge-ram">
+                <div class="gauge-label">RAM</div>
+                <div class="gauge-bar"><div class="gauge-fill" id="gauge-fill-ram"></div></div>
+                <div class="gauge-value" id="gauge-value-ram">--%</div>
+              </div>
+              <div class="gauge" id="gauge-disk">
+                <div class="gauge-label">DISK</div>
+                <div class="gauge-bar"><div class="gauge-fill" id="gauge-fill-disk"></div></div>
+                <div class="gauge-value" id="gauge-value-disk">--%</div>
+              </div>
+              <div class="gauge" id="gauge-temp">
+                <div class="gauge-label">TEMP</div>
+                <div class="gauge-bar"><div class="gauge-fill" id="gauge-fill-temp"></div></div>
+                <div class="gauge-value" id="gauge-value-temp">--°C</div>
+              </div>
+            </div>
+            <!-- Health Summary -->
+            <div class="health-summary" id="health-summary">
+              <span class="health-stat healthy"><span class="health-dot green"></span> <span id="health-ok">0</span></span>
+              <span class="health-stat unhealthy"><span class="health-dot red"></span> <span id="health-bad">0</span></span>
+              <span class="health-stat unknown"><span class="health-dot gray"></span> <span id="health-unknown">0</span></span>
+            </div>
+            <!-- Service Grid -->
+            <div class="service-grid" id="service-grid">
+              <div class="loading">Loading services...</div>
+            </div>
+            <!-- Alerts -->
+            <div class="homelab-alerts" id="homelab-alerts"></div>
+          </div>
+        </section>
+
         <!-- Projects -->
         <section class="panel projects-panel">
           <div class="panel-header">

@@ -94,12 +94,13 @@ export async function classifyIntent(message: string): Promise<ClassificationRes
     });
     
     // Track cost
-    const cost = trackLLMUsage(
+    trackLLMUsage(
       'classification',
+      'claude-3-5-haiku-latest',
       usage?.promptTokens || 0,
-      usage?.completionTokens || 0,
-      'claude-3-5-haiku-latest'
+      usage?.completionTokens || 0
     );
+    const cost = 0; // Cost tracked internally by trackLLMUsage
     
     // Parse JSON response
     const jsonMatch = text.match(/\{[\s\S]*\}/);

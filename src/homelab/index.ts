@@ -29,6 +29,7 @@ const TRUST_REQUIREMENTS: Record<string, number> = {
   homelab_stacks: 2,
   homelab_health: 2,
   homelab_self_test: 2,
+  homelab_security_status: 2,
 
   // Service control: trust level 3+ (trusted)
   homelab_service_start: 3,
@@ -36,6 +37,7 @@ const TRUST_REQUIREMENTS: Record<string, number> = {
   homelab_service_restart: 3,
   homelab_update: 3,
   homelab_diagnose: 3,
+  homelab_firewall: 3,
 
   // Destructive/install operations: trust level 4+ (autonomous)
   homelab_install: 4,
@@ -65,6 +67,26 @@ async function getRegistry() {
 
 async function getHealthChecker() {
   return await import('./services/health-checker.js');
+}
+
+async function getInstaller() {
+  return await import('./services/installer.js');
+}
+
+async function getFirewall() {
+  return await import('./security/firewall.js');
+}
+
+async function getSSHHardening() {
+  return await import('./security/ssh-hardening.js');
+}
+
+async function getSecurityAudit() {
+  return await import('./security/audit.js');
+}
+
+async function getSSL() {
+  return await import('./security/ssl.js');
 }
 
 // ============================================================================
@@ -164,6 +186,12 @@ export async function executeHomelabAction(
 
       case 'homelab_uninstall':
         return await handleUninstall(serviceName);
+
+      case 'homelab_security_status':
+        return await handleSecurityStatus();
+
+      case 'homelab_firewall':
+        return await handleFirewall(intent.data?.subcommand as string, intent.data?.port as number, intent.data?.proto as string);
 
       default:
         return {
@@ -377,11 +405,23 @@ async function handleUpdate(serviceName: string): Promise<ExecutionResult> {
 
 async function handleUpdateAll(): Promise<ExecutionResult> {
   const startTime = Date.now();
-  return {
-    success: false,
-    output: 'Bulk update not yet implemented. Update services individually with `update <service>`.',
-    duration_ms: Date.now() - startTime
-  };
+
+  const installer = await getInstaller();
+  const result = await installer.updateAllServices();
+
+  let output = '## Bulk Update Results\n\n';
+  if (result.updated.length > 0) {
+    output += `**Updated (${result.updated.length}):** ${result.updated.join(', ')}\n`;
+  }
+  if (result.failed.length > 0) {
+    output += `**Failed (${result.failed.length}):** ${result.failed.join(', ')}\n`;
+  }
+  if (result.skipped.length > 0) {
+    output += `**Skipped (${result.skipped.length}):** ${result.skipped.join(', ')}\n`;
+  }
+  output += `\nCompleted in ${(result.duration_ms / 1000).toFixed(1)}s`;
+
+  return { success: result.success, output, duration_ms: Date.now() - startTime };
 }
 
 async function handleStacks(): Promise<ExecutionResult> {
@@ -515,22 +555,210 @@ async function handleDiagnose(serviceName: string): Promise<ExecutionResult> {
   return { success: true, output, duration_ms: Date.now() - startTime };
 }
 
-async function handleInstall(_serviceName: string): Promise<ExecutionResult> {
+async function handleInstall(serviceName: string): Promise<ExecutionResult> {
   const startTime = Date.now();
-  return {
-    success: false,
-    output: 'Service installation not yet implemented (Phase 3).',
-    duration_ms: Date.now() - startTime
-  };
+  if (!serviceName) {
+    return { success: false, output: 'Please specify a service name. Usage: `install <service>`', duration_ms: Date.now() - startTime };
+  }
+
+  const installer = await getInstaller();
+  const result = await installer.installService(serviceName);
+
+  let output = result.success
+    ? `✅ ${serviceName} installed successfully.\n${result.message}`
+    : `❌ Failed to install ${serviceName}: ${result.message}`;
+
+  if (result.warnings.length > 0) {
+    output += '\n\n**Warnings:**\n' + result.warnings.map(w => `⚠️ ${w}`).join('\n');
+  }
+
+  return { success: result.success, output, duration_ms: Date.now() - startTime };
 }
 
-async function handleUninstall(_serviceName: string): Promise<ExecutionResult> {
+async function handleUninstall(serviceName: string): Promise<ExecutionResult> {
   const startTime = Date.now();
-  return {
-    success: false,
-    output: 'Service uninstallation not yet implemented (Phase 3).',
-    duration_ms: Date.now() - startTime
-  };
+  if (!serviceName) {
+    return { success: false, output: 'Please specify a service name. Usage: `uninstall <service>`', duration_ms: Date.now() - startTime };
+  }
+
+  const installer = await getInstaller();
+  const result = await installer.uninstallService(serviceName);
+
+  let output = result.success
+    ? `✅ ${serviceName} uninstalled. Data volumes preserved.`
+    : `❌ Failed to uninstall ${serviceName}: ${result.message}`;
+
+  if (result.warnings.length > 0) {
+    output += '\n\n**Warnings:**\n' + result.warnings.map(w => `⚠️ ${w}`).join('\n');
+  }
+
+  return { success: result.success, output, duration_ms: Date.now() - startTime };
+}
+
+// ============================================================================
+// Security Handlers
+// ============================================================================
+
+async function handleSecurityStatus(): Promise<ExecutionResult> {
+  const startTime = Date.now();
+  const [firewallMod, sshMod, auditMod, sslMod] = await Promise.all([
+    getFirewall(),
+    getSSHHardening(),
+    getSecurityAudit(),
+    getSSL()
+  ]);
+
+  const [fwReport, sshReport, auditReport, sslReport] = await Promise.all([
+    firewallMod.getFirewallReport().catch(() => 'Firewall check unavailable'),
+    sshMod.getSSHReport().catch(() => 'SSH check unavailable'),
+    auditMod.getSecurityAuditReport().catch(() => 'Audit check unavailable'),
+    sslMod.getSSLReport().catch(() => 'SSL check unavailable')
+  ]);
+
+  const output = `## Security Status\n\n${fwReport}\n\n---\n\n${sshReport}\n\n---\n\n${sslReport}\n\n---\n\n${auditReport}`;
+
+  return { success: true, output, duration_ms: Date.now() - startTime };
+}
+
+async function handleFirewall(subcommand?: string, port?: number, proto?: string): Promise<ExecutionResult> {
+  const startTime = Date.now();
+  const firewallMod = await getFirewall();
+
+  if (!subcommand || subcommand === 'status') {
+    const report = await firewallMod.getFirewallReport();
+    return { success: true, output: report, duration_ms: Date.now() - startTime };
+  }
+
+  if (subcommand === 'allow' && port) {
+    const result = await firewallMod.allowPort(port, proto || 'tcp', `Allowed by Jeeves`);
+    return { success: result.success, output: result.message, duration_ms: Date.now() - startTime };
+  }
+
+  if (subcommand === 'deny' && port) {
+    const result = await firewallMod.denyPort(port);
+    return { success: result.success, output: result.message, duration_ms: Date.now() - startTime };
+  }
+
+  return { success: false, output: 'Usage: `firewall status`, `firewall allow <port>`, `firewall deny <port>`', duration_ms: Date.now() - startTime };
+}
+
+// ============================================================================
+// Dashboard Data Export
+// ============================================================================
+
+/**
+ * Get aggregated dashboard status for the web UI
+ */
+export async function getDashboardStatus(): Promise<Record<string, unknown>> {
+  if (!isHomelabAvailable()) {
+    return { enabled: false, resources: null, services: [], health: { healthy: 0, unhealthy: 0, unknown: 0, total: 0 }, security: null, alerts: [], timestamp: new Date().toISOString() };
+  }
+
+  try {
+    const resourceMon = await getResourceMonitor();
+    const containerMon = await getContainerMonitor();
+    const registry = await getRegistry();
+
+    const [sysStatus, containers] = await Promise.all([
+      resourceMon.getSystemStatus().catch(() => null),
+      containerMon.listContainers().catch(() => [])
+    ]);
+
+    // Map containers to service statuses
+    const allServices = registry.getAllServices();
+    const services = allServices.map(svc => {
+      const container = containers.find((c: { name: string }) =>
+        c.name === svc.name || c.name === svc.name.replace(/_/g, '-')
+      );
+      return {
+        name: svc.name,
+        tier: svc.tier,
+        priority: svc.priority,
+        state: container ? (container.state === 'running' ? 'running' : container.state) : 'stopped',
+        image: svc.image,
+        ramMB: svc.ramMB,
+        ports: svc.ports,
+        purpose: svc.purpose,
+        uptime: container?.status || undefined,
+        memUsage: undefined as string | undefined,
+      };
+    });
+
+    // Container stats (optional, might be slow)
+    try {
+      const stats = await containerMon.getContainerStats();
+      const statsList = Array.isArray(stats) ? stats : [];
+      for (const stat of statsList) {
+        const svc = services.find(s => s.name === stat.name);
+        if (svc) {
+          svc.memUsage = stat.memUsage;
+        }
+      }
+    } catch { /* skip stats on error */ }
+
+    // Build resources
+    let resources = null;
+    if (sysStatus) {
+      const diskList = sysStatus.disk?.partitions || [];
+      resources = {
+        cpu: { usagePercent: sysStatus.cpu.usagePercent, cores: sysStatus.cpu.cores, loadAverage: sysStatus.cpu.loadAverage },
+        ram: { totalMB: sysStatus.ram.totalMB, usedMB: sysStatus.ram.usedMB, usagePercent: sysStatus.ram.usagePercent },
+        disk: diskList.map((d: { mountpoint?: string; sizeMB: number; usedMB: number; usagePercent: number }) => ({
+          mountPoint: d.mountpoint || '/',
+          totalGB: +(d.sizeMB / 1024).toFixed(1),
+          usedGB: +(d.usedMB / 1024).toFixed(1),
+          usagePercent: d.usagePercent
+        })),
+        temperature: sysStatus.temperature ? {
+          celsius: sysStatus.temperature.celcius,
+          status: sysStatus.temperature.celcius >= config.homelab.thresholds.temp.critical ? 'critical' as const
+            : sysStatus.temperature.celcius >= config.homelab.thresholds.temp.warning ? 'warning' as const
+            : 'normal' as const
+        } : null
+      };
+    }
+
+    // Health counts
+    const running = services.filter(s => s.state === 'running').length;
+    const stopped = services.filter(s => s.state === 'stopped').length;
+    const errored = services.filter(s => s.state === 'error').length;
+
+    // Alerts
+    const alerts: string[] = [];
+    if (sysStatus) {
+      const thresholdAlerts = resourceMon.checkThresholds(sysStatus);
+      for (const a of thresholdAlerts) {
+        alerts.push(`${a.level.toUpperCase()}: ${a.message}`);
+      }
+    }
+
+    // Security summary (lightweight)
+    let security = null;
+    try {
+      const firewallMod = await getFirewall();
+      const fwStatus = await firewallMod.getFirewallStatus();
+      security = {
+        firewallActive: fwStatus.active,
+        sshHardened: false,
+        certsValid: 0,
+        certsExpiring: 0,
+        lastAuditCommand: null as string | null,
+      };
+    } catch { /* security info not critical */ }
+
+    return {
+      enabled: true,
+      resources,
+      services,
+      health: { healthy: running, unhealthy: errored, unknown: stopped, total: allServices.length },
+      security,
+      alerts,
+      timestamp: new Date().toISOString()
+    };
+  } catch (error) {
+    logger.error('Failed to build dashboard status', { error: String(error) });
+    return { enabled: true, resources: null, services: [], health: { healthy: 0, unhealthy: 0, unknown: 0, total: 0 }, security: null, alerts: ['Failed to fetch status'], timestamp: new Date().toISOString() };
+  }
 }
 
 // ============================================================================

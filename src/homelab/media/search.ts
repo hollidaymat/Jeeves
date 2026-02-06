@@ -760,7 +760,9 @@ export function parseMediaQuery(input: string): { query: string; season?: number
 
   // Strip descriptive qualifiers that aren't part of the title
   // e.g., "the korean version", "the original", "the 2003 one", "in english"
-  cleaned = cleaned.replace(/,?\s*(?:the\s+)?(?:korean|japanese|chinese|french|spanish|english|american|original|new|old|remake|dubbed|subbed|subtitled)\s*(?:version|one|edition|cut|dub)?/gi, '');
+  // Note: "old"/"new" only stripped when followed by a qualifier (version/one/etc) to avoid breaking titles like "Old Boy"
+  cleaned = cleaned.replace(/,?\s*(?:the\s+)?(?:korean|japanese|chinese|french|spanish|english|american|original|remake|dubbed|subbed|subtitled)\s*(?:version|one|edition|cut|dub)?/gi, '');
+  cleaned = cleaned.replace(/,?\s*(?:the\s+)?(?:old|new)\s+(?:version|one|edition|cut)/gi, '');
 
   // Strip "the X one" / "from YYYY" / "by director"
   cleaned = cleaned.replace(/,?\s*(?:from\s+\d{4}|the\s+\d{4}\s+one|by\s+\w+)/gi, '');

@@ -62,6 +62,56 @@ export interface MediaQueueResult {
 }
 
 // ============================================================================
+// Pending Selection State
+// ============================================================================
+
+let pendingResults: MediaResult[] = [];
+let pendingQuery: { query: string; season?: number; type?: 'movie' | 'series' } | null = null;
+
+export function getPendingMediaResults(): MediaResult[] {
+  return pendingResults;
+}
+
+export function clearPendingMedia(): void {
+  pendingResults = [];
+  pendingQuery = null;
+}
+
+export function hasPendingMedia(): boolean {
+  return pendingResults.length > 0;
+}
+
+/**
+ * Select a pending media result by index (1-based) and add it to the library.
+ */
+export async function selectMedia(index: number): Promise<MediaAddResult> {
+  if (pendingResults.length === 0) {
+    return { success: false, message: 'No pending media results. Search or download something first.' };
+  }
+
+  if (index < 1 || index > pendingResults.length) {
+    return { success: false, message: `Pick a number between 1 and ${pendingResults.length}` };
+  }
+
+  const selected = pendingResults[index - 1];
+  const season = pendingQuery?.season;
+
+  // Clear pending state
+  const title = selected.title;
+  clearPendingMedia();
+
+  if (selected.type === 'series' && selected.tvdbId) {
+    return addSonarrSeries(selected.tvdbId, title, { season });
+  }
+
+  if (selected.type === 'movie' && selected.tmdbId) {
+    return addRadarrMovie(selected.tmdbId, title);
+  }
+
+  return { success: false, message: `No valid ID for "${title}"` };
+}
+
+// ============================================================================
 // Config - reads API keys and URLs from environment or defaults
 // ============================================================================
 
@@ -579,18 +629,34 @@ export async function addMedia(
     return { success: false, message: `No matching ${options?.type || 'media'} found for "${query}"` };
   }
 
-  // Take the first (best) match
-  const match = candidates[0];
-
-  if (match.type === 'series' && match.tvdbId) {
-    return addSonarrSeries(match.tvdbId, match.title, { season: options?.season });
+  // If the top result is a near-exact match (score >= 0.9), auto-select it
+  const topScore = titleSimilarity(query, candidates[0].title);
+  if (topScore >= 0.9 && candidates.length === 1) {
+    const match = candidates[0];
+    if (match.type === 'series' && match.tvdbId) {
+      return addSonarrSeries(match.tvdbId, match.title, { season: options?.season });
+    }
+    if (match.type === 'movie' && match.tmdbId) {
+      return addRadarrMovie(match.tmdbId, match.title);
+    }
   }
 
-  if (match.type === 'movie' && match.tmdbId) {
-    return addRadarrMovie(match.tmdbId, match.title);
-  }
+  // Multiple candidates or uncertain match -- show options and let user pick
+  const top = candidates.slice(0, 5);
+  pendingResults = top;
+  pendingQuery = { query, season: options?.season, type: options?.type };
 
-  return { success: false, message: `No valid ID found for "${match.title}"` };
+  let message = `Found ${candidates.length} result(s) for "${query}". Pick one:\n\n`;
+  for (let i = 0; i < top.length; i++) {
+    const r = top[i];
+    const icon = r.type === 'movie' ? '🎬' : '📺';
+    const inLib = r.inLibrary ? ' ✅' : '';
+    const extra = r.type === 'series' && r.seasonCount ? ` (${r.seasonCount} seasons)` : '';
+    message += `${i + 1}. ${icon} ${r.title} (${r.year})${extra}${inLib}\n`;
+  }
+  message += `\nReply with a number (1-${top.length}) to download.`;
+
+  return { success: true, message };
 }
 
 /**

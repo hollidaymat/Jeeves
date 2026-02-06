@@ -47,6 +47,7 @@ const TRUST_REQUIREMENTS: Record<string, number> = {
   // Media commands: trust level 2+ (semi-autonomous)
   media_search: 2,
   media_download: 2,
+  media_select: 2,
   media_status: 2,
 };
 
@@ -207,6 +208,9 @@ export async function executeHomelabAction(
 
       case 'media_download':
         return await handleMediaDownload(serviceName);
+
+      case 'media_select':
+        return await handleMediaSelect(serviceName);
 
       case 'media_status':
         return await handleMediaStatus();
@@ -655,6 +659,25 @@ async function handleMediaDownload(query: string): Promise<ExecutionResult> {
   const media = await getMediaSearch();
   const parsed = media.parseMediaQuery(query);
   const result = await media.addMedia(parsed.query, { season: parsed.season, type: parsed.type });
+
+  const icon = result.success ? '✅' : '❌';
+  return {
+    success: result.success,
+    output: `${icon} ${result.message}`,
+    duration_ms: Date.now() - startTime,
+  };
+}
+
+async function handleMediaSelect(indexStr: string): Promise<ExecutionResult> {
+  const startTime = Date.now();
+  const media = await getMediaSearch();
+
+  if (!media.hasPendingMedia()) {
+    return { success: false, output: 'No pending media selection. Search or download something first.', duration_ms: Date.now() - startTime };
+  }
+
+  const index = parseInt(indexStr, 10);
+  const result = await media.selectMedia(index);
 
   const icon = result.success ? '✅' : '❌';
   return {

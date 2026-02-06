@@ -259,6 +259,7 @@ const PATTERNS = {
   // Media commands
   mediaSearch: /^(?:search|find|look\s*up|search\s+for)\s+(.+)/i,
   mediaDownload: /^(?:download|get|grab|add|queue)\s+(.+)/i,
+  mediaSelect: /^([1-9]\d?)$/,  // Just a number (1-99) when pending media results exist
   mediaStatus: /^(?:download(?:s|ing)?|queue|what'?s downloading|download status|download queue|media status|media queue)$/i,
   
   // List projects patterns  
@@ -514,6 +515,13 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
     const fwDenyMatch = lower.match(PATTERNS.homelabFirewallDeny);
     if (fwDenyMatch) {
       return { action: 'homelab_firewall', confidence: 1.0, data: { subcommand: 'deny', port: parseInt(fwDenyMatch[1], 10) }, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Media: select from pending results (just a number)
+    const selectMatch = lower.match(PATTERNS.mediaSelect);
+    if (selectMatch) {
+      // Return media_select -- the router will check if there are actually pending results
+      return { action: 'media_select', target: selectMatch[1], confidence: 0.8, resolutionMethod: 'pattern', estimatedCost: 0 };
     }
 
     // Media: download status / queue (check before download verb to avoid "downloads" matching)

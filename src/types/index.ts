@@ -119,6 +119,7 @@ export type ActionType =
   // Media commands
   | 'media_search'            // Search for movies/shows
   | 'media_download'          // Download/add media to library
+  | 'media_select'            // Select from pending media results (by number)
   | 'media_status'            // Check download queue status
   | 'unknown'
   | 'denied';

@@ -144,6 +144,8 @@ function initRegistry(): void {
       purpose: 'TV show management',
       priority: 'medium',
       dependencies: ['prowlarr'],
+      volumes: ['sonarr_config:/config', '/data/media:/data/media'],
+      environment: { PUID: '1000', PGID: '1000', TZ: 'America/New_York' },
     },
     {
       name: 'radarr',
@@ -154,6 +156,8 @@ function initRegistry(): void {
       purpose: 'Movie management',
       priority: 'medium',
       dependencies: ['prowlarr'],
+      volumes: ['radarr_config:/config', '/data/media:/data/media'],
+      environment: { PUID: '1000', PGID: '1000', TZ: 'America/New_York' },
     },
     {
       name: 'prowlarr',
@@ -164,6 +168,8 @@ function initRegistry(): void {
       purpose: 'Indexer management',
       priority: 'medium',
       dependencies: [],
+      volumes: ['prowlarr_config:/config'],
+      environment: { PUID: '1000', PGID: '1000', TZ: 'America/New_York' },
     },
     {
       name: 'lidarr',
@@ -174,6 +180,8 @@ function initRegistry(): void {
       purpose: 'Music management',
       priority: 'low',
       dependencies: ['prowlarr'],
+      volumes: ['lidarr_config:/config', '/data/media:/data/media'],
+      environment: { PUID: '1000', PGID: '1000', TZ: 'America/New_York' },
     },
     {
       name: 'bazarr',
@@ -184,6 +192,8 @@ function initRegistry(): void {
       purpose: 'Subtitle management',
       priority: 'low',
       dependencies: ['sonarr', 'radarr'],
+      volumes: ['bazarr_config:/config', '/data/media:/data/media'],
+      environment: { PUID: '1000', PGID: '1000', TZ: 'America/New_York' },
     },
     {
       name: 'overseerr',
@@ -234,7 +244,10 @@ function initRegistry(): void {
       purpose: 'Password manager',
       priority: 'critical',
       dependencies: [],
-      environment: { ROCKET_PORT: '8843' },
+      environment: {
+        ROCKET_PORT: '8843',
+        DOMAIN: 'http://192.168.7.50:8843',
+      },
       volumes: ['vaultwarden_data:/data'],
     },
     {

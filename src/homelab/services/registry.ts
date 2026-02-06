@@ -20,7 +20,7 @@ export interface ServiceDefinition {
   name: string;
   tier: ServiceTier;
   image: string;
-  ports: number[];
+  ports: (number | string)[];   // number = same host:container, string = "host:container"
   ramMB: number;               // RAM limit in MB
   purpose: string;
   priority: ServicePriority;
@@ -213,11 +213,16 @@ function initRegistry(): void {
       name: 'nextcloud',
       tier: 'services',
       image: 'nextcloud:latest',
-      ports: [8443],
+      ports: ['8443:80'],
       ramMB: parseRAM('512MB'),
       purpose: 'Files, calendar, contacts',
       priority: 'high',
       dependencies: ['postgres'],
+      environment: {
+        APACHE_DISABLE_REWRITE_IP: '1',
+        NEXTCLOUD_TRUSTED_DOMAINS: '192.168.4.116',
+      },
+      volumes: ['nextcloud_data:/var/www/html'],
     },
     {
       name: 'vaultwarden',
@@ -381,14 +386,24 @@ export function getAllServices(): ServiceDefinition[] {
 }
 
 /**
- * Get a flat list of all ports used across all services.
+ * Extract the host port number from a port definition.
+ * number -> itself, "8443:80" -> 8443
+ */
+function extractHostPort(port: number | string): number {
+  if (typeof port === 'number') return port;
+  const hostPart = port.split(':')[0];
+  return parseInt(hostPart, 10);
+}
+
+/**
+ * Get a flat list of all host ports used across all services.
  */
 export function getAllPorts(): number[] {
   initRegistry();
   const ports: Set<number> = new Set();
   for (const service of registry.values()) {
     for (const port of service.ports) {
-      ports.add(port);
+      ports.add(extractHostPort(port));
     }
   }
   return Array.from(ports).sort((a, b) => a - b);
@@ -520,9 +535,10 @@ export function checkPortConflicts(): string[] {
 
   for (const svc of registry.values()) {
     for (const port of svc.ports) {
-      const existing = portMap.get(port) || [];
+      const hostPort = extractHostPort(port);
+      const existing = portMap.get(hostPort) || [];
       existing.push(svc.name);
-      portMap.set(port, existing);
+      portMap.set(hostPort, existing);
     }
   }
 

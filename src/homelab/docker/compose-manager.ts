@@ -32,7 +32,7 @@ const COMMAND_TIMEOUT_MS = 60_000; // 60s for compose operations
 export interface ServiceDefinition {
   name: string;
   image: string;
-  ports: number[];
+  ports: (number | string)[];  // number = same host:container, string = "host:container"
   ram: string;                // e.g. "256MB", "1GB"
   environment?: Record<string, string>;
   volumes?: string[];         // e.g. ["/opt/configs/sonarr:/config", "/data/media:/data"]
@@ -191,7 +191,9 @@ export function generateCompose(stackName: string, services: ServiceDefinition[]
 
     // Ports — skip if networkMode is host
     if (svc.ports.length > 0 && svc.networkMode !== 'host') {
-      composeService.ports = svc.ports.map((p) => `${p}:${p}`);
+      composeService.ports = svc.ports.map((p) =>
+        typeof p === 'string' ? p : `${p}:${p}`
+      );
     }
 
     // Volumes

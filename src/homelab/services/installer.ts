@@ -137,7 +137,11 @@ export async function installService(name: string): Promise<InstallResult> {
   await execHomelab('mkdir', ['-p', configDir]);
 
   // ---- f. Generate Traefik labels ----
-  const primaryPort = svc.ports[0] ?? 80;
+  // For Traefik, use the container port (right side of "host:container" or the number itself)
+  const rawPort = svc.ports[0] ?? 80;
+  const primaryPort = typeof rawPort === 'string'
+    ? parseInt(rawPort.split(':')[1] || rawPort.split(':')[0], 10)
+    : rawPort;
   const domain = getDefaultDomain(name);
   const traefikLabels = svc.networkMode === 'host'
     ? {}

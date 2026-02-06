@@ -188,12 +188,13 @@ function initRegistry(): void {
     {
       name: 'overseerr',
       tier: 'media',
-      image: 'lscr.io/linuxserver/overseerr:latest',
+      image: 'fallenbagel/jellyseerr:latest',
       ports: [5055],
       ramMB: parseRAM('128MB'),
-      purpose: 'Media request management',
+      purpose: 'Media request management (Jellyfin)',
       priority: 'low',
       dependencies: ['jellyfin', 'sonarr', 'radarr'],
+      volumes: ['overseerr_config:/app/config'],
     },
     {
       name: 'tautulli',

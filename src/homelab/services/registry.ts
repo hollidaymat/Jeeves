@@ -28,6 +28,8 @@ export interface ServiceDefinition {
   devices?: string[];           // e.g., ['/dev/dri:/dev/dri'] for GPU passthrough
   networkMode?: string;         // e.g., 'host' for Home Assistant
   type?: string;                // e.g., 'system-service' for Tailscale
+  environment?: Record<string, string>;  // Default env vars for the service
+  volumes?: string[];           // Volume mounts (e.g., 'config:/config')
   state: ServiceState;
   lastChecked?: string;
   lastStateChange?: string;
@@ -226,6 +228,8 @@ function initRegistry(): void {
       purpose: 'Password manager',
       priority: 'critical',
       dependencies: [],
+      environment: { ROCKET_PORT: '8843' },
+      volumes: ['vaultwarden_data:/data'],
     },
     {
       name: 'paperless',
@@ -236,6 +240,14 @@ function initRegistry(): void {
       purpose: 'Document management',
       priority: 'medium',
       dependencies: ['postgres', 'redis'],
+      environment: {
+        PAPERLESS_REDIS: 'redis://redis:6379',
+        PAPERLESS_DBHOST: 'postgres',
+        PAPERLESS_DBUSER: 'jeeves',
+        PAPERLESS_DBPASS: 'jeeves_db_2026',
+        PAPERLESS_DBNAME: 'homelab',
+      },
+      volumes: ['paperless_data:/usr/src/paperless/data', 'paperless_media:/usr/src/paperless/media'],
     },
     {
       name: 'homeassistant',
@@ -261,6 +273,12 @@ function initRegistry(): void {
       purpose: 'Primary database',
       priority: 'critical',
       dependencies: [],
+      environment: {
+        POSTGRES_PASSWORD: 'jeeves_db_2026',
+        POSTGRES_USER: 'jeeves',
+        POSTGRES_DB: 'homelab',
+      },
+      volumes: ['postgres_data:/var/lib/postgresql/data'],
     },
     {
       name: 'redis',

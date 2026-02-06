@@ -154,6 +154,8 @@ export async function installService(name: string): Promise<InstallResult> {
     networkMode: svc.networkMode,
     dependsOn: svc.dependencies.length > 0 ? svc.dependencies : undefined,
     labels: Object.keys(traefikLabels).length > 0 ? traefikLabels : undefined,
+    environment: svc.environment,
+    volumes: svc.volumes,
   };
 
   const composeYaml = generateCompose(name, [composeDef]);

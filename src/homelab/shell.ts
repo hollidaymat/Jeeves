@@ -62,8 +62,12 @@ const ALLOWED_EXECUTABLES = new Set([
   'systemctl',
   'journalctl',
 
-  // Firewall
+  // Firewall (via sudo)
   'ufw',
+  'sudo',
+
+  // File management
+  'mkdir',
 
   // Package management
   'apt',

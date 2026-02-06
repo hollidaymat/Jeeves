@@ -51,7 +51,7 @@ export interface ServiceDefinition {
 }
 
 export interface ComposeFile {
-  version: string;
+  version?: string;
   services: Record<string, ComposeService>;
   networks?: Record<string, ComposeNetwork>;
   volumes?: Record<string, ComposeVolume | null>;
@@ -175,7 +175,6 @@ function runCommand(
  */
 export function generateCompose(stackName: string, services: ServiceDefinition[]): string {
   const compose: ComposeFile = {
-    version: '3.8',
     services: {},
     networks: {
       proxy: { external: true },
@@ -234,9 +233,15 @@ export function generateCompose(stackName: string, services: ServiceDefinition[]
       composeService.networks = ['proxy'];
     }
 
-    // Dependencies
+    // Dependencies - only include if the dependency is in THIS compose stack
+    // (cross-stack depends_on doesn't work with one-stack-per-service model)
     if (svc.dependsOn && svc.dependsOn.length > 0) {
-      composeService.depends_on = svc.dependsOn;
+      const localDeps = svc.dependsOn.filter(dep => 
+        services.some(s => s.name === dep)
+      );
+      if (localDeps.length > 0) {
+        composeService.depends_on = localDeps;
+      }
     }
 
     // Resource limits (RAM)

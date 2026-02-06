@@ -80,7 +80,7 @@ const SELF_TESTS: Record<string, { command: string; args: string[]; description:
   docker:   { command: 'docker',   args: ['run', '--rm', 'hello-world'],                        description: 'Docker engine is working' },
   network:  { command: 'curl',     args: ['-s', '--max-time', '5', 'https://1.1.1.1/cdn-cgi/trace'], description: 'Internet connectivity' },
   dns:      { command: 'dig',      args: ['+short', 'google.com', '@127.0.0.1'],                description: 'Pi-hole DNS resolution' },
-  firewall: { command: 'ufw',      args: ['status', 'verbose'],                                 description: 'Firewall status' },
+  firewall: { command: 'sudo',     args: ['ufw', 'status', 'verbose'],                           description: 'Firewall status' },
   backup:   { command: 'restic',   args: ['snapshots', '--latest', '1'],                        description: 'Backup repository accessible' },
   ssl:      { command: 'openssl',  args: ['s_client', '-connect', 'localhost:443', '-servername', 'home.local'], description: 'SSL certificate check' },
   postgres: { command: 'docker',   args: ['exec', 'postgres', 'pg_isready'],                    description: 'PostgreSQL accepting connections' },

@@ -36,7 +36,7 @@ export interface FirewallStatus {
  * Parses `ufw status verbose` output into structured data.
  */
 export async function getFirewallStatus(): Promise<FirewallStatus> {
-  const result = await execHomelab('ufw', ['status', 'verbose']);
+  const result = await execHomelab('sudo', ['ufw', 'status', 'verbose']);
 
   if (!result.success) {
     logger.error('Failed to get firewall status', { stderr: result.stderr });
@@ -121,8 +121,8 @@ export async function allowPort(
     return { success: false, message: `Invalid port number: ${port}. Port must be <= 65535.` };
   }
 
-  const result = await execHomelab('ufw', [
-    'allow',
+  const result = await execHomelab('sudo', [
+    'ufw', 'allow',
     `${port}/${proto}`,
     'comment',
     comment,
@@ -160,7 +160,7 @@ export async function denyPort(
     return { success: false, message: `Invalid port number: ${port}. Port must be <= 65535.` };
   }
 
-  const result = await execHomelab('ufw', ['deny', String(port)]);
+  const result = await execHomelab('sudo', ['ufw', 'deny', String(port)]);
 
   if (result.success) {
     logger.info('Firewall: denied port', { port });

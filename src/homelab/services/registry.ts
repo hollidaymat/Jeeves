@@ -220,7 +220,7 @@ function initRegistry(): void {
       name: 'qbittorrent',
       tier: 'media',
       image: 'lscr.io/linuxserver/qbittorrent:latest',
-      ports: ['8080:8080', '6881:6881'],
+      ports: ['8085:8085', '6881:6881'],
       ramMB: parseRAM('256MB'),
       purpose: 'Torrent download client',
       priority: 'medium',
@@ -229,7 +229,7 @@ function initRegistry(): void {
         'qbittorrent_config:/config',
         '/data/downloads/torrents:/downloads',
       ],
-      environment: { PUID: '1000', PGID: '1000', TZ: 'America/New_York', WEBUI_PORT: '8080' },
+      environment: { PUID: '1000', PGID: '1000', TZ: 'America/New_York', WEBUI_PORT: '8085' },
     },
     {
       name: 'nzbget',

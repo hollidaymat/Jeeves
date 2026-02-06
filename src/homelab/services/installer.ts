@@ -53,7 +53,7 @@ export interface UpdateAllResult {
 // ============================================================================
 
 const RAM_BUDGET_MB = 14_336; // 14GB (16GB total, 2GB reserved for OS + Jeeves)
-const DEFAULT_HOST_IP = '127.0.0.1';
+const DEFAULT_HOST_IP = '192.168.7.50';
 const POST_DEPLOY_WAIT_MS = 5_000;
 
 /**

@@ -220,7 +220,7 @@ function initRegistry(): void {
       dependencies: ['postgres'],
       environment: {
         APACHE_DISABLE_REWRITE_IP: '1',
-        NEXTCLOUD_TRUSTED_DOMAINS: '192.168.4.116',
+        NEXTCLOUD_TRUSTED_DOMAINS: '192.168.7.50',
       },
       volumes: ['nextcloud_data:/var/www/html'],
     },

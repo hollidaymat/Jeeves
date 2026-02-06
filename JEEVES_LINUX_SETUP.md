@@ -137,7 +137,7 @@ Once you have an IP (even a temporary DHCP one), you can SSH in from Windows and
 From here on, you can unplug the monitor/keyboard from the Beelink. Everything is via SSH.
 
 ```powershell
-ssh jeeves@192.168.4.116
+ssh jeeves@192.168.7.50
 ```
 
 If you don't have a static IP yet, use the temporary DHCP IP (run `ip addr show` on the console to find it). Accept the fingerprint, enter the password.

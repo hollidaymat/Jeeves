@@ -1255,8 +1255,10 @@ function tryLocalParse(message: string): ParsedIntent | null {
   const trimmed = message.trim();
   
   // If it looks like natural language (not a simple keyword), route to AI
-  // This catches questions, requests, and conversational input
+  // This catches questions, requests, conversational input, and greetings
+  const isGreeting = /^(hey|hi|hello|yo|sup|what'?s up|howdy|hiya|greetings)\b/i.test(trimmed);
   const looksLikeNaturalLanguage = 
+    isGreeting ||                        // Greetings with any extra words
     trimmed.split(/\s+/).length >= 3 ||  // 3+ words
     /^(the|this|my|our|what|how|can|could|is|are|does|do|should|would|will|where|when|why|please|i need|i want|make|put|get)/i.test(trimmed) ||
     /\?$/.test(trimmed);  // Ends with question mark

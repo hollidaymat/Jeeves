@@ -30,14 +30,14 @@ export const MODELS: Record<ModelTier, ModelInfo> = {
   },
   sonnet: {
     tier: 'sonnet',
-    modelId: 'claude-sonnet-4-20250514',
+    modelId: 'claude-sonnet-4-5-20250929',
     costPer1kInput: 0.003,
     costPer1kOutput: 0.015,
     description: 'Balanced - coding, explanations, normal work'
   },
   opus: {
     tier: 'opus',
-    modelId: 'claude-opus-4-20250514',
+    modelId: 'claude-opus-4-6',
     costPer1kInput: 0.015,
     costPer1kOutput: 0.075,
     description: 'Most capable - complex architecture, PRD planning, hard problems'

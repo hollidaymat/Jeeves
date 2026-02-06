@@ -28,8 +28,8 @@ const defaultConfig: Config = {
     silent_deny: true
   },
   claude: {
-    model: 'anthropic/claude-sonnet-4.5',
-    haiku_model: 'anthropic/claude-haiku-4',
+    model: 'claude-sonnet-4-5-20250929',
+    haiku_model: 'claude-3-5-haiku-20241022',
     max_tokens: 500
   },
   projects: {

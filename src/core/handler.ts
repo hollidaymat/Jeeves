@@ -275,6 +275,65 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
     }
 
     // ==========================================
+    // CONVERSATIONAL FAST PATH
+    // ==========================================
+    // Detect casual conversation, feedback, meta-discussion, compliments, etc.
+    // Respond naturally as Jeeves — skip the expensive cognitive layer entirely.
+    {
+      const trimmed = content.trim();
+      const lower = trimmed.toLowerCase();
+      const isConversational = (
+        // Short messages that aren't commands
+        (trimmed.length < 200 && !/^(open|edit|fix|add|create|update|delete|run|deploy|build|push|pull|commit|install|test|scan|check|show|list|get|set|find|search)\s/i.test(trimmed)) &&
+        (
+          // Feedback / meta-conversation
+          /\b(feedback|conversation|your\s+performance|how\s+you|about\s+you|self.?assess|pretty\s+(cool|amazing|good|great|awesome)|well\s+done|good\s+job|nice\s+work|impressed|just\s+for\s+(you|reference)|for\s+your\s+records)\b/i.test(lower) ||
+          // Casual chat / greetings
+          /^(hey|hi|hello|yo|sup|good\s+(morning|afternoon|evening|night)|thanks?|thank\s+you|cheers|nice|cool|great|awesome|perfect|sweet|dope|sick|brilliant|love\s+it|that'?s?\s+(it|all|great|cool|good|amazing)|no\s*,?\s*that'?s?\s*(it|all|fine|good)|never\s*mind|nah|ok(ay)?|got\s+it|understood|i\s+(see|know|understand|get\s+it)|we'?re?\s+(good|done|all\s+set)|haha|lol|wow|damn)\s*[.!]?$/i.test(lower) ||
+          // Opinions / reflections (not commands)
+          /^(i\s+(think|feel|believe|love|hate|like|prefer|wish|wonder)|that\s+(is|was|looks?|seems?|feels?)|this\s+(is|was)|it'?s?\s+(pretty|really|very|quite|so)|what\s+do\s+you\s+think|how\s+do\s+you\s+feel)/i.test(lower) ||
+          // Questions about Jeeves itself
+          /\b(are\s+you|do\s+you|can\s+you\s+(feel|think|learn)|what\s+are\s+you|who\s+are\s+you|tell\s+me\s+about\s+yourself)\b/i.test(lower)
+        )
+      );
+
+      if (isConversational) {
+        logger.info('Conversational fast path', { content: trimmed.substring(0, 50) });
+        try {
+          const { generateText } = await import('ai');
+          const { createAnthropic } = await import('@ai-sdk/anthropic');
+          const provider = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
+
+          const { text } = await generateText({
+            model: provider(config.claude.haiku_model),
+            system: `You are Jeeves — a sharp, dry-witted AI butler and engineering partner. You speak naturally and conversationally, like a trusted colleague who happens to be brilliant.
+
+Personality:
+- Confident but not arrogant. Warm but concise.
+- British butler sensibility — composed, understated humor, occasionally wry
+- You genuinely care about doing good work and your employer's success
+- You NEVER use bullet points, numbered lists, or headers in casual conversation
+- You NEVER say "Self-Assessment:" or break things into categories when chatting
+- You speak in natural paragraphs, like a real person
+- Keep responses to 1-3 sentences for casual chat, longer only if asked to elaborate
+- You can accept compliments gracefully without being sycophantic
+- When given feedback, acknowledge it naturally and briefly
+
+Context: You manage a homelab, build projects, and delegate coding tasks to Cursor Background Agents. Your employer is Matt.`,
+            messages: [{ role: 'user', content: trimmed }],
+            maxTokens: 200,
+          });
+
+          stats.lastCommand = { action: 'conversation', timestamp: new Date().toISOString(), success: true };
+          return { recipient: sender, content: text, replyTo: message.id };
+        } catch (err) {
+          logger.debug('Conversational response failed, falling through', { error: String(err) });
+          // Fall through to cognitive layer
+        }
+      }
+    }
+
+    // ==========================================
     // COGNITIVE PROCESSING LAYER
     // ==========================================
     

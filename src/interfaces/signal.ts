@@ -177,15 +177,24 @@ export class SignalInterface implements MessageInterface {
     }
   }
   
-  private handleJsonRpc(message: JsonRpcResponse | SignalMessage): void {
-    // Check if this is a message notification
+  private handleJsonRpc(message: Record<string, unknown>): void {
+    // JSON-RPC notification from signal-cli: {"jsonrpc":"2.0","method":"receive","params":{"envelope":{...}}}
+    if (message.method === 'receive' && message.params) {
+      const params = message.params as Record<string, unknown>;
+      if (params.envelope) {
+        this.handleIncomingMessage({ envelope: params.envelope } as SignalMessage);
+        return;
+      }
+    }
+    
+    // Legacy format: envelope at top level
     if ('envelope' in message) {
-      this.handleIncomingMessage(message as SignalMessage);
+      this.handleIncomingMessage(message as unknown as SignalMessage);
       return;
     }
     
     // Handle JSON-RPC response
-    const rpc = message as JsonRpcResponse;
+    const rpc = message as unknown as JsonRpcResponse;
     if (rpc.error) {
       logger.error('Signal RPC error', { error: rpc.error.message });
     }

@@ -246,6 +246,94 @@ export class GitHubClient {
     logger.info('Files pushed to GitHub', { repo: fullRepo, commitSha: newCommit.sha.substring(0, 8) });
   }
 
+  // ---------- Pull Request Review ----------
+
+  /**
+   * Get a pull request by number
+   */
+  async getPullRequest(
+    repo: string,
+    prNumber: number
+  ): Promise<{
+    number: number;
+    title: string;
+    state: string;
+    body: string;
+    html_url: string;
+    changed_files: number;
+    additions: number;
+    deletions: number;
+    mergeable: boolean | null;
+    head: { ref: string; sha: string };
+    base: { ref: string };
+  }> {
+    const owner = await this.ensureOwner();
+    const fullRepo = repo.includes('/') ? repo : `${owner}/${repo}`;
+    return this.request('GET', `/repos/${fullRepo}/pulls/${prNumber}`);
+  }
+
+  /**
+   * Get the diff for a pull request (raw patch text)
+   */
+  async getPullRequestDiff(repo: string, prNumber: number): Promise<string> {
+    const owner = await this.ensureOwner();
+    const fullRepo = repo.includes('/') ? repo : `${owner}/${repo}`;
+    const url = `${this.baseUrl}/repos/${fullRepo}/pulls/${prNumber}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+
+    try {
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.token}`,
+          'Accept': 'application/vnd.github.v3.diff',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        throw new Error(`GitHub API ${res.status}: ${res.statusText}`);
+      }
+
+      return await res.text();
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  /**
+   * Get the list of files changed in a pull request
+   */
+  async getPullRequestFiles(
+    repo: string,
+    prNumber: number
+  ): Promise<Array<{
+    filename: string;
+    status: string;
+    additions: number;
+    deletions: number;
+    changes: number;
+    patch?: string;
+  }>> {
+    const owner = await this.ensureOwner();
+    const fullRepo = repo.includes('/') ? repo : `${owner}/${repo}`;
+    return this.request('GET', `/repos/${fullRepo}/pulls/${prNumber}/files?per_page=100`);
+  }
+
+  /**
+   * Get CI/check status for a commit
+   */
+  async getCheckStatus(
+    repo: string,
+    commitSha: string
+  ): Promise<{ state: string; statuses: Array<{ context: string; state: string; description: string }> }> {
+    const owner = await this.ensureOwner();
+    const fullRepo = repo.includes('/') ? repo : `${owner}/${repo}`;
+    return this.request('GET', `/repos/${fullRepo}/commits/${commitSha}/status`);
+  }
+
   // ---------- Health Check ----------
 
   async healthCheck(): Promise<{ ok: boolean; login?: string; error?: string }> {

@@ -11,6 +11,7 @@ import { randomUUID } from 'crypto';
 import { getCursorClient, isCursorEnabled } from './cursor-client.js';
 import { buildPrompt, type TaskSpec } from './cursor-prompts.js';
 import { logger } from '../utils/logger.js';
+import { onTaskCompleted, onRefinedTaskCompleted, isInRefinement, setRefinementCallbacks } from './cursor-refinement.js';
 
 // ============================================================================
 // Types
@@ -86,6 +87,13 @@ let broadcastFn: ((type: string, payload: unknown) => void) | null = null;
 
 export function setBroadcast(fn: (type: string, payload: unknown) => void): void {
   broadcastFn = fn;
+
+  // Wire refinement callbacks now that we have broadcast
+  setRefinementCallbacks({
+    resumePolling: (taskId: string) => schedulePoll(taskId),
+    archiveTask: (task: CursorTask) => archiveTask(task),
+    broadcast: fn,
+  });
 }
 
 function broadcast(type: string, payload: unknown): void {
@@ -393,6 +401,17 @@ async function pollAgent(taskId: string): Promise<void> {
       });
 
       logger.info('Cursor task completed', { taskId: task.id, agentId: task.agentId, prUrl: task.prUrl });
+
+      // Hand off to refinement loop — it decides whether to accept or iterate
+      try {
+        const handled = isInRefinement(task.id)
+          ? await onRefinedTaskCompleted(task)
+          : await onTaskCompleted(task);
+        if (handled) return;  // Refinement is managing this task now
+      } catch (err) {
+        logger.debug('Refinement check failed, archiving normally', { error: String(err) });
+      }
+
       archiveTask(task);
       return;
     }
@@ -442,6 +461,17 @@ async function pollAgent(taskId: string): Promise<void> {
         });
 
         logger.info('Cursor task completed (keyword)', { taskId: task.id, prUrl: task.prUrl });
+
+        // Hand off to refinement loop
+        try {
+          const handled = isInRefinement(task.id)
+            ? await onRefinedTaskCompleted(task)
+            : await onTaskCompleted(task);
+          if (handled) return;
+        } catch (err) {
+          logger.debug('Refinement check failed, archiving normally', { error: String(err) });
+        }
+
         archiveTask(task);
         return;
       }

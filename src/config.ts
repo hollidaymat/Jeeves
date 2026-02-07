@@ -116,6 +116,7 @@ const defaultConfig: Config = {
       security_triage:    { maxTokens: 300,  maxCallsPerPeriod: 10, periodMs: 3600000,  dailyCap: 0.25 },
       freelance_analysis: { maxTokens: 500,  maxCallsPerPeriod: 5,  periodMs: 86400000, dailyCap: 0.10 },
       decision_predict:   { maxTokens: 200,  maxCallsPerPeriod: 20, periodMs: 86400000, dailyCap: 0.05 },
+      cursor_refinement:  { maxTokens: 500,  maxCallsPerPeriod: 10, periodMs: 86400000, dailyCap: 0.50 },
     }
   },
   homelab: {

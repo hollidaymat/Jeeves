@@ -125,6 +125,15 @@ export class CursorClient {
       if ((error as Error).name === 'AbortError') {
         throw new Error(`Cursor API request timed out after ${timeoutMs}ms`);
       }
+      // Log root cause for "TypeError: fetch failed" (usually DNS/TLS/network)
+      const cause = (error as { cause?: Error })?.cause;
+      if (cause) {
+        logger.error('Cursor fetch root cause', {
+          message: cause.message,
+          code: (cause as { code?: string })?.code,
+          name: cause.name,
+        });
+      }
       throw error;
     } finally {
       clearTimeout(timeout);

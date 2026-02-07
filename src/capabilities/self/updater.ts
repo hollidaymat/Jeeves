@@ -200,7 +200,7 @@ export async function pullAndRestart(options?: { force?: boolean }): Promise<{
     if (hasLocalChanges()) {
       return {
         success: false,
-        message: 'Local uncommitted changes detected. Commit or stash them first, or use force update.',
+        message: 'Local uncommitted changes detected. Say "force update" to stash changes and update anyway.',
       };
     }
 
@@ -208,8 +208,25 @@ export async function pullAndRestart(options?: { force?: boolean }): Promise<{
     if (activeTaskChecker && activeTaskChecker()) {
       return {
         success: false,
-        message: 'Active Cursor tasks running. Wait for them to complete or use force update.',
+        message: 'Active Cursor tasks running. Wait for them to complete or say "force update".',
       };
+    }
+  }
+
+  // Force mode: stash local changes before pulling
+  if (options?.force && hasLocalChanges()) {
+    try {
+      logger.info('Self-update: stashing local changes before force pull');
+      git('stash push -m "jeeves-auto-stash-before-update"');
+      addEvent('pull', 'Stashed local changes', true);
+    } catch (stashErr) {
+      logger.warn('Self-update: stash failed, attempting reset', { error: String(stashErr) });
+      try {
+        git('checkout -- .');
+        addEvent('pull', 'Reset local changes (stash failed)', true);
+      } catch {
+        // Last resort — continue anyway, git pull may still work
+      }
     }
   }
 

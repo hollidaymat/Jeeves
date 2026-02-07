@@ -519,15 +519,15 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
       }
     }
 
-    // "update yourself" / "pull and restart" / "self update" / "update status"
-    const updateMatch = content.trim().match(/^(?:update\s+yourself|self[- ]?update|pull\s+and\s+restart|update\s+jeeves|upgrade\s+yourself|check\s+for\s+updates?|update\s+status)/i);
+    // "update yourself" / "pull and restart" / "self update" / "force update" / "update status"
+    const updateMatch = content.trim().match(/^(?:update\s+yourself|self[- ]?update|pull\s+and\s+restart|update\s+jeeves|upgrade\s+yourself|check\s+for\s+updates?|update\s+status|force\s+update|force\s+pull)/i);
     if (updateMatch) {
       logger.info('Self-update fast path');
       try {
         const { checkForUpdates, pullAndRestart, getUpdateStatus } = await import('../capabilities/self/updater.js');
 
         // If "update status" just show status
-        if (/status/i.test(updateMatch[0])) {
+        if (/status/i.test(updateMatch[0]) && !/force/i.test(updateMatch[0])) {
           const s = getUpdateStatus();
           const lines = [
             `Self-update status:`,
@@ -543,6 +543,8 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
           return { recipient: sender, content: lines.join('\n'), replyTo: message.id };
         }
 
+        const isForce = /force/i.test(updateMatch[0]);
+
         // Check for updates first
         const status = await checkForUpdates();
         if (status.behind === 0) {
@@ -550,8 +552,8 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
           return { recipient: sender, content: `Already up to date. HEAD: ${status.localHead.substring(0, 8)}`, replyTo: message.id };
         }
 
-        // Pull and restart
-        const result = await pullAndRestart();
+        // Pull and restart (force bypasses local changes + active task checks)
+        const result = await pullAndRestart({ force: isForce });
         stats.lastCommand = { action: 'self_update', timestamp: new Date().toISOString(), success: result.success };
         return { recipient: sender, content: result.message, replyTo: message.id };
       } catch (err) {

@@ -24,9 +24,28 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Conversations and state
+# Runtime data (written by Jeeves at runtime, should not block git pulls)
 data/conversations/
 data/preferences.json
+data/memory.json
+data/activity.json
+data/learned-preferences.json
+data/trust.json
+data/cost-log.json
+data/scout.json
+data/security-events.json
+data/clients.json
+data/proposals.json
+data/revenue.json
+data/schedules.json
+data/uptime.json
+data/screenshots/
+data/changelogs/
+data/cost-reports/
+data/knowledge/
+data/build-history.json
+data/lessons-learned.json
+data/capabilities.md
 
 # Encrypted credentials
 *.enc

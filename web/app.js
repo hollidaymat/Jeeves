@@ -1189,10 +1189,17 @@ class CostDashboard {
 
   async init() {
     try {
-      const res = await fetch('/api/costs');
-      if (res.ok) {
-        const data = await res.json();
+      const [costsRes, budgetRes] = await Promise.all([
+        fetch('/api/costs'),
+        fetch('/api/costs/budget'),
+      ]);
+      if (costsRes.ok) {
+        const data = await costsRes.json();
         this.update(data);
+      }
+      if (budgetRes.ok) {
+        const budgetData = await budgetRes.json();
+        this.updateBudget(budgetData);
       }
     } catch { /* ignore */ }
   }
@@ -1261,6 +1268,47 @@ class CostDashboard {
       const pct = limit > 0 ? Math.min(100, ((value || 0) / limit) * 100) : 0;
       fillEl.style.width = pct + '%';
       fillEl.className = 'gauge-fill' + (pct >= 95 ? ' critical' : pct >= 80 ? ' warning' : '');
+    }
+  }
+
+  updateBudget(data) {
+    if (!data) return;
+
+    const dailyEl = document.getElementById('budget-daily-status');
+    const hourlyEl = document.getElementById('budget-hourly-status');
+    const circuitEl = document.getElementById('budget-circuit');
+    const featuresEl = document.getElementById('budget-features');
+
+    if (dailyEl && data.global) {
+      const pct = data.global.dailyCap > 0 ? Math.round((data.global.dailyUsed / data.global.dailyCap) * 100) : 0;
+      dailyEl.textContent = `$${data.global.dailyUsed.toFixed(3)} / $${data.global.dailyCap.toFixed(2)} (${pct}%)`;
+      dailyEl.className = pct >= 95 ? 'budget-critical' : pct >= 80 ? 'budget-warning' : 'budget-ok';
+    }
+    if (hourlyEl && data.global) {
+      const pct = data.global.hourlyCap > 0 ? Math.round((data.global.hourlyUsed / data.global.hourlyCap) * 100) : 0;
+      hourlyEl.textContent = `$${data.global.hourlyUsed.toFixed(3)} / $${data.global.hourlyCap.toFixed(2)} (${pct}%)`;
+      hourlyEl.className = pct >= 80 ? 'budget-warning' : 'budget-ok';
+    }
+    if (circuitEl && data.global) {
+      circuitEl.textContent = data.global.circuitBreakerOpen ? 'OPEN (paused)' : 'OK';
+      circuitEl.className = data.global.circuitBreakerOpen ? 'budget-critical' : 'budget-ok';
+    }
+    if (featuresEl && data.features) {
+      const entries = Object.entries(data.features);
+      if (entries.length === 0) {
+        featuresEl.innerHTML = '<div class="no-changes">No feature budgets configured</div>';
+      } else {
+        featuresEl.innerHTML = entries.map(([name, fb]) => {
+          const callPct = fb.maxCalls > 0 ? Math.round((fb.calls / fb.maxCalls) * 100) : 0;
+          const costPct = fb.dailyCap > 0 ? Math.round((fb.costUsed / fb.dailyCap) * 100) : 0;
+          const status = (costPct >= 95 || callPct >= 95) ? 'budget-critical' : (costPct >= 80 || callPct >= 80) ? 'budget-warning' : 'budget-ok';
+          return `<div class="budget-feature-row ${status}">
+            <span class="budget-feature-name">${name}</span>
+            <span class="budget-feature-calls">${fb.calls}${fb.maxCalls > 0 ? '/' + fb.maxCalls : ''} calls</span>
+            <span class="budget-feature-cost">$${fb.costUsed.toFixed(3)}${fb.dailyCap > 0 ? ' / $' + fb.dailyCap.toFixed(2) : ''}</span>
+          </div>`;
+        }).join('');
+      }
     }
   }
 }
@@ -1781,6 +1829,199 @@ class CursorPanel {
 }
 
 // ============================================================================
+// Scout Panel
+// ============================================================================
+class ScoutPanel {
+  constructor() {
+    this.briefingEl = document.getElementById('scout-briefing');
+    this.statsEl = document.getElementById('scout-stats');
+    this.nextScanEl = document.getElementById('scout-next-scan');
+    this.refreshBtn = document.getElementById('scout-refresh-btn');
+    if (this.refreshBtn) {
+      this.refreshBtn.addEventListener('click', () => this.init());
+    }
+  }
+
+  async init() {
+    try {
+      const res = await fetch('/api/scout/status');
+      if (res.ok) {
+        const data = await res.json();
+        this.update(data);
+      }
+    } catch { /* ignore */ }
+  }
+
+  update(data) {
+    if (!data) return;
+
+    // Next scan info
+    if (this.nextScanEl) {
+      this.nextScanEl.textContent = data.lastRun ? `Last run: ${new Date(data.lastRun).toLocaleTimeString()}` : 'Not yet run';
+    }
+
+    // Stats bar
+    if (this.statsEl) {
+      this.statsEl.innerHTML = `
+        <span>Sources: ${data.totalSources || 0}</span>
+        <span>Findings: ${data.totalFindings || 0}</span>
+        <span>Digest queue: ${(data.digestQueue || []).length}</span>
+      `;
+    }
+
+    // Briefing — group findings by type
+    if (this.briefingEl) {
+      const findings = data.findings || [];
+      if (findings.length === 0) {
+        this.briefingEl.innerHTML = '<div class="no-changes">No findings yet. Scout is monitoring sources.</div>';
+        return;
+      }
+
+      const groups = { security: [], release: [], tech: [], business: [] };
+      findings.forEach(f => {
+        const g = groups[f.type] || groups.tech;
+        g.push(f);
+      });
+
+      let html = '';
+      const labels = { security: 'SECURITY', release: 'UPDATES', tech: 'TECH', business: 'BUSINESS' };
+      for (const [type, items] of Object.entries(groups)) {
+        if (items.length === 0) continue;
+        html += `<div class="scout-category">
+          <div class="scout-category-header">
+            <span>${labels[type] || type.toUpperCase()} (${items.length})</span>
+          </div>`;
+        items.forEach(f => {
+          html += `<div class="scout-finding severity-${f.severity}">
+            <div class="scout-finding-title">${this.esc(f.title)}</div>
+            <div class="scout-finding-detail">${this.esc(f.summary)}</div>
+          </div>`;
+        });
+        html += '</div>';
+      }
+      this.briefingEl.innerHTML = html;
+    }
+  }
+
+  esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+}
+
+// ============================================================================
+// Security Panel
+// ============================================================================
+class SecurityPanel {
+  constructor() {
+    this.cardsEl = document.getElementById('security-cards');
+    this.projectsEl = document.getElementById('security-projects');
+    this.eventListEl = document.getElementById('security-event-list');
+  }
+
+  async init() {
+    try {
+      const res = await fetch('/api/security/dashboard');
+      if (res.ok) {
+        const data = await res.json();
+        this.update(data);
+      }
+    } catch { /* ignore */ }
+  }
+
+  update(data) {
+    if (!data) return;
+
+    // Portfolio cards
+    if (this.cardsEl && data.portfolio) {
+      const p = data.portfolio;
+      this.cardsEl.innerHTML = `
+        <div class="security-stat-card"><div class="stat-value">${p.totalProjects}</div><div class="stat-label">Monitored</div></div>
+        <div class="security-stat-card"><div class="stat-value">${p.incidents24h}</div><div class="stat-label">Incidents 24h</div></div>
+        <div class="security-stat-card"><div class="stat-value">${p.totalBlocked}</div><div class="stat-label">Blocked Today</div></div>
+        <div class="security-stat-card"><div class="stat-value">${p.allHealthy ? 'YES' : 'NO'}</div><div class="stat-label">All Healthy</div></div>
+      `;
+    }
+
+    // Per-project rows
+    if (this.projectsEl && data.projects) {
+      if (data.projects.length === 0) {
+        this.projectsEl.innerHTML = '<div class="no-changes">No projects being monitored</div>';
+      } else {
+        this.projectsEl.innerHTML = data.projects.map(p => {
+          const cls = p.status === 'secure' ? 'sec-healthy' : p.status === 'warning' ? 'sec-warning' : 'sec-critical';
+          return `<div class="security-project-row">
+            <span>${this.esc(p.projectName)}</span>
+            <span class="${cls}">${p.status.toUpperCase()}</span>
+            <span>${p.errorRate}% err</span>
+            <span>${p.responseTime}ms</span>
+            <span>${p.attackMode ? 'ATTACK MODE' : ''}</span>
+          </div>`;
+        }).join('');
+      }
+    }
+
+    // Recent events
+    if (this.eventListEl && data.recentEvents) {
+      if (data.recentEvents.length === 0) {
+        this.eventListEl.innerHTML = '<div class="no-changes">No security events</div>';
+      } else {
+        this.eventListEl.innerHTML = data.recentEvents.slice(0, 20).map(e => {
+          const time = new Date(e.timestamp).toLocaleTimeString();
+          return `<div class="security-event-item">
+            <span class="sec-time">[${time}]</span>
+            <span class="sec-msg">${this.esc(e.message)}</span>
+          </div>`;
+        }).join('');
+      }
+    }
+  }
+
+  esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+}
+
+// ============================================================================
+// Clients Panel
+// ============================================================================
+class ClientsPanel {
+  constructor() {
+    this.gridEl = document.getElementById('clients-grid');
+    this.newBtn = document.getElementById('new-client-btn');
+  }
+
+  async init() {
+    try {
+      const res = await fetch('/api/clients');
+      if (res.ok) {
+        const data = await res.json();
+        this.update(data);
+      }
+    } catch { /* ignore */ }
+  }
+
+  update(data) {
+    if (!this.gridEl || !data) return;
+    const clients = data.clients || [];
+    if (clients.length === 0) {
+      this.gridEl.innerHTML = '<div class="no-changes">No clients yet. Use "new client &lt;name&gt;" to create one.</div>';
+      return;
+    }
+    this.gridEl.innerHTML = clients.map(c => {
+      const dotCls = c.status === 'live' ? 'live' : c.status === 'building' ? 'building' : 'paused';
+      return `<div class="client-card">
+        <span class="client-name">${this.esc(c.businessName)}</span>
+        <span class="client-domain">${this.esc(c.subdomain || c.repoName)}</span>
+        <span class="client-status"><span class="client-status-dot ${dotCls}"></span> ${c.status.toUpperCase()}</span>
+        <span>${c.businessType || '--'}</span>
+        <span>${c.location || '--'}</span>
+        <span class="client-actions">
+          <button class="cmd-btn" onclick="window.open('https://github.com/hollidaymat/${this.esc(c.repoName)}','_blank')">REPO</button>
+        </span>
+      </div>`;
+    }).join('');
+  }
+
+  esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+}
+
+// ============================================================================
 // Initialize
 // ============================================================================
 document.addEventListener('DOMContentLoaded', () => {
@@ -1809,6 +2050,15 @@ document.addEventListener('DOMContentLoaded', () => {
   // Cursor panel
   window.commandCenter.cursorPanel = new CursorPanel(window.commandCenter);
 
+  // Scout panel
+  window.scoutPanel = new ScoutPanel();
+
+  // Security panel
+  window.securityPanel = new SecurityPanel();
+
+  // Clients panel
+  window.clientsPanel = new ClientsPanel();
+
   // Lazy-load tab data on first activation
   const loaded = {};
   window.tabController.onActivate('activity', () => {
@@ -1826,6 +2076,15 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   window.tabController.onActivate('sites', () => {
     if (!loaded.sites) { loaded.sites = true; window.commandCenter.sitesPanel.init(); }
+  });
+  window.tabController.onActivate('scout', () => {
+    if (!loaded.scout) { loaded.scout = true; window.scoutPanel.init(); }
+  });
+  window.tabController.onActivate('security', () => {
+    if (!loaded.security) { loaded.security = true; window.securityPanel.init(); }
+  });
+  window.tabController.onActivate('clients', () => {
+    if (!loaded.clients) { loaded.clients = true; window.clientsPanel.init(); }
   });
 
   // Download buttons

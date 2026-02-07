@@ -252,6 +252,119 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
       }
     }
 
+    // ==========================================
+    // CLIENT & REVENUE FAST PATHS
+    // ==========================================
+
+    // "new client <name>" — start SaaS builder
+    const newClientMatch = content.trim().match(/^(?:new|create|add)\s+client\s+(.+)/i);
+    if (newClientMatch) {
+      logger.info('New client fast path', { content: content.substring(0, 50) });
+      try {
+        const { createClientFromInput } = await import('../capabilities/saas-builder/client-template.js');
+        const { addClient } = await import('../capabilities/saas-builder/client-registry.js');
+        const { deployClientSite } = await import('../capabilities/saas-builder/deploy-pipeline.js');
+
+        // Parse: "new client Pacific Divers, Kona HI, dive shop, courses charters rentals"
+        const parts = newClientMatch[1].split(',').map((s: string) => s.trim());
+        const businessName = parts[0] || 'Unnamed';
+        const location = parts[1] || 'Unknown';
+        const businessType = (parts[2]?.toLowerCase().includes('resort') ? 'resort'
+          : parts[2]?.toLowerCase().includes('liveaboard') ? 'liveaboard'
+          : parts[2]?.toLowerCase().includes('instructor') ? 'instructor'
+          : 'dive_shop') as import('../capabilities/saas-builder/client-template.js').BusinessType;
+        const services = parts.slice(3).flatMap((s: string) => s.split(/\s+/));
+
+        const client = createClientFromInput(businessName, location, businessType, services.length > 0 ? services : ['diving']);
+        addClient(client);
+
+        // Launch deployment pipeline asynchronously
+        deployClientSite(client).then(result => {
+          logger.info('Client deployment result', { success: result.success, client: client.slug });
+        }).catch(err => {
+          logger.error('Client deployment failed', { error: String(err), client: client.slug });
+        });
+
+        stats.lastCommand = { action: 'new_client', timestamp: new Date().toISOString(), success: true };
+        return {
+          recipient: sender,
+          content: `Client "${businessName}" created.\nRepo: diveconnect-${client.slug}\nSubdomain: ${client.subdomain}\nDeployment pipeline started. I'll keep you posted.`,
+          replyTo: message.id
+        };
+      } catch (err) {
+        return { recipient: sender, content: `Failed to create client: ${err}`, replyTo: message.id };
+      }
+    }
+
+    // "evaluate gig <description>" or "got a gig <description>"
+    const gigMatch = content.trim().match(/^(?:evaluate\s+gig|got\s+a?\s*gig|analyze\s+gig|new\s+gig)[:\s]+(.+)/is);
+    if (gigMatch) {
+      logger.info('Gig evaluation fast path');
+      try {
+        const { evaluateGig } = await import('../capabilities/revenue/freelance-handler.js');
+        const analysis = await evaluateGig(gigMatch[1].trim());
+        const response = `Analyzed. ${analysis.canBuild ? 'This is buildable.' : 'Outside our stack.'}\n\n` +
+          `Can build: ${analysis.canBuild ? 'Yes' : 'No'}\n` +
+          `Template: ${analysis.template}\n` +
+          `Estimated time: ~${analysis.estimatedHours}h\n` +
+          `API cost: ~$${analysis.estimatedCost.toFixed(2)}\n` +
+          `Suggested price: $${analysis.suggestedPrice}\n` +
+          `Profit margin: ${analysis.profitMargin}\n` +
+          `Risks: ${analysis.risks.join(', ') || 'None identified'}\n\n` +
+          `Recommendation: ${analysis.recommendation}\n\n` +
+          `Say "build it" and I'll start.`;
+        stats.lastCommand = { action: 'evaluate_gig', timestamp: new Date().toISOString(), success: true };
+        return { recipient: sender, content: response, replyTo: message.id };
+      } catch (err) {
+        return { recipient: sender, content: `Failed to evaluate gig: ${err}`, replyTo: message.id };
+      }
+    }
+
+    // "scout status" / "daily briefing" / "scout digest"
+    const scoutMatch = /^(?:scout\s+(?:status|digest|briefing|report)|daily\s+(?:briefing|digest|report)|what'?s?\s+(?:new|the\s+news))/i.test(content.trim());
+    if (scoutMatch) {
+      logger.info('Scout fast path');
+      try {
+        const { getDigest } = await import('../capabilities/scout/digest.js');
+        const { getScoutStatus } = await import('../capabilities/scout/loop.js');
+        const status = getScoutStatus();
+        const digest = getDigest();
+        const response = digest || 'No findings in the digest queue yet.';
+        const footer = `\nSources: ${status.sources} | Last run: ${status.lastLoopRun || 'never'} | Findings: ${status.findings}`;
+        stats.lastCommand = { action: 'scout_status', timestamp: new Date().toISOString(), success: true };
+        return { recipient: sender, content: response + footer, replyTo: message.id };
+      } catch (err) {
+        return { recipient: sender, content: `Scout not available: ${err}`, replyTo: message.id };
+      }
+    }
+
+    // "security status" / "security overview"
+    const secStatusMatch = /^(?:security\s+(?:status|overview|dashboard|report)|vercel\s+security)/i.test(content.trim());
+    if (secStatusMatch) {
+      logger.info('Security status fast path');
+      try {
+        const { getSecurityDashboard } = await import('../capabilities/security/monitor.js');
+        const dashboard = getSecurityDashboard();
+        const lines = [
+          `Security Overview:`,
+          `Projects monitored: ${dashboard.portfolio.totalProjects}`,
+          `All healthy: ${dashboard.portfolio.allHealthy ? 'Yes' : 'NO'}`,
+          `Blocked today: ${dashboard.portfolio.totalBlocked}`,
+          `Incidents (24h): ${dashboard.portfolio.incidents24h}`,
+        ];
+        if (dashboard.projects.length > 0) {
+          lines.push('', 'Per-project:');
+          for (const p of dashboard.projects) {
+            lines.push(`  ${p.projectName}: ${p.status.toUpperCase()} | ${p.errorRate}% err | ${p.responseTime}ms`);
+          }
+        }
+        stats.lastCommand = { action: 'security_status', timestamp: new Date().toISOString(), success: true };
+        return { recipient: sender, content: lines.join('\n'), replyTo: message.id };
+      } catch (err) {
+        return { recipient: sender, content: `Security monitor not available: ${err}`, replyTo: message.id };
+      }
+    }
+
     // 3. Cursor commands: "cursor build X", "cursor tasks", "tell cursor to Y", etc.
     //    Skip cognitive processing — these are explicit and unambiguous
     const cursorFastPath = /^(?:cursor\s+(?:build|code|implement|work\s+on|tasks?|status|agents?|repos|progress|conversation|stop)|send\s+to\s+cursor|tell\s+cursor|have\s+cursor|stop\s+cursor|cancel\s+cursor|show\s+(?:me\s+)?what\s+cursor|what'?s\s+cursor)/i.test(content.trim());
@@ -299,6 +412,15 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
 
       if (isConversational) {
         logger.info('Conversational fast path', { content: trimmed.substring(0, 50) });
+
+        // Budget check
+        const { enforceBudget, recordFeatureUsage, recordLLMFailure, getFeatureMaxTokens } = await import('./cost-tracker.js');
+        const budgetCheck = enforceBudget('conversation');
+        if (!budgetCheck.allowed) {
+          logger.debug('Conversational budget blocked', { reason: budgetCheck.reason });
+          return { recipient: sender, content: budgetCheck.reason || 'Budget limit reached.', replyTo: message.id };
+        }
+
         try {
           const { generateText } = await import('ai');
           const { createAnthropic } = await import('@ai-sdk/anthropic');
@@ -321,12 +443,14 @@ Personality:
 
 Context: You manage a homelab, build projects, and delegate coding tasks to Cursor Background Agents. Your employer is Matt.`,
             messages: [{ role: 'user', content: trimmed }],
-            maxTokens: 200,
+            maxTokens: getFeatureMaxTokens('conversation'),
           });
 
+          recordFeatureUsage('conversation', 0.001); // ~200 tokens Haiku ≈ $0.001
           stats.lastCommand = { action: 'conversation', timestamp: new Date().toISOString(), success: true };
           return { recipient: sender, content: text, replyTo: message.id };
         } catch (err) {
+          recordLLMFailure();
           logger.debug('Conversational response failed, falling through', { error: String(err) });
           // Fall through to cognitive layer
         }
@@ -425,6 +549,14 @@ Context: You manage a homelab, build projects, and delegate coding tasks to Curs
     
     // Execute the command
     const result = await executeCommand(intent);
+
+    // Record decision for Digital Twin learning
+    try {
+      const { recordDecision } = await import('../capabilities/twin/decision-recorder.js');
+      recordDecision(intent.action, content.substring(0, 200), intent.action, undefined, intent.confidence);
+    } catch {
+      // Decision recording is optional
+    }
     
     // Update stats
     stats.lastCommand = {

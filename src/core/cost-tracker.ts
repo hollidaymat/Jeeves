@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { logger } from '../utils/logger.js';
+import { config } from '../config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -382,6 +383,169 @@ export function getMonthlyCost(): number {
     monthCost += dailyCosts.cost;
   }
   return monthCost;
+}
+
+// ============================================================================
+// Budget Enforcement Engine
+// ============================================================================
+
+// Hourly cost accumulator (rolling window)
+const hourlyCosts: { timestamp: number; cost: number }[] = [];
+
+// Per-feature call counters: feature -> { periodStart, calls, cost }
+const featureCounters = new Map<string, { periodStart: number; calls: number; cost: number }>();
+
+// Circuit breaker state
+let consecutiveFailures = 0;
+let circuitBreakerOpenUntil = 0;
+
+/**
+ * Record an LLM failure for circuit breaker tracking
+ */
+export function recordLLMFailure(): void {
+  consecutiveFailures++;
+  const threshold = config.budgets?.circuitBreakerThreshold ?? 3;
+  if (consecutiveFailures >= threshold) {
+    const pauseMs = config.budgets?.circuitBreakerPauseMs ?? 60000;
+    circuitBreakerOpenUntil = Date.now() + pauseMs;
+    logger.warn(`Circuit breaker OPEN — ${consecutiveFailures} consecutive failures, pausing LLM for ${pauseMs / 1000}s`);
+  }
+}
+
+/**
+ * Record an LLM success (resets circuit breaker)
+ */
+export function recordLLMSuccess(): void {
+  consecutiveFailures = 0;
+}
+
+/**
+ * Get the hourly cost total (rolling 60-minute window)
+ */
+function getHourlyCost(): number {
+  const oneHourAgo = Date.now() - 3600000;
+  // Prune old entries
+  while (hourlyCosts.length > 0 && hourlyCosts[0].timestamp < oneHourAgo) {
+    hourlyCosts.shift();
+  }
+  return hourlyCosts.reduce((sum, e) => sum + e.cost, 0);
+}
+
+/**
+ * Record a cost entry in the hourly tracker
+ */
+export function recordHourlyCost(cost: number): void {
+  hourlyCosts.push({ timestamp: Date.now(), cost });
+}
+
+/**
+ * Check whether a feature is allowed to make an LLM call.
+ * Returns { allowed: true } or { allowed: false, reason: string }.
+ * Call BEFORE making any LLM request.
+ */
+export function enforceBudget(feature: string): { allowed: boolean; reason?: string; throttled?: boolean } {
+  const budgets = config.budgets;
+  if (!budgets) return { allowed: true };
+
+  // 1. Circuit breaker
+  if (Date.now() < circuitBreakerOpenUntil) {
+    const remaining = Math.ceil((circuitBreakerOpenUntil - Date.now()) / 1000);
+    return { allowed: false, reason: `Circuit breaker open — ${remaining}s remaining after ${consecutiveFailures} consecutive failures` };
+  }
+
+  // 2. Global daily hard cap
+  if (budgets.dailyHardCap > 0 && dailyCosts.cost >= budgets.dailyHardCap) {
+    return { allowed: false, reason: `Daily budget exhausted ($${dailyCosts.cost.toFixed(2)} / $${budgets.dailyHardCap.toFixed(2)})` };
+  }
+
+  // 3. Hourly soft cap — don't block, but flag throttle
+  const hourlyCost = getHourlyCost();
+  const throttled = budgets.hourlySoftCap > 0 && hourlyCost >= budgets.hourlySoftCap;
+  if (throttled) {
+    logger.debug(`Hourly soft cap reached ($${hourlyCost.toFixed(2)} / $${budgets.hourlySoftCap.toFixed(2)}) — Haiku-only mode`);
+  }
+
+  // 4. Per-feature budget
+  const featureBudget = budgets.features?.[feature];
+  if (featureBudget) {
+    const now = Date.now();
+    let counter = featureCounters.get(feature);
+
+    // Reset counter if period has elapsed
+    if (!counter || (featureBudget.periodMs > 0 && now - counter.periodStart >= featureBudget.periodMs)) {
+      counter = { periodStart: now, calls: 0, cost: 0 };
+      featureCounters.set(feature, counter);
+    }
+
+    // Check call limit
+    if (featureBudget.maxCallsPerPeriod > 0 && counter.calls >= featureBudget.maxCallsPerPeriod) {
+      return { allowed: false, reason: `${feature}: call limit reached (${counter.calls}/${featureBudget.maxCallsPerPeriod} per period)` };
+    }
+
+    // Check daily dollar cap for this feature
+    if (featureBudget.dailyCap > 0 && counter.cost >= featureBudget.dailyCap) {
+      return { allowed: false, reason: `${feature}: daily cap reached ($${counter.cost.toFixed(2)} / $${featureBudget.dailyCap.toFixed(2)})` };
+    }
+  }
+
+  return { allowed: true, throttled };
+}
+
+/**
+ * Record that a feature used an LLM call (call AFTER the request succeeds)
+ */
+export function recordFeatureUsage(feature: string, cost: number): void {
+  const counter = featureCounters.get(feature);
+  if (counter) {
+    counter.calls++;
+    counter.cost += cost;
+  } else {
+    featureCounters.set(feature, { periodStart: Date.now(), calls: 1, cost });
+  }
+  recordHourlyCost(cost);
+  recordLLMSuccess();
+}
+
+/**
+ * Get the max tokens allowed for a feature (respects config)
+ */
+export function getFeatureMaxTokens(feature: string): number {
+  return config.budgets?.features?.[feature]?.maxTokens ?? config.claude.max_tokens;
+}
+
+/**
+ * Get budget status for all features (for dashboard)
+ */
+export function getBudgetStatus(): {
+  global: { dailyUsed: number; dailyCap: number; hourlyUsed: number; hourlyCap: number; circuitBreakerOpen: boolean };
+  features: Record<string, { calls: number; maxCalls: number; costUsed: number; dailyCap: number; maxTokens: number }>;
+} {
+  const budgets = config.budgets;
+  const features: Record<string, { calls: number; maxCalls: number; costUsed: number; dailyCap: number; maxTokens: number }> = {};
+
+  if (budgets?.features) {
+    for (const [name, fb] of Object.entries(budgets.features)) {
+      const counter = featureCounters.get(name);
+      features[name] = {
+        calls: counter?.calls ?? 0,
+        maxCalls: fb.maxCallsPerPeriod,
+        costUsed: counter?.cost ?? 0,
+        dailyCap: fb.dailyCap,
+        maxTokens: fb.maxTokens,
+      };
+    }
+  }
+
+  return {
+    global: {
+      dailyUsed: dailyCosts.cost,
+      dailyCap: budgets?.dailyHardCap ?? 5.00,
+      hourlyUsed: getHourlyCost(),
+      hourlyCap: budgets?.hourlySoftCap ?? 2.00,
+      circuitBreakerOpen: Date.now() < circuitBreakerOpenUntil,
+    },
+    features,
+  };
 }
 
 /**

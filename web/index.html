@@ -34,6 +34,9 @@
       <button class="tab-btn" data-tab="projects">PROJECTS</button>
       <button class="tab-btn" data-tab="sites">SITES</button>
       <button class="tab-btn" data-tab="costs">COSTS</button>
+      <button class="tab-btn" data-tab="clients">CLIENTS</button>
+      <button class="tab-btn" data-tab="security">SECURITY</button>
+      <button class="tab-btn" data-tab="scout">SCOUT</button>
     </nav>
 
     <!-- ============================================================ -->
@@ -381,6 +384,63 @@
         <div class="cost-trend" id="cost-trend">
           TREND: -- vs last week
         </div>
+
+        <!-- Budget Enforcement -->
+        <section class="panel budget-panel">
+          <div class="panel-header"><h2>BUDGET ENFORCEMENT</h2></div>
+          <div class="budget-global" id="budget-global">
+            <div class="budget-row"><span>Daily Cap</span><span id="budget-daily-status">--</span></div>
+            <div class="budget-row"><span>Hourly Cap</span><span id="budget-hourly-status">--</span></div>
+            <div class="budget-row"><span>Circuit Breaker</span><span id="budget-circuit">OK</span></div>
+          </div>
+          <div class="budget-features" id="budget-features">
+            <div class="no-changes">Loading budgets...</div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <div class="tab-content" data-tab="clients">
+      <div class="clients-page" id="clients-page">
+        <div class="clients-top-bar">
+          <h2>DIVECONNECT CLIENTS</h2>
+          <button class="cmd-btn" id="new-client-btn">+ NEW CLIENT</button>
+        </div>
+        <div class="clients-grid" id="clients-grid">
+          <div class="no-changes">No clients yet. Use "new client &lt;name&gt;" to create one.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <div class="tab-content" data-tab="security">
+      <div class="security-page" id="security-page">
+        <div class="security-overview" id="security-overview">
+          <div class="security-cards" id="security-cards"></div>
+        </div>
+        <div class="security-projects" id="security-projects"></div>
+        <div class="security-events" id="security-events">
+          <div class="panel-header"><h2>RECENT EVENTS</h2></div>
+          <div class="security-event-list" id="security-event-list">
+            <div class="no-changes">No security events</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <div class="tab-content" data-tab="scout">
+      <div class="scout-page" id="scout-page">
+        <div class="scout-top-bar">
+          <h2>KNOWLEDGE SCOUT</h2>
+          <span class="scout-next-scan" id="scout-next-scan">Next scan: --</span>
+          <button class="cmd-btn" id="scout-refresh-btn">REFRESH</button>
+        </div>
+        <div class="scout-briefing" id="scout-briefing">
+          <div class="no-changes">No scout data yet. Scout loop initializing...</div>
+        </div>
+        <div class="scout-stats" id="scout-stats"></div>
       </div>
     </div>
 

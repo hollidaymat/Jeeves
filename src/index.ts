@@ -75,6 +75,39 @@ async function main() {
   registerInterface(signalInterface);
   await signalInterface.start();
 
+  // Start Knowledge Scout loop
+  try {
+    const { startScoutLoop } = await import('./capabilities/scout/loop.js');
+    startScoutLoop();
+    logger.info('Knowledge Scout started');
+  } catch (err) {
+    logger.debug('Knowledge Scout not started', { error: String(err) });
+  }
+
+  // Start Security Monitor
+  try {
+    const { startSecurityMonitor, setSecurityBroadcast } = await import('./capabilities/security/monitor.js');
+    startSecurityMonitor();
+    // Wire security broadcasts to web UI
+    import('./interfaces/web.js').then(({ webInterface }) => {
+      setSecurityBroadcast((type, payload) => {
+        (webInterface as any).broadcast?.({ type, payload });
+      });
+    }).catch(() => {});
+    logger.info('Security Guardian started');
+  } catch (err) {
+    logger.debug('Security Guardian not started', { error: String(err) });
+  }
+
+  // Initialize Decision Recording
+  try {
+    const { initDecisionTable } = await import('./capabilities/twin/decision-recorder.js');
+    initDecisionTable();
+    logger.info('Decision recorder initialized');
+  } catch (err) {
+    logger.debug('Decision recorder not started', { error: String(err) });
+  }
+
   logger.info('System ready');
   logger.info(`Open http://${config.server.host}:${config.server.port} in your browser`);
   if (signalInterface.isAvailable()) {
@@ -105,6 +138,16 @@ async function main() {
     } catch {
       // Ignore errors during shutdown
     }
+
+      // Stop background loops
+      try {
+        const { stopScoutLoop } = await import('./capabilities/scout/loop.js');
+        stopScoutLoop();
+      } catch {}
+      try {
+        const { stopSecurityMonitor } = await import('./capabilities/security/monitor.js');
+        stopSecurityMonitor();
+      } catch {}
     
     process.exit(0);
   };

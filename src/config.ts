@@ -102,6 +102,22 @@ const defaultConfig: Config = {
     atomicWrites: true,
     gitAutoStash: false  // Opt-in - can cause confusion
   },
+  budgets: {
+    dailyHardCap: 5.00,          // $5/day — everything stops
+    hourlySoftCap: 2.00,         // $2/hr — throttle to Haiku-only
+    circuitBreakerThreshold: 3,  // 3 consecutive failures → pause
+    circuitBreakerPauseMs: 60000,// 60s pause
+    features: {
+      conversation:       { maxTokens: 200,  maxCallsPerPeriod: 0,  periodMs: 3600000,  dailyCap: 0.10 },
+      parser:             { maxTokens: 500,  maxCallsPerPeriod: 0,  periodMs: 0,        dailyCap: 0 },     // core — uncapped
+      prd_builder:        { maxTokens: 2000, maxCallsPerPeriod: 15, periodMs: 3600000,  dailyCap: 2.00 },
+      scout_relevance:    { maxTokens: 150,  maxCallsPerPeriod: 20, periodMs: 86400000, dailyCap: 0.50 },
+      scout_digest:       { maxTokens: 500,  maxCallsPerPeriod: 1,  periodMs: 86400000, dailyCap: 0.01 },
+      security_triage:    { maxTokens: 300,  maxCallsPerPeriod: 10, periodMs: 3600000,  dailyCap: 0.25 },
+      freelance_analysis: { maxTokens: 500,  maxCallsPerPeriod: 5,  periodMs: 86400000, dailyCap: 0.10 },
+      decision_predict:   { maxTokens: 200,  maxCallsPerPeriod: 20, periodMs: 86400000, dailyCap: 0.05 },
+    }
+  },
   homelab: {
     enabled: false,  // Only enable on Linux homelab box
     stacksDir: '/opt/stacks',
@@ -149,6 +165,14 @@ function loadConfig(): Config {
       server: { ...defaultConfig.server, ...fileConfig.server },
       rate_limits: { ...defaultConfig.rate_limits, ...fileConfig.rate_limits },
       safety: { ...defaultConfig.safety, ...fileConfig.safety },
+      budgets: {
+        ...defaultConfig.budgets,
+        ...((fileConfig as Record<string, unknown>).budgets as Partial<Config['budgets']> || {}),
+        features: {
+          ...defaultConfig.budgets.features,
+          ...(((fileConfig as Record<string, unknown>).budgets as Partial<Config['budgets']>)?.features || {})
+        }
+      },
       homelab: {
         ...defaultConfig.homelab,
         ...(fileConfig as Record<string, unknown>).homelab as Partial<Config['homelab']> || {},

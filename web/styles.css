@@ -2322,3 +2322,75 @@ body::before {
   background: var(--border-color);
   border-radius: 2px;
 }
+
+/* ============================================================================
+   Budget Enforcement Panel
+   ============================================================================ */
+.budget-panel { margin-top: 16px; }
+.budget-global { display: flex; flex-direction: column; gap: 6px; padding: 10px; }
+.budget-row { display: flex; justify-content: space-between; font-size: 0.8rem; padding: 4px 0; border-bottom: 1px solid var(--border-color); }
+.budget-ok { color: var(--accent); }
+.budget-warning { color: #f5a623; }
+.budget-critical { color: var(--error); font-weight: bold; }
+.budget-features { padding: 8px; }
+.budget-feature-row { display: flex; justify-content: space-between; gap: 12px; font-size: 0.75rem; padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.budget-feature-row.budget-warning { background: rgba(245, 166, 35, 0.08); }
+.budget-feature-row.budget-critical { background: rgba(255, 50, 50, 0.08); }
+.budget-feature-name { color: var(--text-secondary); min-width: 120px; }
+.budget-feature-calls { color: var(--text-primary); min-width: 80px; text-align: right; }
+.budget-feature-cost { color: var(--accent); min-width: 100px; text-align: right; }
+
+/* ============================================================================
+   Clients Tab
+   ============================================================================ */
+.clients-page { padding: 16px; }
+.clients-top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.clients-top-bar h2 { font-size: 1rem; color: var(--accent); letter-spacing: 2px; }
+.clients-grid { display: grid; gap: 12px; }
+.client-card { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; padding: 14px; display: grid; grid-template-columns: 2fr 2fr 1fr 1fr 1fr 1fr; gap: 8px; align-items: center; }
+.client-card .client-name { color: var(--text-primary); font-weight: bold; }
+.client-card .client-domain { color: var(--accent); font-size: 0.8rem; }
+.client-card .client-status { display: flex; align-items: center; gap: 4px; font-size: 0.8rem; }
+.client-card .client-actions { display: flex; gap: 4px; }
+.client-status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.client-status-dot.live { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.client-status-dot.building { background: #f5a623; animation: pulse 2s infinite; }
+.client-status-dot.paused { background: var(--text-secondary); }
+
+/* ============================================================================
+   Security Tab
+   ============================================================================ */
+.security-page { padding: 16px; }
+.security-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+.security-stat-card { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; padding: 16px; text-align: center; }
+.security-stat-card .stat-value { font-size: 1.8rem; font-weight: bold; color: var(--accent); font-family: 'Courier New', monospace; }
+.security-stat-card .stat-label { font-size: 0.7rem; color: var(--text-secondary); letter-spacing: 1px; text-transform: uppercase; }
+.security-projects { margin-bottom: 16px; }
+.security-project-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 4px; margin-bottom: 6px; font-size: 0.8rem; }
+.security-project-row .sec-healthy { color: var(--accent); }
+.security-project-row .sec-warning { color: #f5a623; }
+.security-project-row .sec-critical { color: var(--error); }
+.security-event-list { max-height: 300px; overflow-y: auto; }
+.security-event-item { padding: 6px 10px; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.04); display: flex; gap: 10px; }
+.security-event-item .sec-time { color: var(--text-secondary); min-width: 50px; }
+.security-event-item .sec-msg { color: var(--text-primary); }
+
+/* ============================================================================
+   Scout Tab
+   ============================================================================ */
+.scout-page { padding: 16px; }
+.scout-top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.scout-top-bar h2 { font-size: 1rem; color: var(--accent); letter-spacing: 2px; }
+.scout-next-scan { font-size: 0.75rem; color: var(--text-secondary); }
+.scout-briefing { margin-bottom: 16px; }
+.scout-category { margin-bottom: 14px; }
+.scout-category-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 4px; cursor: pointer; font-size: 0.85rem; font-weight: bold; }
+.scout-category-header .scout-cat-count { color: var(--accent); font-size: 0.75rem; }
+.scout-finding { padding: 8px 12px; font-size: 0.8rem; border-left: 2px solid var(--border-color); margin: 4px 0 4px 8px; }
+.scout-finding.severity-high { border-left-color: var(--error); }
+.scout-finding.severity-medium { border-left-color: #f5a623; }
+.scout-finding.severity-low { border-left-color: var(--accent); }
+.scout-finding-title { color: var(--text-primary); margin-bottom: 2px; }
+.scout-finding-detail { color: var(--text-secondary); font-size: 0.7rem; }
+.scout-finding-actions { margin-top: 4px; display: flex; gap: 6px; }
+.scout-stats { display: flex; gap: 16px; font-size: 0.75rem; color: var(--text-secondary); padding: 10px; background: var(--bg-secondary); border-radius: 4px; }

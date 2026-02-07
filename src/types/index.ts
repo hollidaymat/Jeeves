@@ -293,6 +293,35 @@ export interface Config {
     gitAutoStash: boolean;
   };
   homelab: HomelabConfig;
+  budgets: BudgetConfig;
+}
+
+// ============================================================================
+// Budget / Cost Enforcement
+// ============================================================================
+
+export interface FeatureBudget {
+  /** Max tokens per LLM call for this feature */
+  maxTokens: number;
+  /** Max LLM calls per period (0 = unlimited) */
+  maxCallsPerPeriod: number;
+  /** Period in ms for maxCallsPerPeriod (3600000 = 1hr, 86400000 = 1day) */
+  periodMs: number;
+  /** Daily dollar cap for this feature (0 = unlimited) */
+  dailyCap: number;
+}
+
+export interface BudgetConfig {
+  /** Global daily hard cap in dollars — all LLM features stop when hit */
+  dailyHardCap: number;
+  /** Hourly soft cap — throttle to Haiku-only when exceeded */
+  hourlySoftCap: number;
+  /** Circuit breaker: consecutive LLM failures before pausing */
+  circuitBreakerThreshold: number;
+  /** Circuit breaker: pause duration in ms */
+  circuitBreakerPauseMs: number;
+  /** Per-feature budgets */
+  features: Record<string, FeatureBudget>;
 }
 
 // ============================================================================

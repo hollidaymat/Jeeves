@@ -163,6 +163,16 @@ export class WebInterface implements MessageInterface {
       }
     });
 
+    // API: Budget enforcement status
+    this.app.get('/api/costs/budget', async (_req: Request, res: Response) => {
+      try {
+        const { getBudgetStatus } = await import('../core/cost-tracker.js');
+        res.json(getBudgetStatus());
+      } catch (error) {
+        res.json({ global: { dailyUsed: 0, dailyCap: 5, hourlyUsed: 0, hourlyCap: 2, circuitBreakerOpen: false }, features: {} });
+      }
+    });
+
     // API: Projects board
     this.app.get('/api/projects-board', (_req: Request, res: Response) => {
       try {
@@ -258,6 +268,121 @@ export class WebInterface implements MessageInterface {
         res.json(status);
       } catch (error) {
         res.json({ enabled: false, projects: [] });
+      }
+    });
+
+    // API: Scout status + findings
+    this.app.get('/api/scout/status', async (_req: Request, res: Response) => {
+      try {
+        const { getScoutStatus, getFindings } = await import('../capabilities/scout/loop.js');
+        const { getDigestQueue } = await import('../capabilities/scout/digest.js');
+        const status = getScoutStatus();
+        const findings = getFindings({ limit: 50 });
+        const digestQueue = getDigestQueue();
+        res.json({ ...status, findings, digestQueue });
+      } catch (error) {
+        res.json({ totalSources: 0, totalFindings: 0, findings: [], digestQueue: [], lastRun: null });
+      }
+    });
+
+    // API: Scout digest
+    this.app.get('/api/scout/digest', async (_req: Request, res: Response) => {
+      try {
+        const { getDigest } = await import('../capabilities/scout/digest.js');
+        res.json({ digest: getDigest() });
+      } catch (error) {
+        res.json({ digest: 'Scout not available' });
+      }
+    });
+
+    // API: Acknowledge scout findings
+    this.app.post('/api/scout/acknowledge', async (req: Request, res: Response) => {
+      try {
+        const { acknowledgeFindings } = await import('../capabilities/scout/loop.js');
+        const { ids } = req.body;
+        if (ids && Array.isArray(ids)) {
+          acknowledgeFindings(ids);
+        }
+        res.json({ success: true });
+      } catch (error) {
+        res.status(500).json({ success: false, error: String(error) });
+      }
+    });
+
+    // API: Security dashboard
+    this.app.get('/api/security/dashboard', async (_req: Request, res: Response) => {
+      try {
+        const { getSecurityDashboard } = await import('../capabilities/security/monitor.js');
+        res.json(getSecurityDashboard());
+      } catch (error) {
+        res.json({ portfolio: { totalProjects: 0, allHealthy: true, totalBlocked: 0, incidents24h: 0 }, projects: [], recentEvents: [] });
+      }
+    });
+
+    // API: Security events
+    this.app.get('/api/security/events', async (_req: Request, res: Response) => {
+      try {
+        const { getSecurityEvents } = await import('../capabilities/security/monitor.js');
+        const limit = parseInt((_req.query as Record<string,string>).limit || '50', 10);
+        res.json({ events: getSecurityEvents(limit) });
+      } catch (error) {
+        res.json({ events: [] });
+      }
+    });
+
+    // API: Vercel billing status
+    this.app.get('/api/security/billing', async (_req: Request, res: Response) => {
+      try {
+        const { checkVercelBilling } = await import('../capabilities/security/billing.js');
+        const billing = await checkVercelBilling();
+        res.json(billing || { alert: 'unavailable', message: 'Billing API not configured' });
+      } catch (error) {
+        res.json({ alert: 'unavailable', message: String(error) });
+      }
+    });
+
+    // API: Clients list
+    this.app.get('/api/clients', async (_req: Request, res: Response) => {
+      try {
+        const { getClients } = await import('../capabilities/saas-builder/client-registry.js');
+        res.json({ clients: getClients() });
+      } catch (error) {
+        res.json({ clients: [] });
+      }
+    });
+
+    // API: Client detail
+    this.app.get('/api/clients/:id', async (req: Request, res: Response) => {
+      try {
+        const { getClient } = await import('../capabilities/saas-builder/client-registry.js');
+        const client = getClient(req.params.id);
+        if (client) {
+          res.json(client);
+        } else {
+          res.status(404).json({ error: 'Client not found' });
+        }
+      } catch (error) {
+        res.status(500).json({ error: String(error) });
+      }
+    });
+
+    // API: Revenue summary
+    this.app.get('/api/revenue', async (_req: Request, res: Response) => {
+      try {
+        const { getRevenueSummary, getRevenueEntries } = await import('../capabilities/revenue/tracker.js');
+        res.json({ summary: getRevenueSummary(), entries: getRevenueEntries() });
+      } catch (error) {
+        res.json({ summary: { totalRevenue: 0, totalCosts: 0, totalProfit: 0, projectCount: 0, avgMargin: '0' }, entries: [] });
+      }
+    });
+
+    // API: Decision stats
+    this.app.get('/api/decisions/stats', async (_req: Request, res: Response) => {
+      try {
+        const { getDecisionStats } = await import('../capabilities/twin/decision-recorder.js');
+        res.json(getDecisionStats());
+      } catch (error) {
+        res.json({ total: 0, byCategory: {}, readyForPrediction: false });
       }
     });
 

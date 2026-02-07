@@ -125,7 +125,7 @@ export async function generateProposals(): Promise<Proposal[]> {
     // Gather context about current state
     const context = await gatherSelfContext();
 
-    const prompt = `You are Jeeves, an autonomous AI assistant. Analyze your own system and propose exactly 3 improvements you'd like to make to yourself. Your owner Matt will pick one (or none) per day.
+    const prompt = `You are Jeeves, an autonomous engineering partner. Analyze your own system and propose exactly 3 improvements you'd like to make to yourself. Matt will pick one (or none) per day.
 
 ## Your Current Capabilities
 ${context.capabilities}

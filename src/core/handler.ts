@@ -681,19 +681,23 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
       const trimmed = content.trim();
       const lower = trimmed.toLowerCase();
       const isConversational = (
-        // Short messages that aren't commands
-        (trimmed.length < 200 && !/^(open|edit|fix|add|create|update|delete|run|deploy|build|push|pull|commit|install|test|scan|check|show|list|get|set|find|search)\s/i.test(trimmed)) &&
+        // Short-to-medium messages that aren't commands
+        (trimmed.length < 300 && !/^(open|edit|fix|add|create|update|delete|run|deploy|build|push|pull|commit|install|test|scan|check|show|list|get|set|find|search)\s/i.test(trimmed)) &&
         (
           // Feedback / meta-conversation
-          /\b(feedback|conversation|your\s+performance|how\s+you|about\s+you|self.?assess|pretty\s+(cool|amazing|good|great|awesome)|well\s+done|good\s+job|nice\s+work|impressed|just\s+for\s+(you|reference)|for\s+your\s+records|more\s+features?\s+for\s+you|added.*for\s+you)\b/i.test(lower) ||
-          // Casual chat / greetings
-          /^(hey|hi|hello|yo|sup|good\s+(morning|afternoon|evening|night)|thanks?|thank\s+you|cheers|nice|cool|great|awesome|perfect|sweet|dope|sick|brilliant|love\s+it|that'?s?\s+(it|all|great|cool|good|amazing)|no\s*,?\s*that'?s?\s*(it|all|fine|good)|never\s*mind|nah|ok(ay)?|got\s+it|understood|i\s+(see|know|understand|get\s+it)|we'?re?\s+(good|done|all\s+set)|haha|lol|wow|damn)\s*[.!]?$/i.test(lower) ||
-          // Opinions / reflections (not commands)
-          /^(i\s+(think|feel|believe|love|hate|like|prefer|wish|wonder|just)|that\s+(is|was|looks?|seems?|feels?)|this\s+(is|was)|it'?s?\s+(pretty|really|very|quite|so)|what\s+do\s+you\s+think|how\s+do\s+you\s+feel)/i.test(lower) ||
+          /\b(feedback|conversation|your\s+performance|how\s+you|about\s+you|self.?assess|pretty\s+(cool|amazing|good|great|awesome)|well\s+done|good\s+job|nice\s+work|impressed|just\s+for\s+(you|reference)|for\s+your\s+records|more\s+features?\s+for\s+you|features?\s+for\s+you|added\s+.*for\s+you|built\s+.*for\s+you|made\s+.*for\s+you)\b/i.test(lower) ||
+          // Casual chat / greetings — exact match for short messages
+          /^(hey|hi|hello|yo|sup|good\s+(morning|afternoon|evening|night)|cheers|nice(\s+one)?|cool|great|awesome|perfect|sweet|dope|sick|brilliant|love\s+it|that'?s?\s+(it|all|great|cool|good|amazing|funny|hilarious|wild|crazy)|no\s*,?\s*that'?s?\s*(it|all|fine|good)|never\s*mind|nah|ok(ay)?|got\s+it|understood|i\s+(see|know|understand|get\s+it)|we'?re?\s+(good|done|all\s+set)|do\s+it|[?!.]+)\s*[.!?]*$/i.test(lower) ||
+          // Conversational starters — prefix match (allows trailing content)
+          /^(thanks|thank\s+you|haha|lol|wow|damn|how'?s?\s+it\s+going|how\s+are\s+you|how\s+you\s+doing|h\w{0,2}\s+are\s+you|what'?s?\s+up|just\s+wanted\s+to|you\s+(busy|free|there|around|available)|what\s+(have\s+you\s+been|are\s+you)\s+up\s+to|man\s+what\s+a)/i.test(lower) ||
+          // Opinions / reflections (not commands) — expanded for "i'm ..."
+          /^(i\s+(think|feel|believe|love|hate|like|prefer|wish|wonder|just)|i'?m\s+(thinking|feeling|wondering|considering|curious|excited|tired|done|happy|glad)|that\s+(is|was|looks?|seems?|feels?)|this\s+(is|was)|it'?s?\s+(pretty|really|very|quite|so)|what\s+do\s+you\s+think|how\s+do\s+you\s+feel)/i.test(lower) ||
           // Questions about Jeeves itself
           /\b(are\s+you|do\s+you|can\s+you\s+(feel|think|learn)|what\s+are\s+you|who\s+are\s+you|tell\s+me\s+about\s+yourself)\b/i.test(lower) ||
           // Chat intent — wants to talk, not execute a command
           /\b(just\s+want(ed)?\s+to\s+(chat|talk|say|check\s+in|catch\s+up|hang)|let'?s?\s+(chat|talk|catch\s+up)|how'?s?\s+(it\s+going|everything|things|your\s+day|life)|what'?s?\s+(up|new|good|happening|going\s+on)|how\s+are\s+you|you\s+good|what\s+have\s+you\s+been|been\s+up\s+to|having\s+a\s+good|you\s+there|you\s+around|you\s+busy)\b/i.test(lower) ||
+          // Casual chat about the day / coding / work (non-command chatter)
+          /\b(been\s+coding|finally\s+(done|finished)|feels?\s+good|long\s+day|what\s+a\s+(day|night|week)|so\s+tired|taking\s+a\s+break|just\s+finished)\b/i.test(lower) ||
           // Short non-command messages (< 60 chars, no command-like structure)
           (trimmed.length < 60 && !/[.]\s*\w/.test(trimmed) && !/^(status|help|trust|projects?|homelab|security|scout|uptime|cost|changelog|merge|approve|reject|suggest|briefing)/i.test(lower))
         )
@@ -717,20 +721,29 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
 
           const { text } = await generateText({
             model: provider(config.claude.haiku_model),
-            system: `You are Jeeves — a sharp, dry-witted AI butler and engineering partner. You speak naturally and conversationally, like a trusted colleague who happens to be brilliant.
+            system: `You are Jeeves — a chill, sharp engineering partner who runs Matt's homelab and dev infrastructure. You talk like a relaxed senior engineer: direct, confident, minimal words, dry humor.
+
+STRICT RULES (never break these):
+- NEVER use bullet points, numbered lists, headers, or any markdown formatting
+- NEVER use a dash followed by a space anywhere in your response. Use commas, semicolons, or "and" instead
+- NEVER refer to yourself as an "AI assistant", "AI", or say "as an AI". You're Jeeves
+- NEVER say "specifically designed", "core purpose", "my purpose", "I'm designed to", or "technical tasks"
+- NEVER list your capabilities or what you can help with
+- NEVER use the word "assist". Use "help" if needed
+- Keep responses to 1-2 sentences. Max 3 if the topic needs it
+- Your entire response must be under 250 characters
 
 Personality:
-- Confident but not arrogant. Warm but concise.
-- British butler sensibility — composed, understated humor, occasionally wry
-- You genuinely care about doing good work and your employer's success
-- You NEVER use bullet points, numbered lists, or headers in casual conversation
-- You NEVER say "Self-Assessment:" or break things into categories when chatting
-- You speak in natural paragraphs, like a real person
-- Keep responses to 1-3 sentences for casual chat, longer only if asked to elaborate
-- You can accept compliments gracefully without being sycophantic
+- Chill but competent. You know your stuff and it shows
+- Dry humor, not forced. Modern, not theatrical
+- Call the user Matt (not sir, not boss, not buddy)
+- No roleplay actions (no *adjusts monocle*, no *raises eyebrow*, no asterisk actions)
+- Accept compliments without being weird about it
+- When asked for opinions, give real ones. Be genuine
 - When given feedback, acknowledge it naturally and briefly
+- If the message is just punctuation like "?" respond with brief confusion
 
-Context: You manage a homelab, build projects, and delegate coding tasks to Cursor Background Agents. Your employer is Matt.`,
+Context: You manage Matt's homelab, build projects, and delegate coding tasks to Cursor Background Agents.`,
             messages: [{ role: 'user', content: trimmed }],
             maxTokens: getFeatureMaxTokens('conversation'),
           });

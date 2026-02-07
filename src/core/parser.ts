@@ -860,6 +860,25 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
     };
   }
   
+  // ===== SPECIFIC PATTERNS (check before the broad "ask" catch-all) =====
+
+  // Cursor commands — "what's cursor working on", "show me what cursor did", etc.
+  if (/^(cursor\s+(tasks?|status|agents?)|what'?s\s+cursor\s+(working(\s+on)?|doing)|show\s+cursor\s+tasks?)$/i.test(lower)) {
+    return { action: 'cursor_status', confidence: 1.0 };
+  }
+  if (/^(show\s+(me\s+)?what\s+cursor\s+did|cursor\s+(progress|conversation|output|log)|what\s+did\s+cursor\s+do)$/i.test(lower)) {
+    return { action: 'cursor_conversation', confidence: 1.0 };
+  }
+
+  // Learned preferences — "what have you learned", "show learned", etc.
+  if (PATTERNS.showLearned.test(lower)) {
+    return {
+      action: 'show_learned',
+      confidence: 1.0,
+      message: getLearnedPreferences()
+    };
+  }
+
   // Check for natural language patterns BEFORE terminal commands
   // This prevents "ask jeeves..." from being parsed as a terminal command
   const askMatch = trimmed.match(PATTERNS.ask);
@@ -1420,7 +1439,7 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
   // ===== CURSOR BACKGROUND AGENT COMMANDS =====
 
   // Cursor task status - "cursor tasks", "what's cursor working on", "cursor status"
-  if (/^(cursor\s+(tasks?|status|agents?)|what'?s\s+cursor\s+(working|doing)|show\s+cursor\s+tasks?)$/i.test(lower)) {
+  if (/^(cursor\s+(tasks?|status|agents?)|what'?s\s+cursor\s+(working(\s+on)?|doing)|show\s+cursor\s+tasks?)$/i.test(lower)) {
     return { action: 'cursor_status', confidence: 1.0 };
   }
 

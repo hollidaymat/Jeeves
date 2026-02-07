@@ -54,6 +54,25 @@ let thresholds: SecurityThresholds = { ...DEFAULT_THRESHOLDS };
 // Broadcast hook — same pattern as cursor-orchestrator
 let broadcastFn: ((type: string, payload: unknown) => void) | null = null;
 
+// ============================================================================
+// Alert Cooldowns — prevent spam for ongoing conditions
+// ============================================================================
+
+// Map<"projectId:eventType", timestamp>
+const alertCooldowns = new Map<string, number>();
+const ALERT_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes between repeated alerts for same condition
+
+function isOnCooldown(projectId: string, eventType: string): boolean {
+  const key = `${projectId}:${eventType}`;
+  const lastAlert = alertCooldowns.get(key);
+  if (!lastAlert) return false;
+  return Date.now() - lastAlert < ALERT_COOLDOWN_MS;
+}
+
+function setCooldown(projectId: string, eventType: string): void {
+  alertCooldowns.set(`${projectId}:${eventType}`, Date.now());
+}
+
 export function setSecurityBroadcast(fn: (type: string, payload: unknown) => void): void {
   broadcastFn = fn;
 }
@@ -140,6 +159,8 @@ function createEvent(
  */
 async function checkProject(projectId: string, projectName: string): Promise<void> {
   const now = new Date().toISOString();
+  let hasData = false;
+  let newEventsCreated = false;
 
   // ── Deployments ──────────────────────────────────────────────────────
   let errorRate = 0;
@@ -149,6 +170,7 @@ async function checkProject(projectId: string, projectName: string): Promise<voi
   try {
     const deploys = await getDeployments(projectId, 10);
     if (deploys && deploys.length > 0) {
+      hasData = true;
       const deployRecords = deploys as Array<Record<string, unknown>>;
 
       // Domain from the latest deployment
@@ -176,11 +198,19 @@ async function checkProject(projectId: string, projectName: string): Promise<voi
   try {
     const analytics = await getProjectAnalytics(projectId);
     if (analytics) {
+      hasData = true;
       const data = analytics as Record<string, unknown>;
       responseTime = (data.p95ResponseTime as number) || 0;
     }
   } catch {
     // Analytics unavailable — acceptable
+  }
+
+  // ── Skip if no data available ────────────────────────────────────────
+  if (!hasData) {
+    // No data from Vercel API — skip status update to avoid false signals
+    logger.debug(`[security-monitor] ${projectName}: no data available — skipping`);
+    return;
   }
 
   // ── Determine status ────────────────────────────────────────────────
@@ -192,18 +222,22 @@ async function checkProject(projectId: string, projectName: string): Promise<voi
     status = errorRate >= thresholds.errorRate * 2 ? 'critical' : 'warning';
     threats.push(`error_rate:${errorRate.toFixed(1)}%`);
 
-    const severity: EventSeverity = errorRate >= thresholds.errorRate * 2 ? 'high' : 'medium';
-    const event = createEvent(
-      projectId,
-      projectName,
-      'error_spike',
-      severity,
-      `Error rate at ${errorRate.toFixed(1)}% (threshold: ${thresholds.errorRate}%)`,
-    );
-    // Fire-and-forget playbook execution
-    executePlaybook(event).catch(err =>
-      logger.error('[security-monitor] Playbook failed', { error: String(err) }),
-    );
+    // Only create event + fire playbook if not on cooldown
+    if (!isOnCooldown(projectId, 'error_spike')) {
+      const severity: EventSeverity = errorRate >= thresholds.errorRate * 2 ? 'high' : 'medium';
+      const event = createEvent(
+        projectId,
+        projectName,
+        'error_spike',
+        severity,
+        `Error rate at ${errorRate.toFixed(1)}% (threshold: ${thresholds.errorRate}%)`,
+      );
+      executePlaybook(event).catch(err =>
+        logger.error('[security-monitor] Playbook failed', { error: String(err) }),
+      );
+      setCooldown(projectId, 'error_spike');
+      newEventsCreated = true;
+    }
   }
 
   // Check consecutive deploy failures
@@ -211,16 +245,20 @@ async function checkProject(projectId: string, projectName: string): Promise<voi
     status = 'critical';
     threats.push(`consecutive_failures:${consecutiveFailures}`);
 
-    const event = createEvent(
-      projectId,
-      projectName,
-      'deploy_failed',
-      'high',
-      `${consecutiveFailures} consecutive deploy failures (threshold: ${thresholds.failedDeploys})`,
-    );
-    executePlaybook(event).catch(err =>
-      logger.error('[security-monitor] Playbook failed', { error: String(err) }),
-    );
+    if (!isOnCooldown(projectId, 'deploy_failed')) {
+      const event = createEvent(
+        projectId,
+        projectName,
+        'deploy_failed',
+        'high',
+        `${consecutiveFailures} consecutive deploy failures (threshold: ${thresholds.failedDeploys})`,
+      );
+      executePlaybook(event).catch(err =>
+        logger.error('[security-monitor] Playbook failed', { error: String(err) }),
+      );
+      setCooldown(projectId, 'deploy_failed');
+      newEventsCreated = true;
+    }
   }
 
   // Check response time threshold
@@ -228,16 +266,20 @@ async function checkProject(projectId: string, projectName: string): Promise<voi
     if (status === 'secure') status = 'warning';
     threats.push(`p95_response:${responseTime}ms`);
 
-    const event = createEvent(
-      projectId,
-      projectName,
-      'traffic_spike',
-      'medium',
-      `p95 response time ${responseTime}ms exceeds threshold ${thresholds.responseTime}ms`,
-    );
-    executePlaybook(event).catch(err =>
-      logger.error('[security-monitor] Playbook failed', { error: String(err) }),
-    );
+    if (!isOnCooldown(projectId, 'traffic_spike')) {
+      const event = createEvent(
+        projectId,
+        projectName,
+        'traffic_spike',
+        'medium',
+        `p95 response time ${responseTime}ms exceeds threshold ${thresholds.responseTime}ms`,
+      );
+      executePlaybook(event).catch(err =>
+        logger.error('[security-monitor] Playbook failed', { error: String(err) }),
+      );
+      setCooldown(projectId, 'traffic_spike');
+      newEventsCreated = true;
+    }
   }
 
   // ── Update project status map ───────────────────────────────────────
@@ -256,8 +298,11 @@ async function checkProject(projectId: string, projectName: string): Promise<voi
 
   projectStatuses.set(projectId, projectStatus);
 
-  if (threats.length > 0) {
+  // Log: only warn on first alert (not on cooldown), otherwise debug
+  if (threats.length > 0 && newEventsCreated) {
     logger.warn(`[security-monitor] ${projectName}: ${status.toUpperCase()} — ${threats.join(', ')}`);
+  } else if (threats.length > 0) {
+    logger.debug(`[security-monitor] ${projectName}: ${status.toUpperCase()} — ${threats.join(', ')} (cooldown)`);
   } else {
     logger.debug(`[security-monitor] ${projectName}: secure`);
   }

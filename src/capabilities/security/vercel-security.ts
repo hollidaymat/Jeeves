@@ -72,16 +72,16 @@ async function vercelSecFetch(
         logger.debug(`[vercel-security] ${method} ${path} → ${res.status} (not available)`);
         return null;
       }
-      logger.warn(`[vercel-security] ${method} ${path} → ${res.status} ${res.statusText}`);
+      logger.debug(`[vercel-security] ${method} ${path} → ${res.status} ${res.statusText}`);
       return null;
     }
 
     return await res.json();
   } catch (error) {
     if ((error as Error).name === 'AbortError') {
-      logger.warn(`[vercel-security] ${method} ${path} timed out`);
+      logger.debug(`[vercel-security] ${method} ${path} timed out`);
     } else {
-      logger.error(`[vercel-security] ${method} ${path} failed`, { error: String(error) });
+      logger.debug(`[vercel-security] ${method} ${path} failed`, { error: String(error) });
     }
     return null;
   } finally {

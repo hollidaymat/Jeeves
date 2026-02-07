@@ -343,6 +343,74 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
       }
     }
 
+    // Questions about specific security events: "what's up with v0-sentinel", "why is X critical", "investigate v0-sentinel"
+    const securityQuestionMatch = content.trim().match(/(?:what'?s?\s+(?:up|wrong|going\s+on)\s+with|why\s+is|investigate|explain|look\s+(?:at|into))\s+(.+?)(?:\s+(?:critical|error|down|issue|alert).*)?$/i);
+    if (securityQuestionMatch) {
+      const subject = securityQuestionMatch[1].trim().replace(/[?!.,]+$/, '');
+      
+      // Check if this matches a known Vercel project or security event
+      try {
+        const { getSecurityDashboard, getSecurityEvents } = await import('../capabilities/security/monitor.js');
+        const dashboard = getSecurityDashboard();
+        
+        // Find matching project
+        const project = dashboard.projects.find(p => 
+          p.projectName.toLowerCase().includes(subject.toLowerCase()) ||
+          p.projectId.toLowerCase().includes(subject.toLowerCase())
+        );
+        
+        if (project) {
+          // Get recent events for this project
+          const allEvents = getSecurityEvents(50);
+          const projectEvents = allEvents.filter(e => 
+            e.projectId === project.projectId || e.projectName === project.projectName
+          ).slice(0, 5);
+          
+          const lines = [
+            `${project.projectName}: ${project.status.toUpperCase()}`,
+            `Error rate: ${project.errorRate}% | Response time: ${project.responseTime}ms`,
+            `Domain: ${project.domain || 'none'}`,
+            `Last checked: ${project.lastChecked}`,
+          ];
+          
+          if (project.errorRate > 0) {
+            // Explain what the error rate means
+            lines.push('');
+            if (project.errorRate === 10) {
+              lines.push('10% error rate means 1 out of last 10 deployments has status ERROR.');
+              lines.push('This is a deployment-level metric, not live traffic errors.');
+            } else {
+              lines.push(`${project.errorRate}% of recent deployments have ERROR status.`);
+            }
+          }
+          
+          if (project.responseTime === 0) {
+            lines.push('0ms response time means analytics data is not available for this project (may require Vercel Pro).');
+          }
+          
+          if (projectEvents.length > 0) {
+            lines.push('');
+            lines.push(`Recent events (${projectEvents.length}):`);
+            for (const ev of projectEvents.slice(0, 3)) {
+              const time = new Date(ev.timestamp).toLocaleTimeString();
+              lines.push(`  [${time}] ${ev.type} — ${ev.message}`);
+              if (ev.autoActionsTaken.length > 0) {
+                lines.push(`    Actions: ${ev.autoActionsTaken.join(', ')}`);
+              }
+            }
+          }
+          
+          lines.push('');
+          lines.push('Options: "fix it" to create a task, "mute alerts for v0-sentinel" to silence, or "security status" for full dashboard.');
+          
+          stats.lastCommand = { action: 'security_investigate', timestamp: new Date().toISOString(), success: true };
+          return { recipient: sender, content: lines.join('\n'), replyTo: message.id };
+        }
+      } catch {
+        // Security monitor not loaded — fall through to cognitive layer
+      }
+    }
+
     // "security status" / "security overview"
     const secStatusMatch = /^(?:security\s+(?:status|overview|dashboard|report)|vercel\s+security)/i.test(content.trim());
     if (secStatusMatch) {

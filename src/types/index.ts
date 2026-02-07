@@ -129,6 +129,14 @@ export type ActionType =
   | 'media_more'              // Show next page of media results
   | 'media_status'            // Check download queue status
   | 'feedback'              // User is giving feedback/preference, not requesting action
+  // Cursor Background Agent commands
+  | 'cursor_launch'          // Launch a Cursor agent for a coding task
+  | 'cursor_status'          // Check active Cursor tasks
+  | 'cursor_followup'        // Send follow-up to active Cursor agent
+  | 'cursor_stop'            // Stop a running Cursor agent
+  | 'cursor_conversation'    // View Cursor agent conversation
+  | 'cursor_confirm'         // Confirm pending Cursor task ("go", "yes")
+  | 'cursor_repos'           // List available repos
   | 'unknown'
   | 'denied';
 
@@ -305,7 +313,7 @@ export interface LogEntry {
 // ============================================================================
 
 export interface WSMessage {
-  type: 'command' | 'status' | 'log' | 'projects' | 'response' | 'agent_status' | 'pending_changes' | 'prd_status' | 'prd_checkpoint' | 'stream_start' | 'stream_chunk' | 'stream_end' | 'homelab_status' | 'cost_update' | 'activity_update' | 'project_update' | 'service_detail' | 'task:started' | 'task:progress' | 'task:completed' | 'task:failed' | 'queue:updated';
+  type: 'command' | 'status' | 'log' | 'projects' | 'response' | 'agent_status' | 'pending_changes' | 'prd_status' | 'prd_checkpoint' | 'stream_start' | 'stream_chunk' | 'stream_end' | 'homelab_status' | 'cost_update' | 'activity_update' | 'project_update' | 'service_detail' | 'task:started' | 'task:progress' | 'task:completed' | 'task:failed' | 'queue:updated' | 'cursor:task:started' | 'cursor:task:progress' | 'cursor:task:completed' | 'cursor:task:stuck' | 'cursor:task:error';
   payload: unknown;
 }
 

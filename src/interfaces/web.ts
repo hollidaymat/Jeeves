@@ -45,6 +45,18 @@ export class WebInterface implements MessageInterface {
     this.setupRoutes();
     this.setupWebSocket();
     this.setupPrdCallbacks();
+    this.setupCursorBroadcast();
+  }
+
+  private setupCursorBroadcast(): void {
+    // Wire up the Cursor orchestrator's broadcast to our WebSocket
+    import('../integrations/cursor-orchestrator.js').then(({ setBroadcast }) => {
+      setBroadcast((type: string, payload: unknown) => {
+        this.broadcast({ type: type as WSMessage['type'], payload });
+      });
+    }).catch(() => {
+      // Cursor integration not available, that's fine
+    });
   }
   
   private setupPrdCallbacks(): void {
@@ -181,6 +193,61 @@ export class WebInterface implements MessageInterface {
         res.json({ success });
       } catch (error) {
         res.status(500).json({ error: String(error) });
+      }
+    });
+
+    // API: Cursor tasks
+    this.app.get('/api/cursor/tasks', async (_req: Request, res: Response) => {
+      try {
+        const { getAllCursorTasks } = await import('../integrations/cursor-orchestrator.js');
+        res.json(getAllCursorTasks());
+      } catch (error) {
+        res.json({ active: [], completed: [] });
+      }
+    });
+
+    // API: Cursor task conversation
+    this.app.get('/api/cursor/tasks/:id/conversation', async (req: Request, res: Response) => {
+      try {
+        const { getTaskConversation } = await import('../integrations/cursor-orchestrator.js');
+        const result = await getTaskConversation(req.params.id);
+        res.json(result);
+      } catch (error) {
+        res.json({ success: false, message: String(error) });
+      }
+    });
+
+    // API: Cursor follow-up
+    this.app.post('/api/cursor/tasks/:id/followup', async (req: Request, res: Response) => {
+      try {
+        const { sendFollowUp } = await import('../integrations/cursor-orchestrator.js');
+        const { instruction } = req.body;
+        if (!instruction) { res.status(400).json({ error: 'instruction required' }); return; }
+        const result = await sendFollowUp(req.params.id, instruction);
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ success: false, message: String(error) });
+      }
+    });
+
+    // API: Stop Cursor task
+    this.app.post('/api/cursor/tasks/:id/stop', async (req: Request, res: Response) => {
+      try {
+        const { stopCursorTask } = await import('../integrations/cursor-orchestrator.js');
+        const result = await stopCursorTask(req.params.id);
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ success: false, message: String(error) });
+      }
+    });
+
+    // API: Available repos for Cursor
+    this.app.get('/api/cursor/repos', async (_req: Request, res: Response) => {
+      try {
+        const { getAvailableRepos } = await import('../integrations/cursor-orchestrator.js');
+        res.json({ repos: getAvailableRepos() });
+      } catch (error) {
+        res.json({ repos: [] });
       }
     });
 

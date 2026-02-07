@@ -398,6 +398,155 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     };
   }
 
+  // ===== CURSOR BACKGROUND AGENT ACTIONS =====
+
+  if (intent.action === 'cursor_launch') {
+    trackPatternMatch('cursor_launch');
+    const { createTask, getPendingPlan } = await import('../integrations/cursor-orchestrator.js');
+    const { isCursorEnabled } = await import('../integrations/cursor-client.js');
+
+    if (!isCursorEnabled()) {
+      return {
+        success: false,
+        error: 'Cursor API not configured. Set CURSOR_API_KEY in .env.',
+        duration_ms: Date.now() - startTime
+      };
+    }
+
+    const description = intent.prompt || '';
+    // Try to extract project name from the description
+    const projectMatch = description.match(/(?:for|on|in)\s+(\S+)\s*$/i);
+    const project = projectMatch ? projectMatch[1] : 'dive-connect';  // default
+
+    const task = createTask(description, project);
+    if (!task) {
+      return {
+        success: false,
+        error: `Could not resolve project "${project}". Use "cursor repos" to see available repos.`,
+        duration_ms: Date.now() - startTime
+      };
+    }
+
+    const plan = getPendingPlan();
+    return {
+      success: true,
+      output: plan || 'Task created. Send "go" to launch.',
+      duration_ms: Date.now() - startTime
+    };
+  }
+
+  if (intent.action === 'cursor_confirm') {
+    const { confirmAndLaunch } = await import('../integrations/cursor-orchestrator.js');
+    const result = await confirmAndLaunch();
+    return {
+      success: result.success,
+      output: result.success ? result.message : undefined,
+      error: result.success ? undefined : result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+
+  if (intent.action === 'cursor_status') {
+    trackPatternMatch('cursor_status');
+    const { getCursorTasksStatus } = await import('../integrations/cursor-orchestrator.js');
+    const { isCursorEnabled } = await import('../integrations/cursor-client.js');
+
+    if (!isCursorEnabled()) {
+      return {
+        success: true,
+        output: 'Cursor integration not enabled. Set CURSOR_API_KEY in .env.',
+        duration_ms: Date.now() - startTime
+      };
+    }
+
+    return {
+      success: true,
+      output: getCursorTasksStatus(),
+      duration_ms: Date.now() - startTime
+    };
+  }
+
+  if (intent.action === 'cursor_followup') {
+    const { sendFollowUp, getActiveCursorTasks } = await import('../integrations/cursor-orchestrator.js');
+    const tasks = getActiveCursorTasks();
+
+    if (tasks.length === 0) {
+      return {
+        success: false,
+        error: 'No active Cursor tasks to follow up on.',
+        duration_ms: Date.now() - startTime
+      };
+    }
+
+    // Send to the most recent active task
+    const latestTask = tasks[tasks.length - 1];
+    const result = await sendFollowUp(latestTask.id, intent.prompt || '');
+    return {
+      success: result.success,
+      output: result.success ? result.message : undefined,
+      error: result.success ? undefined : result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+
+  if (intent.action === 'cursor_stop') {
+    const { stopCursorTask, getActiveCursorTasks } = await import('../integrations/cursor-orchestrator.js');
+    const tasks = getActiveCursorTasks();
+
+    if (tasks.length === 0) {
+      return {
+        success: false,
+        error: 'No active Cursor tasks to stop.',
+        duration_ms: Date.now() - startTime
+      };
+    }
+
+    // Stop the most recent active task
+    const latestTask = tasks[tasks.length - 1];
+    const result = await stopCursorTask(latestTask.id);
+    return {
+      success: result.success,
+      output: result.success ? result.message : undefined,
+      error: result.success ? undefined : result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+
+  if (intent.action === 'cursor_conversation') {
+    const { getTaskConversation, getActiveCursorTasks, getCompletedCursorTasks } = await import('../integrations/cursor-orchestrator.js');
+    const active = getActiveCursorTasks();
+    const completed = getCompletedCursorTasks(1);
+    const latest = active[active.length - 1] || completed[0];
+
+    if (!latest) {
+      return {
+        success: false,
+        error: 'No Cursor tasks to show.',
+        duration_ms: Date.now() - startTime
+      };
+    }
+
+    const result = await getTaskConversation(latest.id);
+    return {
+      success: result.success,
+      output: result.success ? result.message : undefined,
+      error: result.success ? undefined : result.message,
+      duration_ms: Date.now() - startTime
+    };
+  }
+
+  if (intent.action === 'cursor_repos') {
+    trackPatternMatch('cursor_repos');
+    const { getAvailableRepos } = await import('../integrations/cursor-orchestrator.js');
+    const repos = getAvailableRepos();
+    const output = '**Available Repositories:**\n' + repos.map(r => `  - ${r.name}: ${r.url}`).join('\n');
+    return {
+      success: true,
+      output,
+      duration_ms: Date.now() - startTime
+    };
+  }
+
   if (intent.action === 'unknown') {
     return {
       success: false,

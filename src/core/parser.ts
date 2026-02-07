@@ -62,6 +62,25 @@ import {
 import { referenceResolver } from './reference-resolver.js';
 import type { ParsedIntent } from '../types/index.js';
 
+// Lazy-loaded Cursor orchestrator check (avoids circular imports)
+let _pendingCursorCheck: (() => boolean) | null = null;
+function pendingCursorCheck(): boolean {
+  if (!_pendingCursorCheck) {
+    try {
+      // Dynamic require at first call only
+      import('../integrations/cursor-orchestrator.js').then(m => {
+        _pendingCursorCheck = m.hasPendingCursorTask;
+      }).catch(() => {
+        _pendingCursorCheck = () => false;
+      });
+      return false;  // First call won't have it yet, that's OK
+    } catch {
+      return false;
+    }
+  }
+  return _pendingCursorCheck();
+}
+
 // Create Anthropic provider - API key from environment
 const anthropic = createAnthropic({
   apiKey: process.env.ANTHROPIC_API_KEY || ''
@@ -1396,6 +1415,54 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
       estimatedCost: 0,
       message: trimmed
     };
+  }
+
+  // ===== CURSOR BACKGROUND AGENT COMMANDS =====
+
+  // Cursor task status - "cursor tasks", "what's cursor working on", "cursor status"
+  if (/^(cursor\s+(tasks?|status|agents?)|what'?s\s+cursor\s+(working|doing)|show\s+cursor\s+tasks?)$/i.test(lower)) {
+    return { action: 'cursor_status', confidence: 1.0 };
+  }
+
+  // Cursor repos - "cursor repos", "list repos"
+  if (/^(cursor\s+repos|list\s+repos|available\s+repos|show\s+repos)$/i.test(lower)) {
+    return { action: 'cursor_repos', confidence: 1.0 };
+  }
+
+  // Cursor stop - "stop cursor", "stop that task", "cancel cursor agent"
+  if (/^(stop|cancel|kill|abort)\s+(cursor|the?\s*cursor\s*(task|agent)|that\s+(cursor\s+)?task)$/i.test(lower)) {
+    return { action: 'cursor_stop', confidence: 1.0 };
+  }
+
+  // Cursor conversation - "show me what cursor did", "cursor progress", "cursor conversation"
+  if (/^(show\s+(me\s+)?what\s+cursor\s+did|cursor\s+(progress|conversation|output|log)|what\s+did\s+cursor\s+do)$/i.test(lower)) {
+    return { action: 'cursor_conversation', confidence: 1.0 };
+  }
+
+  // Cursor follow-up - "tell cursor to X", "also tell cursor X", "cursor: X"
+  const cursorFollowup = trimmed.match(/^(tell\s+cursor\s+(?:to\s+)?|also\s+(?:tell\s+)?cursor\s+(?:to\s+)?|cursor:\s*)(.+)$/i);
+  if (cursorFollowup) {
+    return {
+      action: 'cursor_followup',
+      prompt: cursorFollowup[2],
+      confidence: 0.95
+    };
+  }
+
+  // Cursor launch - "cursor build X for Y", "send to cursor: X", "have cursor X on Y"
+  const cursorLaunch = trimmed.match(/^(?:cursor\s+(?:build|code|implement|work\s+on)|send\s+to\s+cursor:?\s*|have\s+cursor\s+(?:build|code|implement|work\s+on))\s+(.+)$/i);
+  if (cursorLaunch) {
+    return {
+      action: 'cursor_launch',
+      prompt: cursorLaunch[1],
+      confidence: 0.95,
+      requiresAsync: true
+    };
+  }
+
+  // Check for pending Cursor task confirmation
+  if (pendingCursorCheck() && /^(go|yes|do\s+it|confirm|launch|execute|send\s+it|approved?)$/i.test(lower)) {
+    return { action: 'cursor_confirm', confidence: 1.0, requiresAsync: true };
   }
 
   // Edit patterns - "add X", "fix Y", "update Z", etc.

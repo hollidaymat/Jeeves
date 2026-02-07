@@ -41,9 +41,6 @@ let messagesSinceCompactionCheck = 0;
 // Cursor confirmation flag — set when a "cursor build" command produces a pending plan
 let awaitingCursorConfirmation = false;
 
-// Pending new project — waiting for PRD after "new project <name>"
-let pendingNewProject: { name: string; timestamp: number } | null = null;
-
 const COMPACTION_CHECK_INTERVAL = 10; // Check every 10 messages
 
 // Track statistics
@@ -176,17 +173,63 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
       }
     }
 
-    // 2. New project creation
-    //    Two-step flow: "new project <name>" → then paste the PRD
-    //    Or one-shot: "new project <name>\n<PRD content>"
+    // 2. PRD Builder session routing
+    //    When an active PRD session exists, ALL messages route through it
+    //    (unless they're cursor commands or explicit cancellation)
+    {
+      const { getActiveSession, addMessage: prdAddMessage, isFinalizationIntent, isCancellationIntent, cancelSession, getAndClearFinalizedPrd } = await import('../integrations/prd-builder.js');
+      const prdSession = getActiveSession();
+
+      if (prdSession) {
+        // Check for cancellation
+        if (isCancellationIntent(content)) {
+          const msg = cancelSession();
+          stats.lastCommand = { action: 'prd_cancel', timestamp: new Date().toISOString(), success: true };
+          return { recipient: sender, content: msg, replyTo: message.id };
+        }
+
+        // Check for finalization intent — send it through the builder
+        // which will trigger Claude to emit <finalize/>
+        if (isFinalizationIntent(content)) {
+          logger.info('PRD finalization intent detected');
+        }
+
+        // Route through PRD builder
+        logger.info('PRD session active — routing message', { session: prdSession.id });
+        const response = await prdAddMessage(content);
+
+        // Check if the builder signaled finalization
+        if (response === '__PRD_FINALIZED__') {
+          const finalized = getAndClearFinalizedPrd();
+          if (finalized) {
+            try {
+              const { createNewProject } = await import('../integrations/cursor-orchestrator.js');
+              const result = await createNewProject(finalized.projectName, finalized.prd);
+              if (result.success) awaitingCursorConfirmation = true;
+              stats.lastCommand = { action: 'new_project', timestamp: new Date().toISOString(), success: result.success };
+              return { recipient: sender, content: result.message, replyTo: message.id };
+            } catch (err) {
+              return { recipient: sender, content: `PRD finalized but failed to create project: ${err}`, replyTo: message.id };
+            }
+          }
+        }
+
+        stats.lastCommand = { action: 'prd_builder', timestamp: new Date().toISOString(), success: true };
+        return { recipient: sender, content: response, replyTo: message.id };
+      }
+    }
+
+    // 2b. New project creation — starts a conversational PRD session
+    //     "new project <name>" kicks off the PRD builder
+    //     One-shot with inline PRD still supported for pre-written PRDs
     const newProjectMatch = content.trim().match(/^(?:new|create|start|init)\s+project\s+(\S+)(?:\s*\n([\s\S]+))?/i);
     if (newProjectMatch) {
-      logger.info('New project fast path', { content: content.substring(0, 50) });
+      logger.info('New project — starting PRD session', { content: content.substring(0, 50) });
       const projectName = newProjectMatch[1].trim();
       const inlinePrd = newProjectMatch[2]?.trim();
 
-      if (inlinePrd && inlinePrd.length > 20) {
-        // One-shot: name + PRD in one message
+      // If a full PRD is provided inline (>200 chars), skip the conversation
+      if (inlinePrd && inlinePrd.length > 200) {
         try {
           const { createNewProject } = await import('../integrations/cursor-orchestrator.js');
           const result = await createNewProject(projectName, inlinePrd);
@@ -196,31 +239,16 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
         } catch (err) {
           return { recipient: sender, content: `Failed to create project: ${err}`, replyTo: message.id };
         }
-      } else {
-        // Two-step: just the name, wait for PRD next
-        pendingNewProject = { name: projectName, timestamp: Date.now() };
-        stats.lastCommand = { action: 'new_project_await_prd', timestamp: new Date().toISOString(), success: true };
-        return {
-          recipient: sender,
-          content: `Project name: **${projectName}**\n\nNow paste the PRD and I'll create the repo and send Cursor to build it.`,
-          replyTo: message.id,
-        };
       }
-    }
 
-    // 2b. Receive PRD for pending new project (any long message when awaiting PRD)
-    if (pendingNewProject && content.trim().length > 50 && (Date.now() - pendingNewProject.timestamp) < 300000) {
-      logger.info('PRD received for pending project', { project: pendingNewProject.name });
-      const projectName = pendingNewProject.name;
-      pendingNewProject = null;
+      // Start conversational PRD builder
       try {
-        const { createNewProject } = await import('../integrations/cursor-orchestrator.js');
-        const result = await createNewProject(projectName, content.trim());
-        if (result.success) awaitingCursorConfirmation = true;
-        stats.lastCommand = { action: 'new_project', timestamp: new Date().toISOString(), success: result.success };
-        return { recipient: sender, content: result.message, replyTo: message.id };
+        const { startSession } = await import('../integrations/prd-builder.js');
+        const response = await startSession(projectName, inlinePrd || undefined);
+        stats.lastCommand = { action: 'prd_builder_start', timestamp: new Date().toISOString(), success: true };
+        return { recipient: sender, content: response, replyTo: message.id };
       } catch (err) {
-        return { recipient: sender, content: `Failed to create project: ${err}`, replyTo: message.id };
+        return { recipient: sender, content: `Failed to start PRD session: ${err}`, replyTo: message.id };
       }
     }
 

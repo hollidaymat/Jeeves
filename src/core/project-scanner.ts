@@ -3,7 +3,7 @@
  * Auto-discovers projects by scanning directories for markers
  */
 
-import { readdirSync, statSync, existsSync, mkdirSync, writeFileSync } from 'fs';
+import { readdirSync, readFileSync, statSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join, basename } from 'path';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
@@ -312,3 +312,76 @@ export function createProject(name: string): { success: boolean; path?: string; 
 export function getWorkspaceDir(): string | undefined {
   return config.projects.directories[0];
 }
+
+/**
+ * Scan existing projects for tech conventions and patterns.
+ * Used by the PRD builder to suggest tech stacks based on user's existing work.
+ */
+export function scanForConventions(): string | null {
+  const projects = getProjectIndex();
+  if (projects.projects.size === 0) return null;
+
+  const conventions: string[] = [];
+  const frameworks = new Set<string>();
+  const uiLibs = new Set<string>();
+  const cssTools = new Set<string>();
+  const databases = new Set<string>();
+  const languages = new Set<string>();
+
+  for (const [name, project] of projects.projects) {
+    try {
+      const pkgPath = join(project.path, 'package.json');
+      if (!existsSync(pkgPath)) continue;
+
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+      const allDeps = {
+        ...pkg.dependencies,
+        ...pkg.devDependencies,
+      };
+
+      // Detect frameworks
+      if (allDeps['next']) frameworks.add('Next.js');
+      if (allDeps['react']) frameworks.add('React');
+      if (allDeps['vue']) frameworks.add('Vue');
+      if (allDeps['svelte'] || allDeps['@sveltejs/kit']) frameworks.add('Svelte');
+      if (allDeps['express']) frameworks.add('Express');
+      if (allDeps['fastify']) frameworks.add('Fastify');
+      if (allDeps['expo'] || allDeps['react-native']) frameworks.add('React Native/Expo');
+
+      // Detect UI libraries
+      if (allDeps['@radix-ui/react-slot'] || allDeps['@radix-ui/react-dialog']) uiLibs.add('Radix UI');
+      if (allDeps['@shadcn/ui'] || allDeps['class-variance-authority']) uiLibs.add('shadcn/ui');
+      if (allDeps['@mui/material']) uiLibs.add('Material UI');
+      if (allDeps['@chakra-ui/react']) uiLibs.add('Chakra UI');
+
+      // Detect CSS tools
+      if (allDeps['tailwindcss']) cssTools.add('Tailwind CSS');
+      if (allDeps['sass'] || allDeps['node-sass']) cssTools.add('Sass');
+      if (allDeps['styled-components']) cssTools.add('Styled Components');
+
+      // Detect databases
+      if (allDeps['@supabase/supabase-js']) databases.add('Supabase');
+      if (allDeps['prisma'] || allDeps['@prisma/client']) databases.add('Prisma');
+      if (allDeps['mongoose']) databases.add('MongoDB');
+      if (allDeps['pg']) databases.add('PostgreSQL');
+
+      // Detect languages
+      if (allDeps['typescript']) languages.add('TypeScript');
+
+    } catch {
+      // Skip projects with unreadable package.json
+    }
+  }
+
+  if (frameworks.size === 0 && languages.size === 0) return null;
+
+  conventions.push(`Found ${projects.projects.size} projects in workspace.`);
+  if (frameworks.size > 0) conventions.push(`Frameworks: ${[...frameworks].join(', ')}`);
+  if (uiLibs.size > 0) conventions.push(`UI libraries: ${[...uiLibs].join(', ')}`);
+  if (cssTools.size > 0) conventions.push(`CSS: ${[...cssTools].join(', ')}`);
+  if (databases.size > 0) conventions.push(`Databases: ${[...databases].join(', ')}`);
+  if (languages.size > 0) conventions.push(`Languages: ${[...languages].join(', ')}`);
+
+  return conventions.join('\n');
+}
+

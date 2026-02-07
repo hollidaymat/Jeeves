@@ -322,3 +322,113 @@ interface CostLog {
   totalSpent: number;
   lastUpdated: string;
 }
+
+// ============================================================================
+// Dashboard Data (for Cost Dashboard tab)
+// ============================================================================
+
+/**
+ * Load the persisted cost log (public export for dashboard use)
+ */
+export function getCostLog(): CostLog {
+  return loadCostLog();
+}
+
+/**
+ * Get cost for the current week (Mon-Sun)
+ */
+export function getWeeklyCost(): number {
+  const costLog = loadCostLog();
+  const now = new Date();
+  const dayOfWeek = now.getDay() || 7; // 1=Mon..7=Sun
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - dayOfWeek + 1);
+  monday.setHours(0, 0, 0, 0);
+  const mondayStr = monday.toISOString().split('T')[0];
+
+  let weekCost = 0;
+  for (const session of costLog.sessions) {
+    if (session.date >= mondayStr) {
+      weekCost += session.cost;
+    }
+  }
+  // Add current session's cost for today
+  const todayStr = now.toISOString().split('T')[0];
+  const todaySession = costLog.sessions.find(s => s.date === todayStr);
+  if (!todaySession) {
+    weekCost += dailyCosts.cost;
+  }
+  return weekCost;
+}
+
+/**
+ * Get cost for the current month
+ */
+export function getMonthlyCost(): number {
+  const costLog = loadCostLog();
+  const now = new Date();
+  const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+
+  let monthCost = 0;
+  for (const session of costLog.sessions) {
+    if (session.date >= monthStart) {
+      monthCost += session.cost;
+    }
+  }
+  // Add current session if today not yet persisted
+  const todayStr = now.toISOString().split('T')[0];
+  const todaySession = costLog.sessions.find(s => s.date === todayStr);
+  if (!todaySession) {
+    monthCost += dailyCosts.cost;
+  }
+  return monthCost;
+}
+
+/**
+ * Get structured data for the cost dashboard UI
+ */
+export function getCostDashboardData(monthlyLimit: number = 50): {
+  today: number;
+  week: number;
+  month: number;
+  limits: { daily: number; weekly: number; monthly: number };
+  byModel: Record<string, number>;
+  byCategory: Record<string, number>;
+  trend: number;
+} {
+  const costLog = loadCostLog();
+  const today = dailyCosts.cost;
+  const week = getWeeklyCost();
+  const month = getMonthlyCost();
+
+  // Calculate trend: compare this week vs last week
+  const now = new Date();
+  const dayOfWeek = now.getDay() || 7;
+  const lastMonday = new Date(now);
+  lastMonday.setDate(now.getDate() - dayOfWeek + 1 - 7);
+  const lastMondayStr = lastMonday.toISOString().split('T')[0];
+  const thisMondayStr = new Date(now.getTime() - (dayOfWeek - 1) * 86400000).toISOString().split('T')[0];
+
+  let lastWeekCost = 0;
+  for (const session of costLog.sessions) {
+    if (session.date >= lastMondayStr && session.date < thisMondayStr) {
+      lastWeekCost += session.cost;
+    }
+  }
+
+  const trend = lastWeekCost > 0 ? Math.round(((week - lastWeekCost) / lastWeekCost) * 100) : 0;
+
+  return {
+    today,
+    week,
+    month,
+    limits: {
+      daily: Math.round((monthlyLimit / 30) * 100) / 100,
+      weekly: Math.round((monthlyLimit / 4) * 100) / 100,
+      monthly: monthlyLimit,
+    },
+    byModel: { ...costsByCategory.byModel },
+    byCategory: { ...costsByCategory.byIntent },
+    trend,
+  };
+}

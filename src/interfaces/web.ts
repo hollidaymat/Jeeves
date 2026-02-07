@@ -17,6 +17,11 @@ import { getPendingChanges, setStreamCallback } from '../core/cursor-agent.js';
 import { exportConversations } from '../core/memory.js';
 import { onCheckpoint, getExecutionStatus } from '../core/prd-executor.js';
 import { isHomelabEnabled, getDashboardStatus } from '../homelab/index.js';
+import { collectServiceDetail } from '../homelab/services/collectors.js';
+import { getActivitySnapshot } from '../models/activity.js';
+import { getCostDashboardData } from '../core/cost-tracker.js';
+import { getProjects, addProject, moveTask } from '../models/projects.js';
+import { getVercelStatus } from '../api/vercel.js';
 import type { IncomingMessage, OutgoingMessage, MessageInterface, WSMessage, PrdCheckpoint } from '../types/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -101,6 +106,87 @@ export class WebInterface implements MessageInterface {
         res.json(status);
       } catch (error) {
         res.json({ enabled: false, error: String(error) });
+      }
+    });
+
+    // API: Service deep-dive detail
+    this.app.get('/api/homelab/service/:name', async (req: Request, res: Response) => {
+      try {
+        const data = await collectServiceDetail(req.params.name);
+        if (data) {
+          res.json(data);
+        } else {
+          res.json({ error: 'No detailed data available for this service' });
+        }
+      } catch (error) {
+        res.json({ error: String(error) });
+      }
+    });
+
+    // API: Activity snapshot
+    this.app.get('/api/activity', (_req: Request, res: Response) => {
+      try {
+        res.json(getActivitySnapshot());
+      } catch (error) {
+        res.json({ currentTask: null, queue: [], standingOrders: [], history: [], summary: { tasks: 0, cost: 0, failures: 0 } });
+      }
+    });
+
+    // API: Pause activity (placeholder)
+    this.app.post('/api/activity/pause', (_req: Request, res: Response) => {
+      res.json({ success: true, message: 'Pause acknowledged' });
+    });
+
+    // API: Cost dashboard
+    this.app.get('/api/costs', (_req: Request, res: Response) => {
+      try {
+        const monthlyLimit = config.trust?.monthly_spend_limit || 50;
+        res.json(getCostDashboardData(monthlyLimit));
+      } catch (error) {
+        res.json({ today: 0, week: 0, month: 0, limits: { daily: 0, weekly: 0, monthly: 0 }, byModel: {}, byCategory: {}, trend: 0 });
+      }
+    });
+
+    // API: Projects board
+    this.app.get('/api/projects-board', (_req: Request, res: Response) => {
+      try {
+        res.json({ projects: getProjects() });
+      } catch (error) {
+        res.json({ projects: [] });
+      }
+    });
+
+    // API: Create project
+    this.app.post('/api/projects-board', (req: Request, res: Response) => {
+      try {
+        const { name, description } = req.body;
+        if (!name) { res.status(400).json({ error: 'Name required' }); return; }
+        const project = addProject(name, description);
+        res.json(project);
+      } catch (error) {
+        res.status(500).json({ error: String(error) });
+      }
+    });
+
+    // API: Move task
+    this.app.patch('/api/projects-board/:projectId/tasks/:taskId', (req: Request, res: Response) => {
+      try {
+        const { projectId, taskId } = req.params;
+        const { status } = req.body;
+        const success = moveTask(projectId, taskId, status);
+        res.json({ success });
+      } catch (error) {
+        res.status(500).json({ error: String(error) });
+      }
+    });
+
+    // API: Vercel status
+    this.app.get('/api/vercel/status', async (_req: Request, res: Response) => {
+      try {
+        const status = await getVercelStatus();
+        res.json(status);
+      } catch (error) {
+        res.json({ enabled: false, projects: [] });
       }
     });
 
@@ -306,6 +392,11 @@ export class WebInterface implements MessageInterface {
       try {
         const status = await getDashboardStatus();
         this.broadcast({ type: 'homelab_status', payload: status });
+
+        // Also broadcast cost and activity data
+        const monthlyLimit = config.trust?.monthly_spend_limit || 50;
+        this.broadcast({ type: 'cost_update', payload: getCostDashboardData(monthlyLimit) });
+        this.broadcast({ type: 'activity_update', payload: getActivitySnapshot() });
       } catch {
         // Non-critical, skip this cycle
       }

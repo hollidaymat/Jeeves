@@ -34,6 +34,7 @@ import {
   setPreference
 } from './memory.js';
 import { forceCompact, getCompactionStatus } from './session-compactor.js';
+import { setCurrentTask, completeTask, failTask, updateTaskProgress } from '../models/activity.js';
 import { 
   submitPrd, 
   approvePlan, 
@@ -332,21 +333,33 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
       };
     }
 
+    // Track activity
+    setCurrentTask({
+      name: intent.action.replace(/_/g, ' '),
+      phase: 1,
+      totalPhases: 1,
+      progress: 0,
+      startedAt: new Date().toISOString(),
+      cost: 0,
+    });
+
     // Get current trust level for gating
     const currentTrust = getTrustLevel();
 
     const result = await executeHomelabAction(intent, currentTrust);
 
-    // Post-execution hooks for 6-layer context learning
+    // Complete activity tracking
     if (result.success) {
+      completeTask({ cost: 0 });
       recordSuccess(
         { message: intent.message || intent.action, action: intent.action, target: intent.target },
         [intent.action, intent.target || ''].filter(Boolean)
       ).catch(() => {});
     } else if (result.error) {
+      failTask(result.error);
       recordError(
         result.error,
-        'pending',  // fix will be recorded when user retries successfully
+        'pending',
         intent.action.startsWith('media_') ? 'media' : 'homelab',
         intent.target
       ).catch(() => {});
@@ -455,12 +468,26 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
         duration_ms: Date.now() - startTime
       };
     }
-    const response = await sendToAgent(intent.prompt, intent.attachments);
-    return {
-      success: true,
-      output: response,
-      duration_ms: Date.now() - startTime
-    };
+    setCurrentTask({
+      name: 'AI request',
+      phase: 1,
+      totalPhases: 1,
+      progress: 0,
+      startedAt: new Date().toISOString(),
+      cost: 0,
+    });
+    try {
+      const response = await sendToAgent(intent.prompt, intent.attachments);
+      completeTask();
+      return {
+        success: true,
+        output: response,
+        duration_ms: Date.now() - startTime
+      };
+    } catch (err) {
+      failTask(String(err));
+      throw err;
+    }
   }
   
   // AUTONOMOUS BUILD - fully autonomous loop that builds to completion

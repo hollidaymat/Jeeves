@@ -13,7 +13,7 @@
     <header class="header">
       <div class="header-left">
         <div class="logo">
-          <span class="logo-icon">⌘</span>
+          <span class="logo-icon">&#8984;</span>
           <span class="logo-text">JEEVES</span>
         </div>
         <div class="status-badge" id="connection-status">
@@ -26,167 +26,351 @@
       </div>
     </header>
 
-    <!-- Main Grid -->
-    <main class="main-grid">
-      <!-- Left Column: Console + Changes -->
-      <div class="left-column">
-        <!-- Command Console -->
-        <section class="panel command-console">
+    <!-- Tab Navigation -->
+    <nav class="tab-bar">
+      <button class="tab-btn active" data-tab="console">CONSOLE</button>
+      <button class="tab-btn" data-tab="homelab">HOMELAB</button>
+      <button class="tab-btn" data-tab="activity">ACTIVITY</button>
+      <button class="tab-btn" data-tab="projects">PROJECTS</button>
+      <button class="tab-btn" data-tab="sites">SITES</button>
+      <button class="tab-btn" data-tab="costs">COSTS</button>
+    </nav>
+
+    <!-- ============================================================ -->
+    <!-- TAB: CONSOLE (default) -->
+    <!-- ============================================================ -->
+    <div class="tab-content active" data-tab="console">
+      <main class="main-grid">
+        <!-- Left Column: Console + Changes -->
+        <div class="left-column">
+          <!-- Command Console -->
+          <section class="panel command-console">
+            <div class="panel-header">
+              <h2>COMMAND CONSOLE</h2>
+              <div class="panel-indicator active"></div>
+            </div>
+            <div class="console-output" id="console-output">
+              <div class="console-line system">
+                <span class="timestamp">[--:--:--]</span>
+                <span class="message">Initializing command console...</span>
+              </div>
+            </div>
+            <form class="console-input" id="command-form">
+              <span class="prompt">&#10095;</span>
+              <div class="input-wrapper">
+                <textarea id="command-input" placeholder="Enter command..." autocomplete="off" autofocus rows="1"></textarea>
+                <div class="attachments-preview" id="attachments-preview"></div>
+              </div>
+              <input type="file" id="file-input" accept=".md,.txt,.csv,.xml,.json,.doc,.docx,.png,.jpg,.jpeg,.gif,.webp" multiple style="display:none">
+              <button type="button" class="attach-btn" id="attach-btn" title="Attach files (md, doc, csv, xml, json, images)">&#128206;</button>
+              <button type="submit" class="send-btn">SEND</button>
+            </form>
+          </section>
+
+          <!-- Code Changes Panel -->
+          <section class="panel changes-panel" id="changes-panel">
+            <div class="panel-header">
+              <h2>PENDING CHANGES</h2>
+              <span class="changes-count" id="changes-count">0 files</span>
+            </div>
+            <div class="changes-content" id="changes-content">
+              <div class="no-changes">No pending changes</div>
+            </div>
+            <div class="changes-actions" id="changes-actions" style="display: none;">
+              <button class="cmd-btn apply-btn" id="apply-btn">APPLY ALL</button>
+              <button class="cmd-btn danger reject-btn" id="reject-btn">REJECT</button>
+            </div>
+          </section>
+        </div>
+
+        <!-- Right Column -->
+        <aside class="right-column">
+          <!-- System Status -->
+          <section class="panel status-panel">
+            <div class="panel-header">
+              <h2>SYSTEM STATUS</h2>
+            </div>
+            <div class="status-grid">
+              <div class="status-item">
+                <span class="status-label">Signal Interface</span>
+                <span class="status-value" id="signal-status">UNAVAILABLE</span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">Web Interface</span>
+                <span class="status-value connected" id="web-status">CONNECTED</span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">Projects Loaded</span>
+                <span class="status-value" id="projects-count">0</span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">Messages Today</span>
+                <span class="status-value" id="messages-count">0</span>
+              </div>
+            </div>
+          </section>
+
+          <!-- Agent Status -->
+          <section class="panel agent-panel">
+            <div class="panel-header">
+              <h2>CURSOR AGENT</h2>
+              <div class="panel-indicator" id="agent-indicator"></div>
+            </div>
+            <div class="agent-status">
+              <div class="agent-state" id="agent-state">INACTIVE</div>
+              <div class="agent-info" id="agent-info">No active session</div>
+            </div>
+            <div class="agent-controls">
+              <button class="cmd-btn agent-btn" data-command="agent status">STATUS</button>
+              <button class="cmd-btn agent-btn danger" id="agent-stop-btn" data-command="agent stop" disabled>STOP</button>
+            </div>
+          </section>
+
+          <!-- Quick Commands -->
+          <section class="panel quick-commands">
+            <div class="panel-header">
+              <h2>QUICK COMMANDS</h2>
+            </div>
+            <div class="command-buttons">
+              <button class="cmd-btn" data-command="status">STATUS</button>
+              <button class="cmd-btn" data-command="list projects">PROJECTS</button>
+              <button class="cmd-btn" data-command="help">HELP</button>
+              <button class="cmd-btn" data-command="trust">TRUST</button>
+            </div>
+            <div class="command-buttons" style="margin-top: 8px;">
+              <button class="cmd-btn download-btn" id="download-json" title="Download as JSON">EXPORT JSON</button>
+              <button class="cmd-btn download-btn" id="download-md" title="Download as Markdown">EXPORT MD</button>
+            </div>
+          </section>
+
+          <!-- Projects -->
+          <section class="panel projects-panel">
+            <div class="panel-header">
+              <h2>PROJECTS</h2>
+              <button class="refresh-btn" id="refresh-projects">&#8635;</button>
+            </div>
+            <div class="projects-list" id="projects-list">
+              <div class="loading">Scanning projects...</div>
+            </div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- TAB: HOMELAB -->
+    <!-- ============================================================ -->
+    <div class="tab-content" data-tab="homelab">
+      <div class="homelab-fullpage" id="homelab-dashboard">
+        <div class="homelab-top-bar">
+          <!-- Resource Gauges -->
+          <div class="resource-gauges" id="resource-gauges">
+            <div class="gauge" id="gauge-cpu">
+              <div class="gauge-label">CPU</div>
+              <div class="gauge-bar"><div class="gauge-fill" id="gauge-fill-cpu"></div></div>
+              <div class="gauge-value" id="gauge-value-cpu">--%</div>
+            </div>
+            <div class="gauge" id="gauge-ram">
+              <div class="gauge-label">RAM</div>
+              <div class="gauge-bar"><div class="gauge-fill" id="gauge-fill-ram"></div></div>
+              <div class="gauge-value" id="gauge-value-ram">--%</div>
+            </div>
+            <div class="gauge" id="gauge-disk">
+              <div class="gauge-label">DISK</div>
+              <div class="gauge-bar"><div class="gauge-fill" id="gauge-fill-disk"></div></div>
+              <div class="gauge-value" id="gauge-value-disk">--%</div>
+            </div>
+            <div class="gauge" id="gauge-temp">
+              <div class="gauge-label">TEMP</div>
+              <div class="gauge-bar"><div class="gauge-fill" id="gauge-fill-temp"></div></div>
+              <div class="gauge-value" id="gauge-value-temp">--&deg;C</div>
+            </div>
+          </div>
+          <!-- Health Summary -->
+          <div class="health-summary" id="health-summary">
+            <span class="health-stat healthy"><span class="health-dot green"></span> <span id="health-ok">0</span></span>
+            <span class="health-stat unhealthy"><span class="health-dot red"></span> <span id="health-bad">0</span></span>
+            <span class="health-stat unknown"><span class="health-dot gray"></span> <span id="health-unknown">0</span></span>
+          </div>
+          <button class="refresh-btn homelab-refresh-btn" id="homelab-refresh" title="Refresh">&#8635;</button>
+        </div>
+        <!-- Service Grid (full width) -->
+        <div class="service-grid service-grid-full" id="service-grid">
+          <div class="loading">Loading services...</div>
+        </div>
+        <!-- Alerts -->
+        <div class="homelab-alerts" id="homelab-alerts"></div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- TAB: ACTIVITY -->
+    <!-- ============================================================ -->
+    <div class="tab-content" data-tab="activity">
+      <div class="activity-page" id="activity-page">
+        <!-- Current Task -->
+        <section class="panel activity-current" id="activity-current">
           <div class="panel-header">
-            <h2>COMMAND CONSOLE</h2>
-            <div class="panel-indicator active"></div>
+            <h2>CURRENT TASK</h2>
+            <button class="cmd-btn" id="activity-pause-btn">PAUSE</button>
           </div>
-          <div class="console-output" id="console-output">
-            <div class="console-line system">
-              <span class="timestamp">[--:--:--]</span>
-              <span class="message">Initializing command console...</span>
-            </div>
+          <div class="activity-current-body" id="activity-current-body">
+            <div class="no-changes">No active task</div>
           </div>
-          <form class="console-input" id="command-form">
-            <span class="prompt">❯</span>
-            <div class="input-wrapper">
-              <textarea id="command-input" placeholder="Enter command..." autocomplete="off" autofocus rows="1"></textarea>
-              <div class="attachments-preview" id="attachments-preview"></div>
-            </div>
-            <input type="file" id="file-input" accept=".md,.txt,.csv,.xml,.json,.doc,.docx,.png,.jpg,.jpeg,.gif,.webp" multiple style="display:none">
-            <button type="button" class="attach-btn" id="attach-btn" title="Attach files (md, doc, csv, xml, json, images)">📎</button>
-            <button type="submit" class="send-btn">SEND</button>
-          </form>
         </section>
 
-        <!-- Code Changes Panel -->
-        <section class="panel changes-panel" id="changes-panel">
+        <div class="activity-columns">
+          <!-- Queue -->
+          <section class="panel activity-queue">
+            <div class="panel-header">
+              <h2>QUEUE</h2>
+              <span class="activity-count" id="queue-count">0</span>
+            </div>
+            <div class="activity-list" id="activity-queue-list">
+              <div class="no-changes">Queue empty</div>
+            </div>
+          </section>
+
+          <!-- Standing Orders -->
+          <section class="panel activity-standing">
+            <div class="panel-header">
+              <h2>STANDING ORDERS</h2>
+            </div>
+            <div class="activity-list" id="activity-standing-list">
+              <div class="no-changes">No standing orders</div>
+            </div>
+          </section>
+        </div>
+
+        <!-- Recent Activity -->
+        <section class="panel activity-recent">
           <div class="panel-header">
-            <h2>PENDING CHANGES</h2>
-            <span class="changes-count" id="changes-count">0 files</span>
+            <h2>RECENT (last 24h)</h2>
           </div>
-          <div class="changes-content" id="changes-content">
-            <div class="no-changes">No pending changes</div>
+          <div class="activity-list" id="activity-recent-list">
+            <div class="no-changes">No recent activity</div>
           </div>
-          <div class="changes-actions" id="changes-actions" style="display: none;">
-            <button class="cmd-btn apply-btn" id="apply-btn">APPLY ALL</button>
-            <button class="cmd-btn danger reject-btn" id="reject-btn">REJECT</button>
+          <div class="activity-summary" id="activity-summary">
+            TODAY: 0 tasks &middot; $0.000 spent &middot; 0 failures
           </div>
         </section>
       </div>
+    </div>
 
-      <!-- Right Column -->
-      <aside class="right-column">
-        <!-- System Status -->
-        <section class="panel status-panel">
-          <div class="panel-header">
-            <h2>SYSTEM STATUS</h2>
+    <!-- ============================================================ -->
+    <!-- TAB: PROJECTS (Kanban) -->
+    <!-- ============================================================ -->
+    <div class="tab-content" data-tab="projects">
+      <div class="projects-page" id="projects-page">
+        <div class="projects-top-bar">
+          <div class="project-tabs" id="project-tabs">
+            <!-- Project selector tabs rendered by JS -->
           </div>
-          <div class="status-grid">
-            <div class="status-item">
-              <span class="status-label">Signal Interface</span>
-              <span class="status-value" id="signal-status">UNAVAILABLE</span>
+          <button class="cmd-btn" id="add-project-btn">+ NEW PROJECT</button>
+        </div>
+        <div class="kanban-board" id="kanban-board">
+          <div class="kanban-column" data-status="backlog">
+            <div class="kanban-column-header">
+              <h3>BACKLOG</h3>
+              <span class="kanban-count" id="kanban-count-backlog">0</span>
             </div>
-            <div class="status-item">
-              <span class="status-label">Web Interface</span>
-              <span class="status-value connected" id="web-status">CONNECTED</span>
-            </div>
-            <div class="status-item">
-              <span class="status-label">Projects Loaded</span>
-              <span class="status-value" id="projects-count">0</span>
-            </div>
-            <div class="status-item">
-              <span class="status-label">Messages Today</span>
-              <span class="status-value" id="messages-count">0</span>
-            </div>
+            <div class="kanban-cards" data-status="backlog"></div>
           </div>
-        </section>
+          <div class="kanban-column" data-status="in_progress">
+            <div class="kanban-column-header">
+              <h3>IN PROGRESS</h3>
+              <span class="kanban-count" id="kanban-count-in_progress">0</span>
+            </div>
+            <div class="kanban-cards" data-status="in_progress"></div>
+          </div>
+          <div class="kanban-column" data-status="review">
+            <div class="kanban-column-header">
+              <h3>REVIEW</h3>
+              <span class="kanban-count" id="kanban-count-review">0</span>
+            </div>
+            <div class="kanban-cards" data-status="review"></div>
+          </div>
+          <div class="kanban-column" data-status="done">
+            <div class="kanban-column-header">
+              <h3>DONE</h3>
+              <span class="kanban-count" id="kanban-count-done">0</span>
+            </div>
+            <div class="kanban-cards" data-status="done"></div>
+          </div>
+        </div>
+        <div class="kanban-footer" id="kanban-footer">
+          VELOCITY: -- pts/week
+        </div>
+      </div>
+    </div>
 
-        <!-- Agent Status -->
-        <section class="panel agent-panel">
-          <div class="panel-header">
-            <h2>CURSOR AGENT</h2>
-            <div class="panel-indicator" id="agent-indicator"></div>
-          </div>
-          <div class="agent-status">
-            <div class="agent-state" id="agent-state">INACTIVE</div>
-            <div class="agent-info" id="agent-info">No active session</div>
-          </div>
-          <div class="agent-controls">
-            <button class="cmd-btn agent-btn" data-command="agent status">STATUS</button>
-            <button class="cmd-btn agent-btn danger" id="agent-stop-btn" data-command="agent stop" disabled>STOP</button>
-          </div>
-        </section>
+    <!-- ============================================================ -->
+    <!-- TAB: SITES (Vercel) -->
+    <!-- ============================================================ -->
+    <div class="tab-content" data-tab="sites">
+      <div class="sites-page" id="sites-page">
+        <div class="sites-grid" id="sites-grid">
+          <div class="no-changes">Configure VERCEL_API_TOKEN to enable site monitoring</div>
+        </div>
+        <div class="sites-summary" id="sites-summary"></div>
+      </div>
+    </div>
 
-        <!-- Quick Commands -->
-        <section class="panel quick-commands">
-          <div class="panel-header">
-            <h2>QUICK COMMANDS</h2>
+    <!-- ============================================================ -->
+    <!-- TAB: COSTS -->
+    <!-- ============================================================ -->
+    <div class="tab-content" data-tab="costs">
+      <div class="costs-page" id="costs-page">
+        <!-- Period Cost Bars -->
+        <div class="cost-periods">
+          <div class="cost-period">
+            <div class="cost-period-header">
+              <span class="cost-period-label">TODAY</span>
+              <span class="cost-period-value" id="cost-today">$0.000</span>
+            </div>
+            <div class="cost-period-limit">/<span id="cost-limit-daily">$0.00</span> limit</div>
+            <div class="gauge-bar cost-bar"><div class="gauge-fill" id="cost-fill-daily"></div></div>
           </div>
-          <div class="command-buttons">
-            <button class="cmd-btn" data-command="status">STATUS</button>
-            <button class="cmd-btn" data-command="list projects">PROJECTS</button>
-            <button class="cmd-btn" data-command="help">HELP</button>
-            <button class="cmd-btn" data-command="trust">TRUST</button>
+          <div class="cost-period">
+            <div class="cost-period-header">
+              <span class="cost-period-label">THIS WEEK</span>
+              <span class="cost-period-value" id="cost-week">$0.000</span>
+            </div>
+            <div class="cost-period-limit">/<span id="cost-limit-weekly">$0.00</span> limit</div>
+            <div class="gauge-bar cost-bar"><div class="gauge-fill" id="cost-fill-weekly"></div></div>
           </div>
-          <div class="command-buttons" style="margin-top: 8px;">
-            <button class="cmd-btn download-btn" id="download-json" title="Download as JSON">EXPORT JSON</button>
-            <button class="cmd-btn download-btn" id="download-md" title="Download as Markdown">EXPORT MD</button>
+          <div class="cost-period">
+            <div class="cost-period-header">
+              <span class="cost-period-label">THIS MONTH</span>
+              <span class="cost-period-value" id="cost-month">$0.000</span>
+            </div>
+            <div class="cost-period-limit">/<span id="cost-limit-monthly">$0.00</span> limit</div>
+            <div class="gauge-bar cost-bar"><div class="gauge-fill" id="cost-fill-monthly"></div></div>
           </div>
-        </section>
+        </div>
 
-        <!-- Homelab Dashboard -->
-        <section class="panel homelab-dashboard" id="homelab-dashboard" style="display: none;">
-          <div class="panel-header">
-            <h2>HOMELAB</h2>
-            <div class="homelab-refresh-btn" id="homelab-refresh" title="Refresh">↻</div>
-          </div>
-          <div class="homelab-content">
-            <!-- Resource Gauges -->
-            <div class="resource-gauges" id="resource-gauges">
-              <div class="gauge" id="gauge-cpu">
-                <div class="gauge-label">CPU</div>
-                <div class="gauge-bar"><div class="gauge-fill" id="gauge-fill-cpu"></div></div>
-                <div class="gauge-value" id="gauge-value-cpu">--%</div>
-              </div>
-              <div class="gauge" id="gauge-ram">
-                <div class="gauge-label">RAM</div>
-                <div class="gauge-bar"><div class="gauge-fill" id="gauge-fill-ram"></div></div>
-                <div class="gauge-value" id="gauge-value-ram">--%</div>
-              </div>
-              <div class="gauge" id="gauge-disk">
-                <div class="gauge-label">DISK</div>
-                <div class="gauge-bar"><div class="gauge-fill" id="gauge-fill-disk"></div></div>
-                <div class="gauge-value" id="gauge-value-disk">--%</div>
-              </div>
-              <div class="gauge" id="gauge-temp">
-                <div class="gauge-label">TEMP</div>
-                <div class="gauge-bar"><div class="gauge-fill" id="gauge-fill-temp"></div></div>
-                <div class="gauge-value" id="gauge-value-temp">--°C</div>
-              </div>
+        <div class="cost-breakdown">
+          <!-- By Model -->
+          <section class="panel cost-by-model">
+            <div class="panel-header"><h2>BY MODEL</h2></div>
+            <div class="cost-breakdown-list" id="cost-by-model-list">
+              <div class="no-changes">No cost data yet</div>
             </div>
-            <!-- Health Summary -->
-            <div class="health-summary" id="health-summary">
-              <span class="health-stat healthy"><span class="health-dot green"></span> <span id="health-ok">0</span></span>
-              <span class="health-stat unhealthy"><span class="health-dot red"></span> <span id="health-bad">0</span></span>
-              <span class="health-stat unknown"><span class="health-dot gray"></span> <span id="health-unknown">0</span></span>
+          </section>
+          <!-- By Category -->
+          <section class="panel cost-by-category">
+            <div class="panel-header"><h2>BY CATEGORY</h2></div>
+            <div class="cost-breakdown-list" id="cost-by-category-list">
+              <div class="no-changes">No cost data yet</div>
             </div>
-            <!-- Service Grid -->
-            <div class="service-grid" id="service-grid">
-              <div class="loading">Loading services...</div>
-            </div>
-            <!-- Alerts -->
-            <div class="homelab-alerts" id="homelab-alerts"></div>
-          </div>
-        </section>
+          </section>
+        </div>
 
-        <!-- Projects -->
-        <section class="panel projects-panel">
-          <div class="panel-header">
-            <h2>PROJECTS</h2>
-            <button class="refresh-btn" id="refresh-projects">↻</button>
-          </div>
-          <div class="projects-list" id="projects-list">
-            <div class="loading">Scanning projects...</div>
-          </div>
-        </section>
-      </aside>
-    </main>
+        <div class="cost-trend" id="cost-trend">
+          TREND: -- vs last week
+        </div>
+      </div>
+    </div>
 
     <!-- Footer -->
     <footer class="footer">

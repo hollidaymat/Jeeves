@@ -360,8 +360,28 @@ class CommandCenter {
   handleLog(log) {
     if (log.level === 'debug') return;
     if (!log.message || log.message.trim() === '') return;
-    if (/^Using .* model/i.test(log.message)) return;
-    if (/^Prompt analysis/i.test(log.message)) return;
+    
+    // Filter out internal operational logs that clutter the chat
+    const msg = log.message;
+    const SUPPRESSED = [
+      /^Using .* model/i,
+      /^Prompt analysis/i,
+      /^\[security-monitor\]/i,
+      /^\[security-response\]/i,
+      /^\[vercel-security\]/i,
+      /^\[COST\]/i,
+      /^Self-update:/i,
+      /^Scout loop/i,
+      /^Scheduler ran task/i,
+      /^Signal (connection timeout|socket error|socket closed|Reconnecting)/i,
+      /^Checking capabilities/i,
+      /^Pending plan check/i,
+      /^No plan or changes/i,
+      /^Approval pattern/i,
+      /confidence_scoring/i,
+      /reasoning_orient/i,
+    ];
+    if (SUPPRESSED.some(p => p.test(msg))) return;
     
     const type = log.level === 'error' ? 'error' : 
                  log.level === 'warn' ? 'error' : 'system';

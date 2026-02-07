@@ -134,9 +134,9 @@ export function trackLLMUsage(
     resolutionMethod: 'llm'
   });
   
-  // Log for visibility
+  // Log for visibility (debug level — viewable in Costs tab, not in chat)
   const cacheTag = cached ? ' [CACHED]' : '';
-  logger.info(`[COST] ${intent}: ${model}${cacheTag} - ${inputTokens}+${outputTokens} tokens = $${cost.toFixed(4)}`);
+  logger.debug(`[COST] ${intent}: ${model}${cacheTag} - ${inputTokens}+${outputTokens} tokens = $${cost.toFixed(4)}`);
 }
 
 /**

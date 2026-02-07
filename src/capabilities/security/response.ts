@@ -27,7 +27,7 @@ import type { SecurityEvent, ResponseAction } from './types.js';
  * notification messages).
  */
 export async function executePlaybook(event: SecurityEvent): Promise<string> {
-  logger.info(`[security-response] Executing playbook for ${event.type}`, {
+  logger.debug(`[security-response] Executing playbook for ${event.type}`, {
     project: event.projectName,
     severity: event.severity,
   });
@@ -62,7 +62,7 @@ export async function executePlaybook(event: SecurityEvent): Promise<string> {
     summary += `\n\nTriage: ${triageMessage}`;
   }
 
-  logger.info(`[security-response] Playbook complete: ${event.type}`, { summary });
+  logger.debug(`[security-response] Playbook complete: ${event.type}`, { summary });
   return summary;
 }
 
@@ -74,7 +74,7 @@ async function handleTrafficSpike(event: SecurityEvent): Promise<string> {
   const actions: string[] = [];
 
   // Auto-action: enable attack challenge mode
-  logger.info(`[security-response] Traffic spike detected for ${event.projectName} — enabling attack mode`);
+  logger.debug(`[security-response] Traffic spike detected for ${event.projectName} — enabling attack mode`);
   const result = await setAttackMode(event.projectId, true);
   if (result) {
     actions.push('Enabled Vercel Attack Challenge Mode');
@@ -92,7 +92,7 @@ async function handleErrorSpike(event: SecurityEvent): Promise<string> {
   const actions: string[] = [];
 
   // Auto-action: compare to previous deployment
-  logger.info(`[security-response] Error spike detected for ${event.projectName}`);
+  logger.debug(`[security-response] Error spike detected for ${event.projectName}`);
   const deploys = await getDeployments(event.projectId, 5);
 
   if (deploys && deploys.length >= 2) {
@@ -122,7 +122,7 @@ async function handleErrorSpike(event: SecurityEvent): Promise<string> {
 async function handleSSLExpiry(event: SecurityEvent): Promise<string> {
   const actions: string[] = [];
 
-  logger.info(`[security-response] SSL expiry warning for ${event.projectName}`);
+  logger.debug(`[security-response] SSL expiry warning for ${event.projectName}`);
 
   // Vercel auto-renews Let's Encrypt certs, so this mainly fires for
   // custom / manually-uploaded certificates.
@@ -137,7 +137,7 @@ async function handleSSLExpiry(event: SecurityEvent): Promise<string> {
 async function handleDeployFailed(event: SecurityEvent): Promise<string> {
   const actions: string[] = [];
 
-  logger.info(`[security-response] Deploy failure detected for ${event.projectName}`);
+  logger.debug(`[security-response] Deploy failure detected for ${event.projectName}`);
 
   // Fetch recent deployments to identify the error pattern
   const deploys = await getDeployments(event.projectId, 5);
@@ -166,7 +166,7 @@ async function handleDeployFailed(event: SecurityEvent): Promise<string> {
 async function handleBotTraffic(event: SecurityEvent): Promise<string> {
   const actions: string[] = [];
 
-  logger.info(`[security-response] Bot traffic pattern detected for ${event.projectName}`);
+  logger.debug(`[security-response] Bot traffic pattern detected for ${event.projectName}`);
 
   actions.push('Suspicious bot traffic pattern detected');
   actions.push('Recommendation: Review WAF rules and consider adding rate limiting');

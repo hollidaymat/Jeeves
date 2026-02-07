@@ -100,13 +100,13 @@ export class SignalInterface implements MessageInterface {
         });
         
         this.socket.on('error', (error: Error) => {
-          logger.error('Signal socket error', { error: error.message });
+          logger.debug('Signal socket error', { error: error.message });
           this.connected = false;
           this.scheduleReconnect();
         });
         
         this.socket.on('close', () => {
-          logger.warn('Signal socket closed');
+          logger.debug('Signal socket closed');
           this.connected = false;
           this.scheduleReconnect();
         });
@@ -114,13 +114,13 @@ export class SignalInterface implements MessageInterface {
         // Timeout for initial connection
         setTimeout(() => {
           if (!this.connected) {
-            logger.warn('Signal connection timeout - daemon may not be running');
+            logger.debug('Signal connection timeout - daemon may not be running');
             resolve();
           }
         }, 5000);
         
       } catch (error) {
-        logger.error('Failed to connect to signal-cli', { error: String(error) });
+        logger.debug('Failed to connect to signal-cli', { error: String(error) });
         this.scheduleReconnect();
         resolve();
       }
@@ -130,14 +130,14 @@ export class SignalInterface implements MessageInterface {
   private scheduleReconnect(): void {
     if (this.reconnectTimer) return;
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      logger.error('Max reconnect attempts reached for Signal');
+      logger.warn('Max reconnect attempts reached for Signal');
       return;
     }
     
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 60000);
     this.reconnectAttempts++;
     
-    logger.info(`Reconnecting to Signal in ${delay / 1000}s (attempt ${this.reconnectAttempts})`);
+    logger.debug(`Reconnecting to Signal in ${delay / 1000}s (attempt ${this.reconnectAttempts})`);
     
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -282,7 +282,7 @@ export class SignalInterface implements MessageInterface {
   
   private sendRpc(request: JsonRpcRequest): void {
     if (!this.socket || !this.connected) {
-      logger.warn('Cannot send RPC: not connected to signal-cli');
+      logger.debug('Cannot send RPC: not connected to signal-cli');
       return;
     }
     
@@ -311,7 +311,7 @@ export class SignalInterface implements MessageInterface {
   
   async send(message: OutgoingMessage): Promise<void> {
     if (!this.connected || !this.socket) {
-      logger.warn('Cannot send via Signal: not connected');
+      logger.debug('Cannot send via Signal: not connected');
       return;
     }
     

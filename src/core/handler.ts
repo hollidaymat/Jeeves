@@ -685,13 +685,17 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
         (trimmed.length < 200 && !/^(open|edit|fix|add|create|update|delete|run|deploy|build|push|pull|commit|install|test|scan|check|show|list|get|set|find|search)\s/i.test(trimmed)) &&
         (
           // Feedback / meta-conversation
-          /\b(feedback|conversation|your\s+performance|how\s+you|about\s+you|self.?assess|pretty\s+(cool|amazing|good|great|awesome)|well\s+done|good\s+job|nice\s+work|impressed|just\s+for\s+(you|reference)|for\s+your\s+records)\b/i.test(lower) ||
+          /\b(feedback|conversation|your\s+performance|how\s+you|about\s+you|self.?assess|pretty\s+(cool|amazing|good|great|awesome)|well\s+done|good\s+job|nice\s+work|impressed|just\s+for\s+(you|reference)|for\s+your\s+records|more\s+features?\s+for\s+you|added.*for\s+you)\b/i.test(lower) ||
           // Casual chat / greetings
           /^(hey|hi|hello|yo|sup|good\s+(morning|afternoon|evening|night)|thanks?|thank\s+you|cheers|nice|cool|great|awesome|perfect|sweet|dope|sick|brilliant|love\s+it|that'?s?\s+(it|all|great|cool|good|amazing)|no\s*,?\s*that'?s?\s*(it|all|fine|good)|never\s*mind|nah|ok(ay)?|got\s+it|understood|i\s+(see|know|understand|get\s+it)|we'?re?\s+(good|done|all\s+set)|haha|lol|wow|damn)\s*[.!]?$/i.test(lower) ||
           // Opinions / reflections (not commands)
-          /^(i\s+(think|feel|believe|love|hate|like|prefer|wish|wonder)|that\s+(is|was|looks?|seems?|feels?)|this\s+(is|was)|it'?s?\s+(pretty|really|very|quite|so)|what\s+do\s+you\s+think|how\s+do\s+you\s+feel)/i.test(lower) ||
+          /^(i\s+(think|feel|believe|love|hate|like|prefer|wish|wonder|just)|that\s+(is|was|looks?|seems?|feels?)|this\s+(is|was)|it'?s?\s+(pretty|really|very|quite|so)|what\s+do\s+you\s+think|how\s+do\s+you\s+feel)/i.test(lower) ||
           // Questions about Jeeves itself
-          /\b(are\s+you|do\s+you|can\s+you\s+(feel|think|learn)|what\s+are\s+you|who\s+are\s+you|tell\s+me\s+about\s+yourself)\b/i.test(lower)
+          /\b(are\s+you|do\s+you|can\s+you\s+(feel|think|learn)|what\s+are\s+you|who\s+are\s+you|tell\s+me\s+about\s+yourself)\b/i.test(lower) ||
+          // Chat intent — wants to talk, not execute a command
+          /\b(just\s+want(ed)?\s+to\s+(chat|talk|say|check\s+in|catch\s+up|hang)|let'?s?\s+(chat|talk|catch\s+up)|how'?s?\s+(it\s+going|everything|things|your\s+day|life)|what'?s?\s+(up|new|good|happening|going\s+on)|how\s+are\s+you|you\s+good|what\s+have\s+you\s+been|been\s+up\s+to|having\s+a\s+good|you\s+there|you\s+around|you\s+busy)\b/i.test(lower) ||
+          // Short non-command messages (< 60 chars, no command-like structure)
+          (trimmed.length < 60 && !/[.]\s*\w/.test(trimmed) && !/^(status|help|trust|projects?|homelab|security|scout|uptime|cost|changelog|merge|approve|reject|suggest|briefing)/i.test(lower))
         )
       );
 

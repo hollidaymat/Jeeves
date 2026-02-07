@@ -699,7 +699,7 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
           // Casual chat about the day / coding / work (non-command chatter)
           /\b(been\s+coding|finally\s+(done|finished)|feels?\s+good|long\s+day|what\s+a\s+(day|night|week)|so\s+tired|taking\s+a\s+break|just\s+finished)\b/i.test(lower) ||
           // Short non-command messages (< 60 chars, no command-like structure)
-          (trimmed.length < 60 && !/[.]\s*\w/.test(trimmed) && !/^(status|help|trust|projects?|homelab|security|scout|uptime|cost|changelog|merge|approve|reject|suggest|briefing)/i.test(lower))
+          (trimmed.length < 60 && !/[.]\s*\w/.test(trimmed) && !/^(status|help|trust|projects?|homelab|security|scout|uptime|cost|changelog|merge|approve|reject|suggest|briefing|use\s|backup|browser|dev\s|terminal|process|downloads?|queue|stacks?|containers?|docker|firewall|self.?test)/i.test(lower))
         )
       );
 

@@ -109,7 +109,7 @@ const defaultConfig: Config = {
     backupsDir: '/opt/backups',
     dataDir: '/data',
     maxRamMB: 14336,             // 14GB hard limit (reserve 2GB for OS + Jeeves)
-    monitorInterval: 60000,      // Check every 60 seconds
+    monitorInterval: 300000,     // Check every 5 minutes (was 60s, ufw calls are expensive)
     thresholds: {
       cpu: { warning: 80, critical: 95 },
       ram: { warning: 85, critical: 95 },

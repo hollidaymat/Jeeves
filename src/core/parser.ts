@@ -967,6 +967,30 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
     };
   }
   
+  // Short conversational replies that don't match any specific context
+  // These should NOT be shipped to the AI agent with 120KB of project context.
+  // Catch them here and respond cheaply instead of falling through to agent_ask.
+  if (/^(?:ok|okay|sure|yep|yup|yeah|yes|no|nah|nope|thanks|thank you|got it|sounds good|perfect|nice|cool|great|good|right|understood|acknowledged|roger|copy|k|kk)\.?!?$/i.test(lower)) {
+    return {
+      action: 'status',
+      confidence: 0.8,
+      resolutionMethod: 'pattern',
+      estimatedCost: 0,
+      message: 'Acknowledged. What would you like me to do next?'
+    };
+  }
+
+  // Short numbered replies like "1 and 2", "1, 2, and 3" when no media pending
+  if (/^\d[\d,\s]+(?:and\s+\d+)?\.?$/.test(lower) && lower.length < 20) {
+    return {
+      action: 'status',
+      confidence: 0.7,
+      resolutionMethod: 'pattern',
+      estimatedCost: 0,
+      message: `Got it: "${trimmed}". What should I do with that? (No active selection context)`
+    };
+  }
+
   // Continue project - AUTONOMOUS BUILD - loops until complete
   if (PATTERNS.continueProject.test(lower)) {
     return {

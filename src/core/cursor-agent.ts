@@ -652,8 +652,8 @@ export async function executePendingPlan(): Promise<{ success: boolean; results:
 
 // File extensions to include in context
 const CODE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs', '.md', '.json', '.sql', '.css', '.html'];
-const MAX_FILE_SIZE = 50000;  // 50KB max per file
-const MAX_TOTAL_CONTEXT = 300000;  // 300KB max total context (Claude can handle much more)
+const MAX_FILE_SIZE = 30000;  // 30KB max per file
+const MAX_TOTAL_CONTEXT = 120000;  // 120KB max total context (~30K tokens, was 300KB/97K tokens)
 
 /**
  * Scan project directory for context

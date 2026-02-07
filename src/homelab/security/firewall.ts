@@ -28,14 +28,24 @@ export interface FirewallStatus {
 }
 
 // ============================================================================
-// Firewall Status
+// Firewall Status (with cache -- ufw calls are expensive sudo spawns)
 // ============================================================================
+
+let cachedStatus: FirewallStatus | null = null;
+let cacheTimestamp = 0;
+const CACHE_TTL_MS = 300000; // 5 minutes -- firewall rules rarely change
 
 /**
  * Get current UFW firewall status and rules.
  * Parses `ufw status verbose` output into structured data.
+ * Cached for 5 minutes to avoid spawning sudo ufw on every dashboard poll.
  */
 export async function getFirewallStatus(): Promise<FirewallStatus> {
+  // Return cached result if fresh enough
+  if (cachedStatus && (Date.now() - cacheTimestamp) < CACHE_TTL_MS) {
+    return cachedStatus;
+  }
+
   const result = await execHomelab('sudo', ['ufw', 'status', 'verbose']);
 
   if (!result.success) {
@@ -97,7 +107,18 @@ export async function getFirewallStatus(): Promise<FirewallStatus> {
     }
   }
 
-  return { active, defaultIncoming, defaultOutgoing, rules };
+  const status = { active, defaultIncoming, defaultOutgoing, rules };
+  cachedStatus = status;
+  cacheTimestamp = Date.now();
+  return status;
+}
+
+/**
+ * Invalidate the cached firewall status (call after allow/deny changes).
+ */
+export function invalidateFirewallCache(): void {
+  cachedStatus = null;
+  cacheTimestamp = 0;
 }
 
 // ============================================================================
@@ -129,6 +150,7 @@ export async function allowPort(
   ]);
 
   if (result.success) {
+    invalidateFirewallCache();
     logger.info('Firewall: allowed port', { port, proto, comment });
     return { success: true, message: `Port ${port}/${proto} allowed: ${comment}` };
   }
@@ -163,6 +185,7 @@ export async function denyPort(
   const result = await execHomelab('sudo', ['ufw', 'deny', String(port)]);
 
   if (result.success) {
+    invalidateFirewallCache();
     logger.info('Firewall: denied port', { port });
     return { success: true, message: `Port ${port} denied` };
   }

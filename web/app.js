@@ -952,7 +952,7 @@ class HomelabDashboard {
       if (data.enabled) {
         this.panel.style.display = '';
         this.update(data);
-        this.refreshInterval = setInterval(() => this.refresh(), 30000);
+        this.refreshInterval = setInterval(() => this.refresh(), 300000); // 5 min (server pushes via WebSocket)
       }
     } catch {
       // Homelab not available

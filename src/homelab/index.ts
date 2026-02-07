@@ -44,6 +44,13 @@ const TRUST_REQUIREMENTS: Record<string, number> = {
   homelab_uninstall: 3,
   homelab_update_all: 3,
 
+  // Backup commands
+  homelab_backup: 3,          // Running backups: trusted
+  homelab_backup_status: 2,   // Viewing status: semi-autonomous
+  homelab_backup_list: 2,     // Listing backups: semi-autonomous
+  homelab_backup_restore: 4,  // Restoring data: autonomous (destructive)
+  homelab_backup_schedule: 3, // Installing timer: trusted
+
   // Media commands: trust level 2+ (semi-autonomous)
   media_search: 2,
   media_download: 2,
@@ -98,6 +105,14 @@ async function getSSL() {
 
 async function getMediaSearch() {
   return await import('./media/search.js');
+}
+
+async function getBackupManager() {
+  return await import('./backup/backup-manager.js');
+}
+
+async function getBackupSchedule() {
+  return await import('./backup/setup-schedule.js');
 }
 
 // ============================================================================
@@ -203,6 +218,21 @@ export async function executeHomelabAction(
 
       case 'homelab_firewall':
         return await handleFirewall(intent.data?.subcommand as string, intent.data?.port as number, intent.data?.proto as string);
+
+      case 'homelab_backup':
+        return await handleBackup(intent.data?.mode as string);
+
+      case 'homelab_backup_status':
+        return await handleBackupStatus();
+
+      case 'homelab_backup_list':
+        return await handleBackupList();
+
+      case 'homelab_backup_restore':
+        return await handleBackupRestore(serviceName);
+
+      case 'homelab_backup_schedule':
+        return await handleBackupSchedule();
 
       case 'media_search':
         return await handleMediaSearch(serviceName);
@@ -722,6 +752,94 @@ async function handleMediaStatus(): Promise<ExecutionResult> {
   }
 
   return { success: true, output, duration_ms: Date.now() - startTime };
+}
+
+// ============================================================================
+// Backup Handlers
+// ============================================================================
+
+async function handleBackup(mode?: string): Promise<ExecutionResult> {
+  const startTime = Date.now();
+  const backupMgr = await getBackupManager();
+  const backupMode = (mode === 'postgres' || mode === 'volumes' || mode === 'cleanup') ? mode : 'full';
+  const result = await backupMgr.runBackup(backupMode);
+
+  return {
+    success: result.success,
+    output: result.success
+      ? `✅ ${result.message}`
+      : `❌ ${result.message}`,
+    duration_ms: Date.now() - startTime
+  };
+}
+
+async function handleBackupStatus(): Promise<ExecutionResult> {
+  const startTime = Date.now();
+  const backupMgr = await getBackupManager();
+  const output = backupMgr.formatBackupStatus();
+
+  return { success: true, output, duration_ms: Date.now() - startTime };
+}
+
+async function handleBackupList(): Promise<ExecutionResult> {
+  const startTime = Date.now();
+  const backupMgr = await getBackupManager();
+  const output = backupMgr.formatBackupList();
+
+  return { success: true, output, duration_ms: Date.now() - startTime };
+}
+
+async function handleBackupRestore(target: string): Promise<ExecutionResult> {
+  const startTime = Date.now();
+  if (!target) {
+    return {
+      success: false,
+      output: 'Please specify what to restore. Usage: `restore postgres` or `restore vaultwarden_data`',
+      duration_ms: Date.now() - startTime
+    };
+  }
+
+  const backupMgr = await getBackupManager();
+
+  let result;
+  if (target === 'postgres' || target === 'pg' || target === 'database') {
+    result = await backupMgr.restorePostgres();
+  } else {
+    result = await backupMgr.restoreVolume(target);
+  }
+
+  return {
+    success: result.success,
+    output: result.success
+      ? `✅ ${result.message}`
+      : `❌ ${result.message}`,
+    duration_ms: Date.now() - startTime
+  };
+}
+
+async function handleBackupSchedule(): Promise<ExecutionResult> {
+  const startTime = Date.now();
+  const scheduler = await getBackupSchedule();
+
+  // Check if already active
+  const status = await scheduler.getScheduleStatus();
+
+  if (status.active) {
+    let output = '## Backup Schedule\n\n';
+    output += '✅ **Active** (daily at 2:00 AM)\n';
+    if (status.nextRun) output += `**Next run:** ${status.nextRun}\n`;
+    if (status.lastRun) output += `**Last run:** ${status.lastRun}\n`;
+    return { success: true, output, duration_ms: Date.now() - startTime };
+  }
+
+  // Install it
+  const result = await scheduler.installBackupSchedule();
+
+  return {
+    success: result.success,
+    output: result.success ? `✅ ${result.message}` : `❌ ${result.message}`,
+    duration_ms: Date.now() - startTime
+  };
 }
 
 // ============================================================================

@@ -257,6 +257,15 @@ const PATTERNS = {
   homelabFirewallDeny: /^firewall\s+deny\s+(\d+)$/i,
 
   // Media commands
+  // Backup commands
+  backupRun: /^backup\s*(?:now|full|run)?$/i,
+  backupPostgres: /^backup\s+(?:postgres|pg|database|db)$/i,
+  backupVolumes: /^backup\s+volumes?$/i,
+  backupStatus: /^backup\s+(?:status|health|check)$/i,
+  backupList: /^(?:backup\s+list|backups|list\s+backups)$/i,
+  backupRestore: /^(?:restore|backup\s+restore)\s+(.+)/i,
+  backupSchedule: /^backup\s+schedule(?:\s+(.+))?$/i,
+
   mediaSearch: /^(?:search|find|look\s*up|search\s+for)\s+(.+)/i,
   mediaDownload: /^(?:download|get|grab|add|queue)\s+(.+)/i,
   mediaSelect: /^([1-9]\d?)$/,  // Just a number (1-99) when pending media results exist
@@ -499,6 +508,42 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
     // Security status
     if (PATTERNS.homelabSecurityStatus.test(lower)) {
       return { action: 'homelab_security_status', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Backup: run full
+    if (PATTERNS.backupRun.test(lower)) {
+      return { action: 'homelab_backup', confidence: 1.0, data: { mode: 'full' }, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Backup: postgres only
+    if (PATTERNS.backupPostgres.test(lower)) {
+      return { action: 'homelab_backup', confidence: 1.0, data: { mode: 'postgres' }, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Backup: volumes only
+    if (PATTERNS.backupVolumes.test(lower)) {
+      return { action: 'homelab_backup', confidence: 1.0, data: { mode: 'volumes' }, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Backup: status
+    if (PATTERNS.backupStatus.test(lower)) {
+      return { action: 'homelab_backup_status', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Backup: list
+    if (PATTERNS.backupList.test(lower)) {
+      return { action: 'homelab_backup_list', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Backup: restore
+    const restoreMatch = lower.match(PATTERNS.backupRestore);
+    if (restoreMatch) {
+      return { action: 'homelab_backup_restore', target: restoreMatch[1].trim(), confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Backup: schedule
+    if (PATTERNS.backupSchedule.test(lower)) {
+      return { action: 'homelab_backup_schedule', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
     }
 
     // Firewall status

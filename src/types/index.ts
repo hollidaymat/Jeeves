@@ -116,6 +116,12 @@ export type ActionType =
   | 'homelab_self_test'       // Run self-test suite
   | 'homelab_security_status' // Security overview
   | 'homelab_firewall'        // Firewall management
+  // Backup commands
+  | 'homelab_backup'          // Run a backup (full/postgres/volumes)
+  | 'homelab_backup_status'   // Show backup health and last backup info
+  | 'homelab_backup_list'     // List available backups
+  | 'homelab_backup_restore'  // Restore a volume or postgres from backup
+  | 'homelab_backup_schedule' // Install/check systemd timer
   // Media commands
   | 'media_search'            // Search for movies/shows
   | 'media_download'          // Download/add media to library

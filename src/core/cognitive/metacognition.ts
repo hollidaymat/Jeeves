@@ -17,6 +17,7 @@ import * as Confidence from './confidence.js';
 import * as Reasoning from './reasoning.js';
 import * as Clarification from './clarification.js';
 import * as Simulation from './simulation.js';
+import { assembleContext, formatContextForPrompt, type ContextResult } from '../context/index.js';
 
 // ==========================================
 // TYPES
@@ -30,6 +31,8 @@ export interface MetacognitiveInput {
     previousMessages?: string[];
     sessionHistory?: string[];
     activeTask?: string;
+    action?: string;
+    target?: string;
   };
 }
 
@@ -39,6 +42,7 @@ export interface MetacognitiveDecision {
   reasoning?: Reasoning.ReasoningResult;
   clarification?: Clarification.ClarificationResult;
   simulation?: Simulation.SimulationResult;
+  contextResult?: ContextResult;
   
   // What to do
   response?: string;
@@ -123,6 +127,28 @@ export async function think(
   }
   
   // ==========================================
+  // STEP 1.5: 6-LAYER CONTEXT ASSEMBLY
+  // ==========================================
+  
+  let contextResult: ContextResult | undefined;
+  try {
+    contextResult = await assembleContext({
+      message,
+      action: context?.action,
+      target: context?.target
+    });
+    
+    if (contextResult.layersIncluded.length > 0) {
+      logger.debug('Context assembled for metacognition', {
+        layers: contextResult.layersIncluded,
+        tokens: contextResult.tokensUsed
+      });
+    }
+  } catch (error) {
+    logger.debug('Context assembly skipped', { error: String(error) });
+  }
+  
+  // ==========================================
   // STEP 2: CONFIDENCE SCORING
   // ==========================================
   
@@ -130,7 +156,9 @@ export async function think(
   
   const confidenceContext: Partial<Confidence.ConfidenceContext> = {
     hasActiveProject: !!context?.projectPath,
-    hasRelevantMemory: (context?.previousMessages?.length || 0) > 0
+    hasRelevantMemory: (context?.previousMessages?.length || 0) > 0 ||
+      (contextResult?.layers.learnings?.length || 0) > 0,
+    hasMatchedPattern: !!contextResult?.layers.pattern
   };
   
   if (cfg.enableDeepScoring && !isSimpleRequest(message)) {
@@ -309,6 +337,7 @@ export async function think(
     reasoning: reasoningResult,
     clarification: clarificationResult,
     simulation: simulationResult,
+    contextResult,
     plan: reasoningResult?.plan,
     response: confidenceResult.concerns.length > 0 ? confidenceResult.concerns.join('. ') : undefined,
     processingTime: Date.now() - startTime,

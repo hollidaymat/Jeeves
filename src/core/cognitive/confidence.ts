@@ -34,6 +34,7 @@ export interface ConfidenceScore {
 export interface ConfidenceContext {
   hasActiveProject: boolean;
   hasRelevantMemory: boolean;
+  hasMatchedPattern?: boolean;
   isDestructive: boolean;
   isAmbiguous: boolean;
   complexity: 'trivial' | 'simple' | 'moderate' | 'complex';
@@ -285,6 +286,12 @@ export function quickScore(message: string, context?: Partial<ConfidenceContext>
   
   if (analyzedContext.hasRelevantMemory) {
     correctness *= 1.2;
+  }
+  
+  // Boost from matched pattern (6-layer context)
+  if (analyzedContext.hasMatchedPattern) {
+    correctness *= 1.15;
+    capability *= 1.1;
   }
   
   // Clamp to 0-1

@@ -20,6 +20,17 @@ import { getAgentStatus, getActiveProject } from './cursor-agent.js';
 import { tryExecuteWorkflow, loadWorkflows } from './workflow-engine.js';
 import { checkAndCompact } from './session-compactor.js';
 import { think, quickDecision } from './cognitive/index.js';
+import { getDb } from './context/db.js';
+import { seedAnnotations } from './context/layers/annotations.js';
+
+// Initialize 6-layer context system
+try {
+  getDb();  // Ensure database is created
+  seedAnnotations();  // Seed with known preferences
+  logger.info('6-layer context system initialized');
+} catch (err) {
+  logger.warn('Context system init failed (non-fatal)', { error: String(err) });
+}
 
 // Load workflows on module initialization
 loadWorkflows().catch(err => logger.warn('Failed to load workflows', { error: String(err) }));

@@ -1,0 +1,23 @@
+{
+  "_comment": "Seed annotations discovered through owner interaction. Loaded by Layer 2.",
+  "preferences": {
+    "media.preferred_quality": "1080p",
+    "media.confirm_before_download": true,
+    "media.max_results_per_page": 5,
+    "media.quarantine_enabled": true,
+    "communication.verbosity": "concise",
+    "communication.checkpoint_frequency": "per-phase",
+    "docker.inter_service_urls": "use container names on shared network, not IPs",
+    "docker.network": "proxy",
+    "system.static_ip": "192.168.7.50",
+    "git.no_coauthor_tags": true
+  },
+  "policies": {
+    "never_auto_restart": ["postgres", "vaultwarden"],
+    "always_teardown_before_reinstall": true,
+    "always_backup_before": ["upgrade", "migration", "config-change"],
+    "max_concurrent_downloads": 3,
+    "kill_order": ["lidarr", "bazarr", "overseerr", "tautulli", "sonarr", "radarr"],
+    "never_kill": ["postgres", "redis", "traefik", "pihole", "tailscale"]
+  }
+}

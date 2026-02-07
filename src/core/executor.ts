@@ -73,6 +73,7 @@ import {
 import {
   executePendingPlan
 } from './cursor-agent.js';
+import { recordSuccess, recordError } from './context/index.js';
 
 // Whitelisted executables
 const ALLOWED_EXECUTABLES: Record<string, string> = {
@@ -335,6 +336,22 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     const currentTrust = getTrustLevel();
 
     const result = await executeHomelabAction(intent, currentTrust);
+
+    // Post-execution hooks for 6-layer context learning
+    if (result.success) {
+      recordSuccess(
+        { message: intent.message || intent.action, action: intent.action, target: intent.target },
+        [intent.action, intent.target || ''].filter(Boolean)
+      ).catch(() => {});
+    } else if (result.error) {
+      recordError(
+        result.error,
+        'pending',  // fix will be recorded when user retries successfully
+        intent.action.startsWith('media_') ? 'media' : 'homelab',
+        intent.target
+      ).catch(() => {});
+    }
+
     return {
       success: result.success,
       output: result.output || result.error,

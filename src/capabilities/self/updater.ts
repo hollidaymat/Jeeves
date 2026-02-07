@@ -309,14 +309,15 @@ async function autoUpdateCheck(): Promise<void> {
       });
 
       // Auto-pull if no local changes and no active tasks
-      if (!status.hasLocalChanges && (!activeTaskChecker || !activeTaskChecker())) {
+      const hasActiveTasks = activeTaskChecker ? activeTaskChecker() : false;
+      if (!status.hasLocalChanges && !hasActiveTasks) {
         logger.info('Self-update: auto-pulling');
         await pullAndRestart();
       } else {
-        logger.info('Self-update: changes available but conditions not met for auto-pull', {
-          hasLocalChanges: status.hasLocalChanges,
-          hasActiveTasks: activeTaskChecker ? activeTaskChecker() : false,
-        });
+        const reasons: string[] = [];
+        if (status.hasLocalChanges) reasons.push('local uncommitted changes');
+        if (hasActiveTasks) reasons.push('active Cursor tasks');
+        logger.info(`Self-update: ${status.behind} commits behind but blocked — ${reasons.join(', ')}. Tell me "update yourself" to force.`);
       }
     }
   } catch {

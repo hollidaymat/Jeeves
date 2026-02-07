@@ -9,7 +9,7 @@
 
 import { randomUUID } from 'crypto';
 import { getCursorClient, isCursorEnabled } from './cursor-client.js';
-import { buildPrompt, type TaskSpec } from './cursor-prompts.js';
+import { type TaskSpec } from './cursor-prompts.js';
 import { logger } from '../utils/logger.js';
 import { onTaskCompleted, onRefinedTaskCompleted, isInRefinement, setRefinementCallbacks } from './cursor-refinement.js';
 
@@ -294,8 +294,9 @@ export async function confirmAndLaunch(): Promise<{ success: boolean; message: s
   pendingConfirmation = null;
 
   try {
-    // Build the prompt
-    const prompt = buildPrompt(task.spec);
+    // Build the prompt with learned preferences
+    const { buildPromptWithPreferences } = await import('./cursor-prompts.js');
+    const prompt = await buildPromptWithPreferences(task.spec);
 
     // Launch the agent — always branch from 'main', Cursor auto-creates its working branch
     const agent = await client.launchAgent(prompt, task.spec.repository, 'main');

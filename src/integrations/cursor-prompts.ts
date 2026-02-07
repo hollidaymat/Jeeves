@@ -146,3 +146,23 @@ export function buildPrompt(task: TaskSpec): string {
       return buildGeneralPrompt(task);
   }
 }
+
+/**
+ * Build prompt with learned preferences included.
+ * Async wrapper around buildPrompt that appends owner preferences.
+ */
+export async function buildPromptWithPreferences(task: TaskSpec): Promise<string> {
+  const basePrompt = buildPrompt(task);
+
+  try {
+    const { getPreferenceSummary } = await import('../capabilities/self/memory-learner.js');
+    const prefs = await getPreferenceSummary();
+    if (prefs) {
+      return basePrompt + '\n\n' + prefs;
+    }
+  } catch {
+    // Memory learner not available
+  }
+
+  return basePrompt;
+}

@@ -192,7 +192,7 @@ async function runRefinementRound(task: CursorTask, state: RefinementState): Pro
     if (!pr) {
       logger.warn('Refinement: could not fetch PR', { prUrl: state.prUrl });
       state.status = 'skipped';
-      finishRefinement(task, state);
+      await finishRefinement(task, state);
       return;
     }
 
@@ -233,7 +233,7 @@ async function runRefinementRound(task: CursorTask, state: RefinementState): Pro
     if (!budgetCheck.allowed) {
       logger.info('Refinement: budget exhausted, accepting as-is', { taskId: task.id });
       state.status = 'accepted';
-      finishRefinement(task, state);
+      await finishRefinement(task, state);
       return;
     }
 
@@ -276,7 +276,7 @@ async function runRefinementRound(task: CursorTask, state: RefinementState): Pro
         message: analysis.summary,
       });
 
-      finishRefinement(task, state);
+      await finishRefinement(task, state);
       return;
     }
 
@@ -292,7 +292,7 @@ async function runRefinementRound(task: CursorTask, state: RefinementState): Pro
         issues: analysis.issues,
       });
 
-      finishRefinement(task, state);
+      await finishRefinement(task, state);
       return;
     }
 
@@ -329,13 +329,13 @@ async function runRefinementRound(task: CursorTask, state: RefinementState): Pro
     } catch (err) {
       logger.error('Refinement: failed to send follow-up', { error: String(err) });
       state.status = 'accepted';  // Accept as-is if we can't send follow-up
-      finishRefinement(task, state);
+      await finishRefinement(task, state);
     }
 
   } catch (err) {
     logger.error('Refinement round failed', { error: String(err), taskId: task.id });
     state.status = 'skipped';
-    finishRefinement(task, state);
+    await finishRefinement(task, state);
   }
 }
 
@@ -450,13 +450,64 @@ function buildFollowUp(issues: string[], summary: string, roundNum: number): str
 // Completion
 // ============================================================================
 
-function finishRefinement(task: CursorTask, state: RefinementState): void {
-  // Archive the completed task
+async function finishRefinement(task: CursorTask, state: RefinementState): Promise<void> {
   task.status = 'completed';
   task.completedAt = new Date().toISOString();
-
-  // Attach refinement summary to task
   (task as CursorTask & { refinement?: RefinementState }).refinement = state;
+
+  // Auto-merge if accepted and conditions are met
+  if (state.status === 'accepted' && state.prUrl) {
+    const shouldAutoMerge = task.spec.summary?.includes('Self-improvement:') || 
+                            task.spec.description?.includes('[jeeves-self]');
+    
+    if (shouldAutoMerge) {
+      try {
+        const github = (await import('./github-client.js')).getGitHubClient();
+        if (github) {
+          // Check CI status first
+          const pr = await github.getPullRequest(state.repoFullName, state.prNumber).catch(() => null);
+          if (pr) {
+            const checks = await github.getCheckStatus(state.repoFullName, pr.head.sha).catch(() => ({ state: 'unknown', statuses: [] }));
+            const ciPassed = checks.state === 'success' || checks.state === 'unknown'; // unknown = no CI configured
+            
+            if (ciPassed) {
+              const mergeResult = await github.mergePullRequest(state.repoFullName, state.prNumber, {
+                mergeMethod: 'squash',
+                commitTitle: `[jeeves-self] ${task.spec.summary || 'Self-improvement'}`,
+              });
+              
+              if (mergeResult.merged) {
+                (task as CursorTask & { mergedAt?: string }).mergedAt = new Date().toISOString();
+                logger.info('Auto-merged self-improvement PR', { 
+                  taskId: task.id, prNumber: state.prNumber, sha: mergeResult.sha 
+                });
+                broadcast('cursor:refinement:merged', {
+                  taskId: task.id,
+                  prUrl: state.prUrl,
+                  sha: mergeResult.sha,
+                });
+              } else {
+                logger.warn('Auto-merge failed', { taskId: task.id, message: mergeResult.message });
+              }
+            } else {
+              logger.info('Skipping auto-merge: CI not passing', { taskId: task.id, ciState: checks.state });
+            }
+          }
+        }
+      } catch (err) {
+        logger.debug('Auto-merge attempt failed', { error: String(err) });
+      }
+    } else {
+      // Not auto-merge eligible — broadcast ready-to-merge for manual approval
+      broadcast('cursor:refinement:ready_to_merge', {
+        taskId: task.id,
+        prUrl: state.prUrl,
+        prNumber: state.prNumber,
+        repoFullName: state.repoFullName,
+        summary: task.spec.summary,
+      });
+    }
+  }
 
   if (archiveTaskFn) {
     archiveTaskFn(task);
@@ -524,6 +575,36 @@ export function getRefinementState(taskId: string): RefinementState | null {
  */
 export function getActiveRefinements(): RefinementState[] {
   return Array.from(activeRefinements.values());
+}
+
+// ============================================================================
+// Manual Merge
+// ============================================================================
+
+/**
+ * Manually merge a PR for a completed task.
+ * Called via handler fast path "merge it" / "merge PR".
+ */
+export async function manualMerge(taskIdOrPrUrl: string): Promise<{ success: boolean; message: string }> {
+  const github = getGitHubClient();
+  if (!github) return { success: false, message: 'GitHub not configured.' };
+
+  // Try to find from active refinements first
+  for (const state of activeRefinements.values()) {
+    if (state.taskId === taskIdOrPrUrl || state.prUrl === taskIdOrPrUrl) {
+      const result = await github.mergePullRequest(state.repoFullName, state.prNumber, { mergeMethod: 'squash' });
+      return { success: result.merged, message: result.merged ? `Merged PR #${state.prNumber}` : `Merge failed: ${result.message}` };
+    }
+  }
+
+  // Try to parse as PR URL directly
+  const parsed = parsePrUrl(taskIdOrPrUrl);
+  if (parsed) {
+    const result = await github.mergePullRequest(parsed.repoFullName, parsed.prNumber, { mergeMethod: 'squash' });
+    return { success: result.merged, message: result.merged ? `Merged PR #${parsed.prNumber}` : `Merge failed: ${result.message}` };
+  }
+
+  return { success: false, message: 'Could not find a PR to merge. Provide a task ID or PR URL.' };
 }
 
 // ============================================================================

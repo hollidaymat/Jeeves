@@ -461,6 +461,130 @@ export class WebInterface implements MessageInterface {
       }
     });
 
+    // API: Scheduler status
+    this.app.get('/api/scheduler', async (_req: Request, res: Response) => {
+      try {
+        const { getSchedules, isSchedulerRunning } = await import('../capabilities/scheduler/engine.js');
+        res.json({ running: isSchedulerRunning(), schedules: getSchedules() });
+      } catch (error) {
+        res.json({ running: false, schedules: [] });
+      }
+    });
+
+    // API: Morning briefing (on-demand)
+    this.app.get('/api/briefing', async (_req: Request, res: Response) => {
+      try {
+        const { getBriefingText } = await import('../capabilities/scheduler/briefing.js');
+        const text = await getBriefingText();
+        res.json({ briefing: text });
+      } catch (error) {
+        res.json({ briefing: 'Briefing not available' });
+      }
+    });
+
+    // API: Uptime status
+    this.app.get('/api/uptime', async (_req: Request, res: Response) => {
+      try {
+        const { getUptimeStatus, getUptimeAlerts } = await import('../capabilities/security/uptime.js');
+        res.json({ sites: getUptimeStatus(), alerts: getUptimeAlerts(20) });
+      } catch (error) {
+        res.json({ sites: [], alerts: [] });
+      }
+    });
+
+    // API: Uptime for specific client
+    this.app.get('/api/uptime/:clientId', async (req: Request, res: Response) => {
+      try {
+        const { getClientUptime } = await import('../capabilities/security/uptime.js');
+        const uptime = getClientUptime(req.params.clientId);
+        if (uptime) {
+          res.json(uptime);
+        } else {
+          res.status(404).json({ error: 'Client not found' });
+        }
+      } catch (error) {
+        res.status(500).json({ error: String(error) });
+      }
+    });
+
+    // API: Visual reviews
+    this.app.get('/api/reviews', async (_req: Request, res: Response) => {
+      try {
+        const { getRecentReviews } = await import('../capabilities/self/visual-reviewer.js');
+        res.json({ reviews: getRecentReviews() });
+      } catch (error) {
+        res.json({ reviews: [] });
+      }
+    });
+
+    // API: Visual review for specific task
+    this.app.get('/api/reviews/:taskId', async (req: Request, res: Response) => {
+      try {
+        const { getReview } = await import('../capabilities/self/visual-reviewer.js');
+        const review = getReview(req.params.taskId);
+        if (review) {
+          res.json(review);
+        } else {
+          res.status(404).json({ error: 'Review not found' });
+        }
+      } catch (error) {
+        res.status(500).json({ error: String(error) });
+      }
+    });
+
+    // API: Changelog for project
+    this.app.get('/api/changelog/:project', async (req: Request, res: Response) => {
+      try {
+        const { getChangelog } = await import('../capabilities/self/changelog.js');
+        res.json({ changelog: getChangelog(req.params.project) });
+      } catch (error) {
+        res.json({ changelog: 'Not available' });
+      }
+    });
+
+    // API: Cost advisor report
+    this.app.get('/api/costs/advisor', async (_req: Request, res: Response) => {
+      try {
+        const { getLatestReport } = await import('../capabilities/revenue/cost-advisor.js');
+        const report = getLatestReport();
+        res.json(report || { error: 'No report available' });
+      } catch (error) {
+        res.json({ error: 'Cost advisor not available' });
+      }
+    });
+
+    // API: Impact analysis for a PR
+    this.app.post('/api/impact/analyze', async (req: Request, res: Response) => {
+      try {
+        const { analyzePRImpact } = await import('../capabilities/self/impact-analyzer.js');
+        const { repo, prNumber } = req.body;
+        if (!repo || !prNumber) {
+          res.status(400).json({ error: 'repo and prNumber required' });
+          return;
+        }
+        const report = await analyzePRImpact(repo, parseInt(prNumber, 10));
+        res.json(report || { impacts: [] });
+      } catch (error) {
+        res.status(500).json({ error: String(error) });
+      }
+    });
+
+    // API: Manual merge
+    this.app.post('/api/merge', async (req: Request, res: Response) => {
+      try {
+        const { manualMerge } = await import('../integrations/cursor-refinement.js');
+        const { target } = req.body;
+        if (!target) {
+          res.status(400).json({ success: false, message: 'target (PR URL or task ID) required' });
+          return;
+        }
+        const result = await manualMerge(target);
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ success: false, message: String(error) });
+      }
+    });
+
     // API: Send command
     this.app.post('/api/command', async (req: Request, res: Response) => {
       const { content, attachments } = req.body;

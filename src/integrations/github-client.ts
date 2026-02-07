@@ -334,6 +334,79 @@ export class GitHubClient {
     return this.request('GET', `/repos/${fullRepo}/commits/${commitSha}/status`);
   }
 
+  /**
+   * Merge a pull request
+   */
+  async mergePullRequest(
+    repo: string,
+    prNumber: number,
+    options?: {
+      mergeMethod?: 'merge' | 'squash' | 'rebase';
+      commitTitle?: string;
+      commitMessage?: string;
+    }
+  ): Promise<{ merged: boolean; sha?: string; message?: string }> {
+    const owner = await this.ensureOwner();
+    const fullRepo = repo.includes('/') ? repo : `${owner}/${repo}`;
+    
+    logger.info('Merging pull request', { repo: fullRepo, prNumber, method: options?.mergeMethod || 'squash' });
+
+    try {
+      const result = await this.request<{ merged: boolean; sha: string; message: string }>(
+        'PUT',
+        `/repos/${fullRepo}/pulls/${prNumber}/merge`,
+        {
+          merge_method: options?.mergeMethod || 'squash',
+          commit_title: options?.commitTitle,
+          commit_message: options?.commitMessage,
+        }
+      );
+      
+      logger.info('Pull request merged', { repo: fullRepo, prNumber, sha: result.sha?.substring(0, 8) });
+      return { merged: true, sha: result.sha, message: result.message };
+    } catch (error) {
+      logger.error('Failed to merge pull request', { repo: fullRepo, prNumber, error: String(error) });
+      return { merged: false, message: String(error) };
+    }
+  }
+
+  /**
+   * List open pull requests
+   */
+  async listOpenPRs(
+    repo: string,
+    limit = 10
+  ): Promise<Array<{ number: number; title: string; html_url: string; created_at: string; head: { ref: string } }>> {
+    const owner = await this.ensureOwner();
+    const fullRepo = repo.includes('/') ? repo : `${owner}/${repo}`;
+    return this.request('GET', `/repos/${fullRepo}/pulls?state=open&per_page=${limit}`);
+  }
+
+  /**
+   * Get recent commits since a date
+   */
+  async getRecentCommits(
+    repo: string,
+    since?: string,
+    limit = 30
+  ): Promise<Array<{ sha: string; message: string; author: string; date: string }>> {
+    const owner = await this.ensureOwner();
+    const fullRepo = repo.includes('/') ? repo : `${owner}/${repo}`;
+    const sinceParam = since ? `&since=${since}` : '';
+    
+    const commits = await this.request<Array<{
+      sha: string;
+      commit: { message: string; author: { name: string; date: string } };
+    }>>('GET', `/repos/${fullRepo}/commits?per_page=${limit}${sinceParam}`);
+    
+    return commits.map(c => ({
+      sha: c.sha.substring(0, 8),
+      message: c.commit.message.split('\n')[0],  // First line only
+      author: c.commit.author.name,
+      date: c.commit.author.date,
+    }));
+  }
+
   // ---------- Health Check ----------
 
   async healthCheck(): Promise<{ ok: boolean; login?: string; error?: string }> {

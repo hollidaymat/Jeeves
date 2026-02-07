@@ -27,6 +27,7 @@ export interface OutgoingMessage {
   recipient: string;
   content: string;
   replyTo?: string;
+  attachments?: string[];  // File paths on disk to send as attachments
 }
 
 // ============================================================================

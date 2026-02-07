@@ -127,6 +127,29 @@ async function main() {
     logger.debug('Self-update checker not started', { error: String(err) });
   }
 
+  // Start Scheduler + register all handler functions
+  try {
+    const { startScheduler } = await import('./capabilities/scheduler/engine.js');
+    
+    // Register scheduled task handlers
+    const { registerBriefingHandler } = await import('./capabilities/scheduler/briefing.js');
+    registerBriefingHandler();
+    
+    const { registerUptimeHandler } = await import('./capabilities/security/uptime.js');
+    registerUptimeHandler();
+    
+    const { registerChangelogHandler } = await import('./capabilities/self/changelog.js');
+    registerChangelogHandler();
+    
+    const { registerCostAdvisorHandler } = await import('./capabilities/revenue/cost-advisor.js');
+    registerCostAdvisorHandler();
+    
+    startScheduler();
+    logger.info('Scheduler started with default schedules');
+  } catch (err) {
+    logger.debug('Scheduler not started', { error: String(err) });
+  }
+
   logger.info('System ready');
   logger.info(`Open http://${config.server.host}:${config.server.port} in your browser`);
   if (signalInterface.isAvailable()) {
@@ -170,6 +193,10 @@ async function main() {
       try {
         const { stopUpdateChecker } = await import('./capabilities/self/updater.js');
         stopUpdateChecker();
+      } catch {}
+      try {
+        const { stopScheduler } = await import('./capabilities/scheduler/engine.js');
+        stopScheduler();
       } catch {}
     
     process.exit(0);

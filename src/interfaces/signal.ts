@@ -38,7 +38,8 @@ interface SignalMessage {
       groupInfo?: { groupId: string };
       attachments?: Array<{
         contentType: string;
-        filename: string;
+        filename?: string;
+        id?: string;
         size: number;
       }>;
     };
@@ -194,8 +195,35 @@ export class SignalInterface implements MessageInterface {
     const envelope = msg.envelope;
     const dataMessage = envelope.dataMessage;
     
-    // Skip if no text message
-    if (!dataMessage?.message) return;
+    // If no dataMessage at all, skip
+    if (!dataMessage) return;
+
+    // If no text but has audio attachment, try to transcribe
+    if (!dataMessage.message) {
+      const audioAttachment = dataMessage.attachments?.find(
+        (a) => a.contentType?.startsWith('audio/')
+      );
+      if (audioAttachment?.filename || audioAttachment?.id) {
+        const audioPath = audioAttachment.filename || `/tmp/signal-attachment-${audioAttachment.id}`;
+        try {
+          const { transcribeAudio } = await import('../capabilities/voice/transcriber.js');
+          const result = await transcribeAudio(audioPath);
+          if (result.success && result.text) {
+            logger.info('Voice note transcribed', { method: result.method, length: result.text.length });
+            // Continue processing with transcribed text
+            dataMessage.message = result.text;
+          } else {
+            logger.debug('Voice transcription failed or empty', { text: result.text });
+            return;
+          }
+        } catch (err) {
+          logger.debug('Voice transcription error', { error: String(err) });
+          return;
+        }
+      } else {
+        return;
+      }
+    }
     
     // Skip group messages (only handle direct messages)
     if (dataMessage.groupInfo) {
@@ -293,14 +321,21 @@ export class SignalInterface implements MessageInterface {
       content = content.substring(0, 3950) + '\n\n... (truncated)';
     }
     
+    const params: Record<string, unknown> = {
+      account: config.signal.number,
+      recipients: [message.recipient],
+      message: content
+    };
+
+    // Include file attachments if provided
+    if (message.attachments && message.attachments.length > 0) {
+      params.attachments = message.attachments;
+    }
+
     const request: JsonRpcRequest = {
       jsonrpc: '2.0',
       method: 'send',
-      params: {
-        account: config.signal.number,
-        recipients: [message.recipient],
-        message: content
-      },
+      params,
       id: randomUUID()
     };
     
@@ -308,7 +343,8 @@ export class SignalInterface implements MessageInterface {
     
     logger.info('Sent Signal message', { 
       to: message.recipient.substring(0, 4) + '***',
-      length: content.length 
+      length: content.length,
+      attachments: message.attachments?.length || 0
     });
   }
   

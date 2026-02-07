@@ -118,6 +118,9 @@ const defaultConfig: Config = {
       decision_predict:   { maxTokens: 200,  maxCallsPerPeriod: 20, periodMs: 86400000, dailyCap: 0.05 },
       cursor_refinement:  { maxTokens: 500,  maxCallsPerPeriod: 10, periodMs: 86400000, dailyCap: 0.50 },
       self_proposals:     { maxTokens: 600,  maxCallsPerPeriod: 2,  periodMs: 86400000, dailyCap: 0.02 },
+      voice_transcription: { maxTokens: 0,  maxCallsPerPeriod: 20, periodMs: 86400000, dailyCap: 0.50 },
+      changelog:          { maxTokens: 200, maxCallsPerPeriod: 10, periodMs: 604800000, dailyCap: 0.05 },
+      cost_advisor:       { maxTokens: 300, maxCallsPerPeriod: 2,  periodMs: 604800000, dailyCap: 0.02 },
     }
   },
   homelab: {

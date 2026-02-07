@@ -131,6 +131,11 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
   logger.security.authorized(sender, 'message');
   stats.messagesToday++;
   
+  // Learn from every message (non-blocking)
+  import('../capabilities/self/memory-learner.js')
+    .then(({ learnFromMessage }) => learnFromMessage(content))
+    .catch(() => {});
+  
   try {
     // Try workflow engine first (deterministic, token-efficient)
     const activeProject = getActiveProject();
@@ -483,6 +488,95 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
         return { recipient: sender, content: result.message, replyTo: message.id };
       } catch (err) {
         return { recipient: sender, content: `Self-update failed: ${err}`, replyTo: message.id };
+      }
+    }
+
+    // "merge it" / "merge PR" / "merge the PR" — manual PR merge
+    const mergeMatch = content.trim().match(/^(?:merge\s+(?:it|the\s+pr|pr|that)|do\s+the\s+merge)(?:\s+(.+))?/i);
+    if (mergeMatch) {
+      logger.info('Manual merge fast path');
+      try {
+        const { manualMerge } = await import('../integrations/cursor-refinement.js');
+        const target = mergeMatch[1]?.trim() || '';
+        
+        if (!target) {
+          // Try to find the most recent ready-to-merge task
+          const { getCompletedCursorTasks } = await import('../integrations/cursor-orchestrator.js');
+          const recent = getCompletedCursorTasks(5);
+          const withPr = recent.find(t => t.prUrl);
+          if (withPr?.prUrl) {
+            const result = await manualMerge(withPr.prUrl);
+            stats.lastCommand = { action: 'merge_pr', timestamp: new Date().toISOString(), success: result.success };
+            return { recipient: sender, content: result.message, replyTo: message.id };
+          }
+          return { recipient: sender, content: 'No recent PR to merge. Specify a PR URL or task ID.', replyTo: message.id };
+        }
+        
+        const result = await manualMerge(target);
+        stats.lastCommand = { action: 'merge_pr', timestamp: new Date().toISOString(), success: result.success };
+        return { recipient: sender, content: result.message, replyTo: message.id };
+      } catch (err) {
+        return { recipient: sender, content: `Merge failed: ${err}`, replyTo: message.id };
+      }
+    }
+
+    // "cost report" / "cost analysis" / "spending review"
+    const costReportMatch = /^(?:cost\s+(?:report|analysis|review|breakdown)|spending\s+(?:report|review)|how\s+much\s+(?:am\s+I|are\s+we)\s+spending)/i.test(content.trim());
+    if (costReportMatch) {
+      logger.info('Cost report fast path');
+      try {
+        const { getLatestReport, formatCostReport, runCostReview } = await import('../capabilities/revenue/cost-advisor.js');
+        let report = getLatestReport();
+        if (!report) {
+          await runCostReview();
+          report = getLatestReport();
+        }
+        const text = report ? formatCostReport(report) : 'No cost data available yet.';
+        stats.lastCommand = { action: 'cost_report', timestamp: new Date().toISOString(), success: true };
+        return { recipient: sender, content: text, replyTo: message.id };
+      } catch (err) {
+        return { recipient: sender, content: `Cost report unavailable: ${err}`, replyTo: message.id };
+      }
+    }
+
+    // "uptime" / "site status" / "are sites up"
+    const uptimeMatch = /^(?:uptime|site\s+status|are\s+(?:sites?|clients?)\s+(?:up|online|running)|client\s+uptime)/i.test(content.trim());
+    if (uptimeMatch) {
+      logger.info('Uptime fast path');
+      try {
+        const { getUptimeStatus } = await import('../capabilities/security/uptime.js');
+        const statuses = getUptimeStatus();
+        if (statuses.length === 0) {
+          return { recipient: sender, content: 'No client sites being monitored yet.', replyTo: message.id };
+        }
+        const lines = ['Client Site Uptime:'];
+        for (const s of statuses) {
+          lines.push(`${s.currentlyUp ? 'UP' : 'DOWN'} ${s.clientName} (${s.url}) — ${s.uptime24h}% uptime, ${s.avgResponseTime}ms avg`);
+        }
+        stats.lastCommand = { action: 'uptime_status', timestamp: new Date().toISOString(), success: true };
+        return { recipient: sender, content: lines.join('\n'), replyTo: message.id };
+      } catch (err) {
+        return { recipient: sender, content: `Uptime data unavailable: ${err}`, replyTo: message.id };
+      }
+    }
+
+    // "changelog" / "what changed in X"
+    const changelogMatch = content.trim().match(/^(?:changelog|what\s+changed\s+(?:in|for|on)\s+(.+)|show\s+changelog\s+(?:for\s+)?(.+))/i);
+    if (changelogMatch) {
+      logger.info('Changelog fast path');
+      try {
+        const { getChangelog } = await import('../capabilities/self/changelog.js');
+        const project = (changelogMatch[1] || changelogMatch[2] || '').trim().toLowerCase().replace(/\s+/g, '-');
+        if (!project) {
+          return { recipient: sender, content: 'Which project? Try "changelog for dive-connect"', replyTo: message.id };
+        }
+        const log = getChangelog(project);
+        // Truncate if too long for Signal
+        const text = log.length > 3000 ? log.substring(0, 3000) + '\n\n... (truncated)' : log;
+        stats.lastCommand = { action: 'changelog', timestamp: new Date().toISOString(), success: true };
+        return { recipient: sender, content: text, replyTo: message.id };
+      } catch (err) {
+        return { recipient: sender, content: `Changelog unavailable: ${err}`, replyTo: message.id };
       }
     }
 

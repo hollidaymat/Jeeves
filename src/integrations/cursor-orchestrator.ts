@@ -192,8 +192,8 @@ export async function confirmAndLaunch(): Promise<{ success: boolean; message: s
     // Build the prompt
     const prompt = buildPrompt(task.spec);
 
-    // Launch the agent
-    const agent = await client.launchAgent(prompt, task.spec.repository, task.spec.branch);
+    // Launch the agent — always branch from 'main', Cursor auto-creates its working branch
+    const agent = await client.launchAgent(prompt, task.spec.repository, 'main');
 
     task.agentId = agent.id;
     task.status = 'running';

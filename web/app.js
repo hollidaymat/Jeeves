@@ -361,25 +361,46 @@ class CommandCenter {
     if (log.level === 'debug') return;
     if (!log.message || log.message.trim() === '') return;
     
-    // Filter out internal operational logs that clutter the chat
+    // Filter out internal operational logs that clutter the chat.
+    // Only actual messages and responses should appear here.
     const msg = log.message;
     const SUPPRESSED = [
+      // Cognitive pipeline internals
       /^Using .* model/i,
       /^Prompt analysis/i,
-      /^\[security-monitor\]/i,
-      /^\[security-response\]/i,
-      /^\[vercel-security\]/i,
-      /^\[COST\]/i,
-      /^Self-update/i,
-      /^Scout loop/i,
-      /^Scheduler ran task/i,
-      /^Signal (connection timeout|socket error|socket closed|Reconnecting)/i,
       /^Checking capabilities/i,
       /^Pending plan check/i,
       /^No plan or changes/i,
       /^Approval pattern/i,
       /confidence_scoring/i,
       /reasoning_orient/i,
+      // Security monitor (viewable in Security tab)
+      /^\[security-monitor\]/i,
+      /^\[security-response\]/i,
+      /^\[vercel-security\]/i,
+      // Cost tracking (viewable in Costs tab)
+      /^\[COST\]/i,
+      // Self-update lifecycle
+      /^Self-update/i,
+      // Scout (viewable in Scout tab)
+      /^Scout loop/i,
+      /^Knowledge Scout/i,
+      // Scheduler
+      /^Scheduler/i,
+      // Signal connection lifecycle
+      /^Signal (connection|interface|socket|Reconnect)/i,
+      /signal-cli/i,
+      // Startup noise
+      /^Security Guardian/i,
+      /^Decision recorder/i,
+      /^System ready/i,
+      /^Open http/i,
+      /^Press Ctrl/i,
+      /^Starting /i,
+      /^WebSocket client/i,
+      /^Shutting down/i,
+      /^Connection lost/i,
+      /^Connected to/i,
     ];
     if (SUPPRESSED.some(p => p.test(msg))) return;
     

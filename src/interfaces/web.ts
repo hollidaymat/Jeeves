@@ -79,9 +79,13 @@ export class WebInterface implements MessageInterface {
   }
   
   private setupRoutes(): void {
-    // Serve static files from web directory
+    // Serve static files from web directory (no caching so updates take effect immediately)
     const webDir = resolve(__dirname, '../../web');
-    this.app.use(express.static(webDir));
+    this.app.use(express.static(webDir, { etag: false, maxAge: 0 }));
+    this.app.use((_req, res, next) => {
+      res.setHeader('Cache-Control', 'no-store');
+      next();
+    });
     
     // Parse JSON bodies
     this.app.use(express.json());

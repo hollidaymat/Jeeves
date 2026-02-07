@@ -1620,8 +1620,9 @@ class CursorPanel {
 
     // Active tasks
     for (const task of active) {
-      const elapsed = this.timeAgo(new Date(task.startedAt));
+      const elapsed = this.formatElapsed(new Date(task.startedAt));
       const statusClass = task.status === 'running' ? 'cursor-running' : task.status === 'stuck' ? 'cursor-stuck' : '';
+      const cursorUrl = task.cursorUrl || (task.agentId ? `https://cursor.com/agents?id=${task.agentId}` : '');
       html += `
         <div class="cursor-task-card ${statusClass}" data-task-id="${task.id}">
           <div class="cursor-task-header">
@@ -1629,19 +1630,21 @@ class CursorPanel {
               <span class="cursor-status-dot ${task.status}"></span>
               ${task.status.toUpperCase()}
             </span>
-            <span class="cursor-task-elapsed">${elapsed}</span>
+            <span class="cursor-task-elapsed" data-started="${task.startedAt}">${elapsed}</span>
           </div>
           <div class="cursor-task-summary">${this.cc.escapeHtml(task.spec?.summary || 'Untitled task')}</div>
           <div class="cursor-task-meta">
-            <span>Project: ${this.cc.escapeHtml(task.spec?.project || '—')}</span>
+            <span>Project: ${this.cc.escapeHtml(task.spec?.project || '-')}</span>
             <span>Agent: ${task.agentId ? task.agentId.substring(0, 12) + '...' : 'pending'}</span>
+            ${cursorUrl ? `<a href="${cursorUrl}" target="_blank" class="cursor-web-link" title="View on cursor.com">CURSOR.COM</a>` : ''}
           </div>
-          ${task.lastMessage ? `<div class="cursor-task-lastmsg">${this.cc.escapeHtml(task.lastMessage.substring(0, 150))}${task.lastMessage.length > 150 ? '...' : ''}</div>` : ''}
+          ${task.lastMessage ? `<div class="cursor-task-lastmsg">${this.cc.escapeHtml(task.lastMessage.substring(0, 200))}${task.lastMessage.length > 200 ? '...' : ''}</div>` : '<div class="cursor-task-lastmsg cursor-waiting">Waiting for agent output...</div>'}
           <div class="cursor-task-actions">
             <button class="cmd-btn cursor-followup-btn" data-task-id="${task.id}">FOLLOW-UP</button>
             <button class="cmd-btn cursor-stop-btn" data-task-id="${task.id}">STOP</button>
-            <button class="cmd-btn cursor-view-btn" data-task-id="${task.id}">VIEW</button>
+            <button class="cmd-btn cursor-view-btn" data-task-id="${task.id}" data-agent-id="${task.agentId || ''}">VIEW LOG</button>
           </div>
+          <div class="cursor-conversation-panel" id="conv-${task.id}" style="display:none;"></div>
         </div>`;
     }
 
@@ -1649,6 +1652,7 @@ class CursorPanel {
     for (const task of completed.slice(0, 5)) {
       const statusClass = task.status === 'completed' ? 'cursor-completed' : task.status === 'error' ? 'cursor-error' : 'cursor-stopped';
       const icon = task.status === 'completed' ? '✓' : task.status === 'error' ? '✗' : '■';
+      const cursorUrl = task.cursorUrl || (task.agentId ? `https://cursor.com/agents?id=${task.agentId}` : '');
       html += `
         <div class="cursor-task-card ${statusClass}">
           <div class="cursor-task-header">
@@ -1660,8 +1664,9 @@ class CursorPanel {
           </div>
           <div class="cursor-task-summary">${this.cc.escapeHtml(task.spec?.summary || 'Untitled task')}</div>
           <div class="cursor-task-meta">
-            <span>Project: ${this.cc.escapeHtml(task.spec?.project || '—')}</span>
-            ${task.prUrl ? `<a href="${task.prUrl}" target="_blank" class="cursor-pr-link">View PR</a>` : ''}
+            <span>Project: ${this.cc.escapeHtml(task.spec?.project || '-')}</span>
+            ${task.prUrl ? `<a href="${task.prUrl}" target="_blank" class="cursor-pr-link">VIEW PR</a>` : ''}
+            ${cursorUrl ? `<a href="${cursorUrl}" target="_blank" class="cursor-web-link">CURSOR.COM</a>` : ''}
           </div>
           ${task.error ? `<div class="cursor-task-error">${this.cc.escapeHtml(task.error.substring(0, 200))}</div>` : ''}
         </div>`;
@@ -1669,6 +1674,7 @@ class CursorPanel {
 
     this.gridEl.innerHTML = html;
     this.bindActions();
+    this.startElapsedTimers();
   }
 
   bindActions() {
@@ -1678,15 +1684,16 @@ class CursorPanel {
         const taskId = btn.dataset.taskId;
         const instruction = prompt('Follow-up instruction for Cursor agent:');
         if (instruction) {
+          btn.textContent = 'SENDING...';
+          btn.disabled = true;
           fetch(`/api/cursor/tasks/${taskId}/followup`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ instruction })
           }).then(r => r.json()).then(result => {
-            if (result.success) {
-              this.cc.appendToConsole('system', `Follow-up sent to agent ${taskId}`);
-            }
-          });
+            btn.textContent = result.success ? 'SENT' : 'FAILED';
+            setTimeout(() => { btn.textContent = 'FOLLOW-UP'; btn.disabled = false; }, 2000);
+          }).catch(() => { btn.textContent = 'ERROR'; btn.disabled = false; });
         }
       });
     });
@@ -1696,28 +1703,70 @@ class CursorPanel {
       btn.addEventListener('click', () => {
         const taskId = btn.dataset.taskId;
         if (confirm('Stop this Cursor agent?')) {
+          btn.textContent = 'STOPPING...';
           fetch(`/api/cursor/tasks/${taskId}/stop`, { method: 'POST' })
             .then(r => r.json()).then(result => {
-              if (result.success) {
-                this.init();  // Refresh
-              }
-            });
+              if (result.success) this.init();
+              else { btn.textContent = 'FAILED'; }
+            }).catch(() => { btn.textContent = 'ERROR'; });
         }
       });
     });
 
-    // View buttons
+    // View Log buttons — toggle inline conversation panel
     this.gridEl.querySelectorAll('.cursor-view-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const taskId = btn.dataset.taskId;
+        const panel = document.getElementById(`conv-${taskId}`);
+        if (!panel) return;
+
+        // Toggle panel
+        if (panel.style.display !== 'none') {
+          panel.style.display = 'none';
+          btn.textContent = 'VIEW LOG';
+          return;
+        }
+
+        panel.style.display = 'block';
+        panel.innerHTML = '<div class="cursor-conv-loading">Loading conversation...</div>';
+        btn.textContent = 'HIDE LOG';
+
         fetch(`/api/cursor/tasks/${taskId}/conversation`)
           .then(r => r.json()).then(result => {
-            if (result.success) {
-              this.cc.appendToConsole('agent', result.message);
+            if (result.success && result.message) {
+              // Convert markdown-ish text to simple HTML
+              const formatted = this.cc.escapeHtml(result.message)
+                .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+                .replace(/\n/g, '<br>');
+              panel.innerHTML = `<div class="cursor-conv-content">${formatted}</div>`;
+            } else {
+              panel.innerHTML = `<div class="cursor-conv-error">${result.message || 'No conversation data available'}</div>`;
             }
+          }).catch(err => {
+            panel.innerHTML = `<div class="cursor-conv-error">Failed to load: ${err.message}</div>`;
           });
       });
     });
+  }
+
+  startElapsedTimers() {
+    // Update elapsed times every 5 seconds for running tasks
+    if (this._elapsedTimer) clearInterval(this._elapsedTimer);
+    this._elapsedTimer = setInterval(() => {
+      this.gridEl.querySelectorAll('.cursor-task-elapsed[data-started]').forEach(el => {
+        el.textContent = this.formatElapsed(new Date(el.dataset.started));
+      });
+    }, 5000);
+  }
+
+  formatElapsed(start) {
+    const sec = Math.floor((Date.now() - start.getTime()) / 1000);
+    if (sec < 60) return `${sec}s`;
+    const min = Math.floor(sec / 60);
+    const remSec = sec % 60;
+    if (min < 60) return `${min}m ${remSec}s`;
+    const hr = Math.floor(min / 60);
+    return `${hr}h ${min % 60}m`;
   }
 
   timeAgo(date) {

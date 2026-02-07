@@ -2228,14 +2228,85 @@ body::before {
   color: var(--text-secondary) !important;
 }
 
-.cursor-pr-link {
-  color: var(--success);
+.cursor-pr-link,
+.cursor-web-link {
+  color: var(--accent);
   text-decoration: none;
   font-weight: 500;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  border: 1px solid var(--accent);
+  padding: 1px 6px;
+  border-radius: 3px;
+  transition: all 0.2s;
+}
+
+.cursor-pr-link {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.cursor-pr-link:hover,
+.cursor-web-link:hover {
+  background: rgba(0, 255, 255, 0.1);
+  text-decoration: none;
 }
 
 .cursor-pr-link:hover {
-  text-decoration: underline;
+  background: rgba(0, 255, 0, 0.1);
+}
+
+/* Conversation panel inline */
+.cursor-conversation-panel {
+  margin-top: 8px;
+  border-top: 1px solid rgba(0, 255, 255, 0.1);
+  padding-top: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.cursor-conv-loading {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  padding: 8px;
+  text-align: center;
+}
+
+.cursor-conv-content {
+  font-size: 0.75rem;
+  color: var(--text-primary);
+  line-height: 1.5;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.cursor-conv-content strong {
+  color: var(--accent);
+}
+
+.cursor-conv-error {
+  font-size: 0.75rem;
+  color: var(--error);
+  padding: 8px;
+}
+
+/* Waiting state for last message */
+.cursor-task-lastmsg.cursor-waiting {
+  color: var(--text-secondary);
+  font-style: italic;
+  opacity: 0.6;
+}
+
+/* Conversation panel scrollbar */
+.cursor-conversation-panel::-webkit-scrollbar {
+  width: 4px;
+}
+.cursor-conversation-panel::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border-radius: 2px;
 }
 
 /* Scrollbar for service grid */

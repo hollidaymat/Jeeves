@@ -170,6 +170,13 @@ export class CursorClient {
   }
 
   /**
+   * Get agent details (status, metadata)
+   */
+  async getAgent(agentId: string): Promise<CursorAgentResponse> {
+    return this.request<CursorAgentResponse>('GET', `/v0/agents/${agentId}`);
+  }
+
+  /**
    * Get agent conversation / progress
    */
   async getConversation(agentId: string): Promise<CursorConversation> {

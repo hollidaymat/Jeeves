@@ -28,6 +28,7 @@ export interface CursorTask {
   lastChecked?: string;
   lastMessage?: string;
   prUrl?: string;
+  cursorUrl?: string;
   error?: string;
   pollCount: number;
 }
@@ -197,6 +198,9 @@ export async function confirmAndLaunch(): Promise<{ success: boolean; message: s
 
     task.agentId = agent.id;
     task.status = 'running';
+    // Extract cursor web URL from launch response
+    const target = agent as Record<string, unknown>;
+    task.cursorUrl = ((target.target as Record<string, unknown>)?.url as string) || `https://cursor.com/agents?id=${agent.id}`;
     activeTasks.set(task.id, task);
 
     broadcast('cursor:task:started', {
@@ -205,6 +209,7 @@ export async function confirmAndLaunch(): Promise<{ success: boolean; message: s
       summary: task.spec.summary,
       project: task.spec.project,
       branch: task.spec.branch,
+      cursorUrl: task.cursorUrl,
     });
 
     // Start polling
@@ -253,57 +258,52 @@ async function pollAgent(taskId: string): Promise<void> {
   if (!client) return;
 
   try {
-    const conversation = await client.getConversation(task.agentId);
+    // Primary: check agent status endpoint for definitive state
+    let agentStatus: string | undefined;
+    let agentUrl: string | undefined;
+    try {
+      const agentInfo = await client.getAgent(task.agentId);
+      agentStatus = (agentInfo.status || '').toString().toUpperCase();
+      // Extract cursor web URL if available
+      const target = agentInfo as Record<string, unknown>;
+      agentUrl = ((target.target as Record<string, unknown>)?.url as string) || undefined;
+      if (agentUrl) task.cursorUrl = agentUrl;
+    } catch {
+      // Agent detail endpoint might not be available, fall back to conversation
+    }
+
     task.lastChecked = new Date().toISOString();
     task.pollCount++;
 
-    const messages = conversation.messages || [];
-    const lastMsg = messages[messages.length - 1];
-    task.lastMessage = lastMsg?.content?.substring(0, 500) || '';
+    // Definitive status from agent endpoint
+    if (agentStatus === 'COMPLETED' || agentStatus === 'FINISHED') {
+      // Get last conversation message for PR URL extraction
+      try {
+        const conv = await client.getConversation(task.agentId);
+        const msgs = conv.messages || [];
+        task.lastMessage = msgs[msgs.length - 1]?.content?.substring(0, 500) || '';
+      } catch { /* ok */ }
 
-    // Check for completion
-    if (isCompleted(conversation)) {
       task.status = 'completed';
       task.completedAt = new Date().toISOString();
-      task.prUrl = extractPrUrl(task.lastMessage);
+      task.prUrl = extractPrUrl(task.lastMessage || '');
 
       broadcast('cursor:task:completed', {
         taskId: task.id,
         agentId: task.agentId,
         summary: task.spec.summary,
         prUrl: task.prUrl,
+        cursorUrl: task.cursorUrl,
       });
 
-      logger.info('Cursor task completed', {
-        taskId: task.id,
-        agentId: task.agentId,
-        prUrl: task.prUrl,
-      });
-
+      logger.info('Cursor task completed', { taskId: task.id, agentId: task.agentId, prUrl: task.prUrl });
       archiveTask(task);
       return;
     }
 
-    // Check for stuck
-    if (isStuck(conversation, task)) {
-      task.status = 'stuck';
-
-      broadcast('cursor:task:stuck', {
-        taskId: task.id,
-        agentId: task.agentId,
-        lastActivity: task.lastMessage?.substring(0, 200),
-      });
-
-      logger.warn('Cursor task may be stuck', { taskId: task.id, agentId: task.agentId });
-      // Keep polling but less frequently
-      setTimeout(() => pollAgent(taskId), POLL_INTERVAL_MS * 2);
-      return;
-    }
-
-    // Check for errors
-    if (hasError(conversation)) {
+    if (agentStatus === 'FAILED' || agentStatus === 'ERROR') {
       task.status = 'error';
-      task.error = extractError(conversation);
+      task.error = `Agent status: ${agentStatus}`;
 
       broadcast('cursor:task:error', {
         taskId: task.id,
@@ -313,6 +313,72 @@ async function pollAgent(taskId: string): Promise<void> {
 
       logger.error('Cursor task error', { taskId: task.id, error: task.error });
       archiveTask(task);
+      return;
+    }
+
+    if (agentStatus === 'STOPPED' || agentStatus === 'CANCELLED') {
+      task.status = 'stopped';
+      task.completedAt = new Date().toISOString();
+      archiveTask(task);
+      return;
+    }
+
+    // Secondary: check conversation for keyword-based completion detection
+    let lastMessage = '';
+    try {
+      const conversation = await client.getConversation(task.agentId);
+      const messages = conversation.messages || [];
+      const lastMsg = messages[messages.length - 1];
+      lastMessage = lastMsg?.content?.substring(0, 500) || '';
+      task.lastMessage = lastMessage;
+
+      if (isCompleted(conversation)) {
+        task.status = 'completed';
+        task.completedAt = new Date().toISOString();
+        task.prUrl = extractPrUrl(lastMessage);
+
+        broadcast('cursor:task:completed', {
+          taskId: task.id,
+          agentId: task.agentId,
+          summary: task.spec.summary,
+          prUrl: task.prUrl,
+          cursorUrl: task.cursorUrl,
+        });
+
+        logger.info('Cursor task completed (keyword)', { taskId: task.id, prUrl: task.prUrl });
+        archiveTask(task);
+        return;
+      }
+
+      if (hasError(conversation)) {
+        task.status = 'error';
+        task.error = extractError(conversation);
+
+        broadcast('cursor:task:error', {
+          taskId: task.id,
+          agentId: task.agentId,
+          error: task.error,
+        });
+
+        archiveTask(task);
+        return;
+      }
+    } catch {
+      // Conversation fetch failed, continue with status-only polling
+    }
+
+    // Check for stuck (no activity for STUCK_THRESHOLD_MS)
+    if (task.pollCount > 3 && task.lastMessage === lastMessage && isStuckByTime(task)) {
+      task.status = 'stuck';
+
+      broadcast('cursor:task:stuck', {
+        taskId: task.id,
+        agentId: task.agentId,
+        lastActivity: task.lastMessage?.substring(0, 200),
+      });
+
+      logger.warn('Cursor task may be stuck', { taskId: task.id });
+      setTimeout(() => pollAgent(taskId), POLL_INTERVAL_MS * 2);
       return;
     }
 
@@ -329,19 +395,19 @@ async function pollAgent(taskId: string): Promise<void> {
       return;
     }
 
-    // Still running - broadcast progress and continue polling
+    // Still running — broadcast progress
     broadcast('cursor:task:progress', {
       taskId: task.id,
       agentId: task.agentId,
       lastMessage: task.lastMessage?.substring(0, 200),
       elapsed: Date.now() - new Date(task.startedAt).getTime(),
       pollCount: task.pollCount,
+      cursorUrl: task.cursorUrl,
     });
 
     schedulePoll(taskId);
   } catch (err) {
     logger.debug(`Poll failed for ${taskId}`, { error: String(err) });
-    // Retry with backoff
     if (task.pollCount < MAX_POLL_COUNT) {
       setTimeout(() => pollAgent(taskId), POLL_INTERVAL_MS * 2);
     }
@@ -369,15 +435,12 @@ function isCompleted(conversation: { messages?: Array<{ content?: string }>; sta
   );
 }
 
-function isStuck(
-  conversation: { messages?: Array<{ content?: string; timestamp?: string }> },
-  task: CursorTask
-): boolean {
-  const lastMsg = conversation.messages?.[conversation.messages.length - 1];
-  if (!lastMsg?.timestamp) return false;
-
-  const lastActivity = new Date(lastMsg.timestamp).getTime();
-  return (Date.now() - lastActivity) > STUCK_THRESHOLD_MS;
+function isStuckByTime(task: CursorTask): boolean {
+  if (!task.lastChecked) return false;
+  const lastCheck = new Date(task.lastChecked).getTime();
+  const elapsed = Date.now() - new Date(task.startedAt).getTime();
+  // Only consider stuck after at least STUCK_THRESHOLD_MS total elapsed
+  return elapsed > STUCK_THRESHOLD_MS && (Date.now() - lastCheck) < POLL_INTERVAL_MS * 3;
 }
 
 function hasError(conversation: { messages?: Array<{ content?: string }>; status?: string }): boolean {

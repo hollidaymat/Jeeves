@@ -81,9 +81,37 @@ const collectors: Record<string, () => Promise<Record<string, unknown> | null>> 
 
   // ---------- Jellyfin ----------
   async jellyfin() {
-    const apiKey = process.env.JELLYFIN_API_KEY;
-    if (!apiKey) return null;
+    let apiKey = process.env.JELLYFIN_API_KEY;
     const base = serviceUrl('jellyfin', 8096);
+
+    // Fallback: authenticate with user/pass if no API key
+    if (!apiKey) {
+      const user = process.env.JELLYFIN_USER;
+      const pass = process.env.JELLYFIN_PASS;
+      if (!user || !pass) return null;
+
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        const authRes = await fetch(`${base}/Users/AuthenticateByName`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Emby-Authorization': 'MediaBrowser Client="Jeeves", Device="Homelab", DeviceId="jeeves-collector", Version="1.0"',
+          },
+          body: JSON.stringify({ Username: user, Pw: pass }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (!authRes.ok) return null;
+        const authData = await authRes.json() as Record<string, unknown>;
+        apiKey = authData.AccessToken as string;
+      } catch (e) {
+        logger.debug('Jellyfin auth failed', { error: String(e) });
+        return null;
+      }
+    }
+
     const headers = { 'X-Emby-Token': apiKey };
 
     try {
@@ -95,10 +123,12 @@ const collectors: Record<string, () => Promise<Record<string, unknown> | null>> 
 
       const activeSessions = (sessions || []).filter((s: Record<string, unknown>) => s.NowPlayingItem);
       const transcoding = activeSessions.some((s: Record<string, unknown>) => s.TranscodingInfo);
+      const folders = ((library as Record<string, unknown>)?.Items as Array<Record<string, unknown>>) || [];
 
       return {
         activeStreams: activeSessions.length,
         transcoding,
+        libraries: folders.map((f: Record<string, unknown>) => f.Name),
         recentlyAdded: (recent || []).slice(0, 5).map((item: Record<string, unknown>) => ({
           title: item.Name,
           type: item.Type,
@@ -297,6 +327,184 @@ const collectors: Record<string, () => Promise<Record<string, unknown> | null>> 
       return null;
     }
   },
+
+  // ---------- Lidarr ----------
+  async lidarr() {
+    const apiKey = process.env.LIDARR_API_KEY;
+    if (!apiKey) return null;
+    const base = serviceUrl('lidarr', 8686);
+    const headers = { 'X-Api-Key': apiKey };
+
+    try {
+      const [queue, artists, health] = await Promise.all([
+        fetchJson(`${base}/api/v1/queue?page=1&pageSize=10`, headers) as Promise<Record<string, unknown>>,
+        fetchJson(`${base}/api/v1/artist`, headers) as Promise<Array<Record<string, unknown>>>,
+        fetchJson(`${base}/api/v1/health`, headers) as Promise<Array<Record<string, unknown>>>,
+      ]);
+
+      const records = ((queue as Record<string, unknown>)?.records as Array<Record<string, unknown>>) || [];
+      const artistsArr = artists || [];
+      const monitored = artistsArr.filter((a: Record<string, unknown>) => a.monitored).length;
+
+      return {
+        queue: records.slice(0, 5).map((r: Record<string, unknown>) => ({
+          title: r.title,
+          status: r.status,
+          progress: r.size ? Math.round((1 - (r.sizeleft as number) / (r.size as number)) * 100) : 0,
+        })),
+        monitored,
+        totalArtists: artistsArr.length,
+        health: (health || []).slice(0, 3).map((h: Record<string, unknown>) => ({
+          type: h.type,
+          message: h.message,
+        })),
+      };
+    } catch (e) {
+      logger.debug('Lidarr collector failed', { error: String(e) });
+      return null;
+    }
+  },
+
+  // ---------- Bazarr ----------
+  async bazarr() {
+    const apiKey = process.env.BAZARR_API_KEY;
+    if (!apiKey) return null;
+    const base = serviceUrl('bazarr', 6767);
+    const headers = { 'X-API-KEY': apiKey };
+
+    try {
+      const [systemStatus, wantedMovies, wantedSeries] = await Promise.all([
+        fetchJson(`${base}/api/system/status`, headers) as Promise<Record<string, unknown>>,
+        fetchJson(`${base}/api/movies/wanted?length=5`, headers) as Promise<Record<string, unknown>>,
+        fetchJson(`${base}/api/episodes/wanted?length=5`, headers) as Promise<Record<string, unknown>>,
+      ]);
+
+      const wantedMoviesList = ((wantedMovies as Record<string, unknown>)?.data as Array<Record<string, unknown>>) || [];
+      const wantedSeriesList = ((wantedSeries as Record<string, unknown>)?.data as Array<Record<string, unknown>>) || [];
+
+      return {
+        version: (systemStatus as Record<string, unknown>)?.data || 'unknown',
+        wantedMovies: wantedMoviesList.length,
+        wantedEpisodes: wantedSeriesList.length,
+        recentWanted: [...wantedMoviesList, ...wantedSeriesList].slice(0, 5).map((w: Record<string, unknown>) => ({
+          title: w.title || w.seriesTitle,
+          missing: w.missing_subtitles,
+        })),
+      };
+    } catch (e) {
+      logger.debug('Bazarr collector failed', { error: String(e) });
+      return null;
+    }
+  },
+
+  // ---------- Overseerr / Jellyseerr ----------
+  async overseerr() {
+    const apiKey = process.env.OVERSEERR_API_KEY;
+    if (!apiKey) return null;
+    const base = serviceUrl('overseerr', 5055);
+    const headers = { 'X-Api-Key': apiKey };
+
+    try {
+      const [status, requests] = await Promise.all([
+        fetchJson(`${base}/api/v1/status`, headers) as Promise<Record<string, unknown>>,
+        fetchJson(`${base}/api/v1/request?take=5&sort=added&order=desc`, headers) as Promise<Record<string, unknown>>,
+      ]);
+
+      const requestList = ((requests as Record<string, unknown>)?.results as Array<Record<string, unknown>>) || [];
+
+      return {
+        version: (status as Record<string, unknown>)?.version || 'unknown',
+        totalRequests: ((requests as Record<string, unknown>)?.pageInfo as Record<string, unknown>)?.results || 0,
+        recentRequests: requestList.slice(0, 5).map((r: Record<string, unknown>) => ({
+          title: ((r.media as Record<string, unknown>)?.title as string) || 'Unknown',
+          type: r.type,
+          status: r.status === 2 ? 'approved' : r.status === 3 ? 'declined' : 'pending',
+        })),
+      };
+    } catch (e) {
+      logger.debug('Overseerr collector failed', { error: String(e) });
+      return null;
+    }
+  },
+
+  // ---------- Tautulli ----------
+  async tautulli() {
+    const apiKey = process.env.TAUTULLI_API_KEY;
+    if (!apiKey) return null;
+    const base = serviceUrl('tautulli', 8181);
+
+    try {
+      const [activity, history] = await Promise.all([
+        fetchJson(`${base}/api/v2?apikey=${apiKey}&cmd=get_activity`) as Promise<Record<string, unknown>>,
+        fetchJson(`${base}/api/v2?apikey=${apiKey}&cmd=get_history&length=5`) as Promise<Record<string, unknown>>,
+      ]);
+
+      const activityData = (activity as Record<string, unknown>)?.response as Record<string, unknown>;
+      const historyData = (history as Record<string, unknown>)?.response as Record<string, unknown>;
+      const sessions = ((activityData as Record<string, unknown>)?.data as Record<string, unknown>)?.sessions as Array<Record<string, unknown>> || [];
+      const historyList = ((historyData as Record<string, unknown>)?.data as Record<string, unknown>)?.data as Array<Record<string, unknown>> || [];
+
+      return {
+        activeStreams: sessions.length,
+        streams: sessions.map((s: Record<string, unknown>) => ({
+          user: s.friendly_name,
+          title: s.full_title,
+          player: s.player,
+          quality: s.quality_profile,
+        })),
+        recentHistory: historyList.slice(0, 5).map((h: Record<string, unknown>) => ({
+          title: h.full_title,
+          user: h.friendly_name,
+          watchedAt: h.date,
+        })),
+      };
+    } catch (e) {
+      logger.debug('Tautulli collector failed', { error: String(e) });
+      return null;
+    }
+  },
+
+  // ---------- Grafana ----------
+  async grafana() {
+    const apiKey = process.env.GRAFANA_API_KEY;
+    const user = process.env.GRAFANA_USER;
+    const pass = process.env.GRAFANA_PASS;
+    const base = serviceUrl('grafana', 3000);
+
+    let headers: Record<string, string> = {};
+    if (apiKey) {
+      headers = { 'Authorization': `Bearer ${apiKey}` };
+    } else if (user && pass) {
+      headers = { 'Authorization': `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}` };
+    } else {
+      return null;
+    }
+
+    try {
+      const [health, dashboards, alerts] = await Promise.all([
+        fetchJson(`${base}/api/health`, headers) as Promise<Record<string, unknown>>,
+        fetchJson(`${base}/api/search?type=dash-db&limit=10`, headers) as Promise<Array<Record<string, unknown>>>,
+        fetchJson(`${base}/api/alerts?state=alerting`, headers) as Promise<Array<Record<string, unknown>>>,
+      ]);
+
+      return {
+        status: (health as Record<string, unknown>)?.database || 'unknown',
+        version: (health as Record<string, unknown>)?.version,
+        dashboards: (dashboards || []).slice(0, 10).map((d: Record<string, unknown>) => ({
+          title: d.title,
+          url: d.url,
+        })),
+        activeAlerts: (alerts || []).length,
+        alerts: (alerts || []).slice(0, 5).map((a: Record<string, unknown>) => ({
+          name: a.name,
+          state: a.state,
+        })),
+      };
+    } catch (e) {
+      logger.debug('Grafana collector failed', { error: String(e) });
+      return null;
+    }
+  },
 };
 
 // ============================================================================
@@ -314,6 +522,8 @@ const nameAliases: Record<string, string> = {
   'pi-hole': 'pihole',
   'paperless-ngx': 'paperless',
   'paperless_ngx': 'paperless',
+  jellyseerr: 'overseerr',
+  'node_exporter': 'nodeexporter',
 };
 
 function normalizeServiceName(name: string): string {
@@ -323,10 +533,15 @@ function normalizeServiceName(name: string): string {
 
 // Map of which env vars each collector needs (for helpful error messages)
 const requiredEnvVars: Record<string, string[]> = {
-  jellyfin: ['JELLYFIN_API_KEY'],
+  jellyfin: ['JELLYFIN_API_KEY or JELLYFIN_USER + JELLYFIN_PASS'],
   radarr: ['RADARR_API_KEY'],
   sonarr: ['SONARR_API_KEY'],
   prowlarr: ['PROWLARR_API_KEY'],
+  lidarr: ['LIDARR_API_KEY'],
+  bazarr: ['BAZARR_API_KEY'],
+  overseerr: ['OVERSEERR_API_KEY'],
+  tautulli: ['TAUTULLI_API_KEY'],
+  grafana: ['GRAFANA_API_KEY or GRAFANA_USER + GRAFANA_PASS'],
   pihole: [],  // works without key (limited)
   uptimekuma: [],  // no key needed
   nextcloud: ['NEXTCLOUD_USER', 'NEXTCLOUD_PASS'],

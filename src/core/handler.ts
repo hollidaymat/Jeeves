@@ -40,6 +40,10 @@ let messagesSinceCompactionCheck = 0;
 
 // Cursor confirmation flag — set when a "cursor build" command produces a pending plan
 let awaitingCursorConfirmation = false;
+
+// Pending new project — waiting for PRD after "new project <name>"
+let pendingNewProject: { name: string; timestamp: number } | null = null;
+
 const COMPACTION_CHECK_INTERVAL = 10; // Check every 10 messages
 
 // Track statistics
@@ -172,7 +176,55 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
       }
     }
 
-    // 2. Cursor commands: "cursor build X", "cursor tasks", "tell cursor to Y", etc.
+    // 2. New project creation
+    //    Two-step flow: "new project <name>" → then paste the PRD
+    //    Or one-shot: "new project <name>\n<PRD content>"
+    const newProjectMatch = content.trim().match(/^(?:new|create|start|init)\s+project\s+(\S+)(?:\s*\n([\s\S]+))?/i);
+    if (newProjectMatch) {
+      logger.info('New project fast path', { content: content.substring(0, 50) });
+      const projectName = newProjectMatch[1].trim();
+      const inlinePrd = newProjectMatch[2]?.trim();
+
+      if (inlinePrd && inlinePrd.length > 20) {
+        // One-shot: name + PRD in one message
+        try {
+          const { createNewProject } = await import('../integrations/cursor-orchestrator.js');
+          const result = await createNewProject(projectName, inlinePrd);
+          if (result.success) awaitingCursorConfirmation = true;
+          stats.lastCommand = { action: 'new_project', timestamp: new Date().toISOString(), success: result.success };
+          return { recipient: sender, content: result.message, replyTo: message.id };
+        } catch (err) {
+          return { recipient: sender, content: `Failed to create project: ${err}`, replyTo: message.id };
+        }
+      } else {
+        // Two-step: just the name, wait for PRD next
+        pendingNewProject = { name: projectName, timestamp: Date.now() };
+        stats.lastCommand = { action: 'new_project_await_prd', timestamp: new Date().toISOString(), success: true };
+        return {
+          recipient: sender,
+          content: `Project name: **${projectName}**\n\nNow paste the PRD and I'll create the repo and send Cursor to build it.`,
+          replyTo: message.id,
+        };
+      }
+    }
+
+    // 2b. Receive PRD for pending new project (any long message when awaiting PRD)
+    if (pendingNewProject && content.trim().length > 50 && (Date.now() - pendingNewProject.timestamp) < 300000) {
+      logger.info('PRD received for pending project', { project: pendingNewProject.name });
+      const projectName = pendingNewProject.name;
+      pendingNewProject = null;
+      try {
+        const { createNewProject } = await import('../integrations/cursor-orchestrator.js');
+        const result = await createNewProject(projectName, content.trim());
+        if (result.success) awaitingCursorConfirmation = true;
+        stats.lastCommand = { action: 'new_project', timestamp: new Date().toISOString(), success: result.success };
+        return { recipient: sender, content: result.message, replyTo: message.id };
+      } catch (err) {
+        return { recipient: sender, content: `Failed to create project: ${err}`, replyTo: message.id };
+      }
+    }
+
+    // 3. Cursor commands: "cursor build X", "cursor tasks", "tell cursor to Y", etc.
     //    Skip cognitive processing — these are explicit and unambiguous
     const cursorFastPath = /^(?:cursor\s+(?:build|code|implement|work\s+on|tasks?|status|agents?|repos|progress|conversation|stop)|send\s+to\s+cursor|tell\s+cursor|have\s+cursor|stop\s+cursor|cancel\s+cursor|show\s+(?:me\s+)?what\s+cursor|what'?s\s+cursor)/i.test(content.trim());
     if (cursorFastPath) {

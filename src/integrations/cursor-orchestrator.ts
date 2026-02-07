@@ -93,6 +93,102 @@ function broadcast(type: string, payload: unknown): void {
 }
 
 // ============================================================================
+// New Project Creation
+// ============================================================================
+
+/**
+ * Create a brand new GitHub repo, scaffold it with a PRD, then queue
+ * a Cursor agent task to implement it.
+ */
+export async function createNewProject(
+  projectName: string,
+  prd: string,
+  options?: { isPrivate?: boolean }
+): Promise<{ success: boolean; message: string }> {
+  const { getGitHubClient, isGitHubEnabled } = await import('./github-client.js');
+
+  if (!isGitHubEnabled()) {
+    return { success: false, message: 'GITHUB_TOKEN not set. Add it to .env to enable project creation.' };
+  }
+
+  const github = getGitHubClient();
+  if (!github) {
+    return { success: false, message: 'Failed to initialize GitHub client.' };
+  }
+
+  // Sanitize project name for GitHub
+  const repoName = projectName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+
+  try {
+    // Check if repo already exists
+    const exists = await github.repoExists(repoName);
+    if (exists) {
+      return { success: false, message: `Repository "${repoName}" already exists on GitHub.` };
+    }
+
+    // Create the repo (auto_init gives us a default README + main branch)
+    const repo = await github.createRepo({
+      name: repoName,
+      description: `Jeeves project: ${projectName}`,
+      isPrivate: options?.isPrivate ?? true,
+      autoInit: true,
+    });
+
+    // Push the PRD and cursor rules as initial scaffold
+    const cursorRules = `# Project Rules
+
+## Context
+This project was bootstrapped by Jeeves and is being built by a Cursor Background Agent.
+
+## Conventions
+- Use TypeScript where possible
+- Follow the PRD in README.md for all requirements
+- Commit with clear messages prefixed with [jeeves]
+- Create clean, well-documented code
+- Include error handling and edge cases
+- Make it production-quality even for small projects
+`;
+
+    await github.pushFiles(repoName, [
+      { path: 'README.md', content: `# ${projectName}\n\n${prd}` },
+      { path: '.cursor/rules/project.mdc', content: cursorRules },
+    ], '[jeeves] Initial scaffold with PRD and cursor rules');
+
+    // Register this repo in the REPO_MAP for future use
+    REPO_MAP[repoName] = repo.html_url;
+
+    logger.info('New project created', { repo: repo.full_name, url: repo.html_url });
+
+    // Now create a Cursor task for it
+    const task = createTask(
+      `Implement the full PRD for ${projectName}`,
+      repoName,
+      {
+        type: 'feature',
+        requirements: ['Implement ALL requirements from the README.md PRD'],
+        complexity: 'high',
+      }
+    );
+
+    if (!task) {
+      return {
+        success: true,
+        message: `Repo created: ${repo.html_url}\n\nBut failed to create Cursor task. Use "cursor build implement PRD for ${repoName}" manually.`,
+      };
+    }
+
+    const plan = getPendingPlan();
+    return {
+      success: true,
+      message: `New project created!\n\nRepo: ${repo.html_url}\n\n${plan || 'Send "go" to launch the Cursor agent.'}`,
+    };
+  } catch (error) {
+    logger.error('Failed to create new project', { error: String(error) });
+    return { success: false, message: `Failed to create project: ${error}` };
+  }
+}
+
+// ============================================================================
 // Task Lifecycle
 // ============================================================================
 

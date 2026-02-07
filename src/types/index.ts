@@ -398,6 +398,7 @@ export interface ExecutionPlan {
   currentPhaseIndex: number;
   deviations: PrdDeviation[];
   branchName?: string;
+  _consecutiveFailures?: number;   // Tracks consecutive phase failures for circuit breaking
 }
 
 export interface PrdDeviation {

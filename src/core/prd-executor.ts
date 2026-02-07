@@ -285,6 +285,9 @@ async function executeNextPhase(): Promise<void> {
     phase.status = 'completed';
     phase.completedAt = new Date().toISOString();
     phase.result = response;
+    
+    // Reset consecutive failure counter on success
+    activePlan._consecutiveFailures = 0;
 
     // Record phase for learning system (cost tracking & circuit breaker)
     const phaseCost = getCurrentBuildCost();
@@ -351,28 +354,55 @@ async function executeNextPhase(): Promise<void> {
     }, 500);
 
   } catch (error) {
-    logger.error('Phase execution failed', { phase: phase.name, error: String(error) });
+    const errorStr = error instanceof Error ? error.message : String(error);
+    logger.error('Phase execution failed', { phase: phase.name, error: errorStr });
     phase.status = 'failed';
+    
+    // Detect rate limit errors -- pause and wait instead of burning through phases
+    const isRateLimit = errorStr.includes('rate limit') || errorStr.includes('rate_limit') || errorStr.includes('429');
+    
+    if (isRateLimit) {
+      activePlan.status = 'paused';
+      logger.warn('Rate limit hit - pausing execution to cool down', { phase: phase.name });
+      
+      notifyCheckpoint({
+        phaseId: phase.id,
+        phaseName: phase.name,
+        message: `Rate limit hit during "${phase.name}". Pausing for cooldown.\nSay "resume" in a few minutes to retry this phase.`,
+        decisions: [],
+        filesChanged: [],
+        timestamp: new Date().toISOString(),
+        requiresResponse: true
+      });
+      
+      // Don't increment phase index -- retry the same phase on resume
+      persistCosts();
+      return;
+    }
+    
+    // Track consecutive non-rate-limit failures
+    if (!activePlan._consecutiveFailures) activePlan._consecutiveFailures = 0;
+    activePlan._consecutiveFailures++;
     
     // Record failure for learning system (circuit breaker)
     const phaseCost = getCurrentBuildCost();
-    const learningResult = recordPhase(phase.name, 'failed', phaseCost, String(error));
+    const learningResult = recordPhase(phase.name, 'failed', phaseCost, errorStr);
     
     // Persist costs immediately on failure
     persistCosts();
 
-    // Check if circuit breaker triggered
-    if (!learningResult.shouldContinue) {
+    // Stop after 2 consecutive failures OR if circuit breaker triggers
+    if (activePlan._consecutiveFailures >= 2 || !learningResult.shouldContinue) {
       activePlan.status = 'paused';
-      logger.warn('Circuit breaker triggered - pausing build', { 
+      logger.warn('Build paused after consecutive failures', { 
         phase: phase.name, 
-        cost: phaseCost 
+        consecutiveFailures: activePlan._consecutiveFailures
       });
       
       notifyCheckpoint({
         phaseId: phase.id,
         phaseName: phase.name,
-        message: learningResult.warning || `Phase failed and circuit breaker triggered. Build paused to prevent wasted costs.\nSay "resume" to continue or "abort" to stop.`,
+        message: learningResult.warning || `Phase "${phase.name}" failed (${activePlan._consecutiveFailures} consecutive failures). Build paused.\nSay "resume" to retry or "abort" to stop.`,
         decisions: [],
         filesChanged: [],
         timestamp: new Date().toISOString(),
@@ -382,19 +412,19 @@ async function executeNextPhase(): Promise<void> {
     }
 
     // Record failure for trust de-escalation
-    recordRollback(`Phase "${phase.name}" failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    recordRollback(`Phase "${phase.name}" failed: ${errorStr}`);
 
     notifyCheckpoint({
       phaseId: phase.id,
       phaseName: phase.name,
-      message: `Phase failed: ${error instanceof Error ? error.message : 'Unknown error'}. Auto-continuing to next phase...`,
+      message: `Phase failed: ${errorStr}. Skipping to next phase...`,
       decisions: [],
       filesChanged: [],
       timestamp: new Date().toISOString(),
       requiresResponse: false
     });
     
-    // Auto-continue to next phase (but circuit breaker will stop if too many failures)
+    // Skip to next phase (single non-rate-limit failure)
     activePlan.currentPhaseIndex++;
     setTimeout(() => {
       if (activePlan?.status === 'executing') {

@@ -993,7 +993,7 @@ class HomelabDashboard {
     if (!container) return;
 
     if (!data || data.error) {
-      container.innerHTML = `<div class="deep-dive-unavailable">Service API unavailable${data?.error ? ': ' + data.error : ''}</div>`;
+      container.innerHTML = `<div class="deep-dive-unavailable">${data?.error || 'No detailed data available for this service'}</div>`;
       return;
     }
 

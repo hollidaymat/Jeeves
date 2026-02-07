@@ -45,6 +45,18 @@ function setCache(name: string, data: Record<string, unknown>): void {
 }
 
 // ============================================================================
+// Service URL Helper — reads from env or falls back to default
+// ============================================================================
+
+function serviceUrl(name: string, defaultPort: number): string {
+  // Check for SERVICE_URL override first (e.g. JELLYFIN_URL=http://192.168.1.50:8096)
+  const envKey = `${name.toUpperCase()}_URL`;
+  const override = process.env[envKey];
+  if (override) return override.replace(/\/$/, '');
+  return `http://localhost:${defaultPort}`;
+}
+
+// ============================================================================
 // HTTP Helper
 // ============================================================================
 
@@ -71,7 +83,7 @@ const collectors: Record<string, () => Promise<Record<string, unknown> | null>> 
   async jellyfin() {
     const apiKey = process.env.JELLYFIN_API_KEY;
     if (!apiKey) return null;
-    const base = 'http://localhost:8096';
+    const base = serviceUrl('jellyfin', 8096);
     const headers = { 'X-Emby-Token': apiKey };
 
     try {
@@ -103,7 +115,7 @@ const collectors: Record<string, () => Promise<Record<string, unknown> | null>> 
   async radarr() {
     const apiKey = process.env.RADARR_API_KEY;
     if (!apiKey) return null;
-    const base = 'http://localhost:7878';
+    const base = serviceUrl('radarr', 7878);
     const headers = { 'X-Api-Key': apiKey };
 
     try {
@@ -144,7 +156,7 @@ const collectors: Record<string, () => Promise<Record<string, unknown> | null>> 
   async sonarr() {
     const apiKey = process.env.SONARR_API_KEY;
     if (!apiKey) return null;
-    const base = 'http://localhost:8989';
+    const base = serviceUrl('sonarr', 8989);
     const headers = { 'X-Api-Key': apiKey };
 
     try {
@@ -181,7 +193,7 @@ const collectors: Record<string, () => Promise<Record<string, unknown> | null>> 
   async prowlarr() {
     const apiKey = process.env.PROWLARR_API_KEY;
     if (!apiKey) return null;
-    const base = 'http://localhost:9696';
+    const base = serviceUrl('prowlarr', 9696);
     const headers = { 'X-Api-Key': apiKey };
 
     try {
@@ -202,7 +214,7 @@ const collectors: Record<string, () => Promise<Record<string, unknown> | null>> 
   // ---------- Pi-hole ----------
   async pihole() {
     const apiKey = process.env.PIHOLE_API_KEY;
-    const base = 'http://localhost:8053';
+    const base = serviceUrl('pihole', 8053);
 
     try {
       const summary = await fetchJson(`${base}/admin/api.php?summaryRaw${apiKey ? '&auth=' + apiKey : ''}`) as Record<string, unknown>;
@@ -223,7 +235,7 @@ const collectors: Record<string, () => Promise<Record<string, unknown> | null>> 
   async uptimekuma() {
     // Uptime Kuma doesn't have a simple REST API -- it uses Socket.IO
     // We attempt the /api/status-page/default endpoint (if configured)
-    const base = 'http://localhost:3001';
+    const base = serviceUrl('uptime_kuma', 3001);
     try {
       const data = await fetchJson(`${base}/api/status-page/default`) as Record<string, unknown>;
       const monitors = (data?.publicGroupList as Array<Record<string, unknown>>) || [];
@@ -250,7 +262,7 @@ const collectors: Record<string, () => Promise<Record<string, unknown> | null>> 
     const user = process.env.NEXTCLOUD_USER;
     const pass = process.env.NEXTCLOUD_PASS;
     if (!user || !pass) return null;
-    const base = 'http://localhost:8888';
+    const base = serviceUrl('nextcloud', 8888);
     const auth = Buffer.from(`${user}:${pass}`).toString('base64');
     const headers = { 'Authorization': `Basic ${auth}`, 'OCS-APIREQUEST': 'true' };
 
@@ -269,7 +281,7 @@ const collectors: Record<string, () => Promise<Record<string, unknown> | null>> 
   async paperless() {
     const apiKey = process.env.PAPERLESS_API_KEY;
     if (!apiKey) return null;
-    const base = 'http://localhost:8010';
+    const base = serviceUrl('paperless', 8010);
     const headers = { 'Authorization': `Token ${apiKey}` };
 
     try {
@@ -291,16 +303,47 @@ const collectors: Record<string, () => Promise<Record<string, unknown> | null>> 
 // Public API
 // ============================================================================
 
+// ============================================================================
+// Name Normalization — matches Docker container names to collector keys
+// ============================================================================
+
+const nameAliases: Record<string, string> = {
+  uptime_kuma: 'uptimekuma',
+  'uptime-kuma': 'uptimekuma',
+  pihole: 'pihole',
+  'pi-hole': 'pihole',
+  'paperless-ngx': 'paperless',
+  'paperless_ngx': 'paperless',
+};
+
+function normalizeServiceName(name: string): string {
+  const lower = name.toLowerCase().trim();
+  return nameAliases[lower] || lower.replace(/[-_]/g, '');
+}
+
+// Map of which env vars each collector needs (for helpful error messages)
+const requiredEnvVars: Record<string, string[]> = {
+  jellyfin: ['JELLYFIN_API_KEY'],
+  radarr: ['RADARR_API_KEY'],
+  sonarr: ['SONARR_API_KEY'],
+  prowlarr: ['PROWLARR_API_KEY'],
+  pihole: [],  // works without key (limited)
+  uptimekuma: [],  // no key needed
+  nextcloud: ['NEXTCLOUD_USER', 'NEXTCLOUD_PASS'],
+  paperless: ['PAPERLESS_API_KEY'],
+};
+
 /**
  * Collect detailed data for a specific service.
  * Returns cached data if fresh, otherwise queries the service API.
  * Returns null if no collector exists or the API is unavailable.
  */
 export async function collectServiceDetail(serviceName: string): Promise<Record<string, unknown> | null> {
-  const cached = getCached(serviceName);
+  const normalized = normalizeServiceName(serviceName);
+  const cached = getCached(normalized);
   if (cached) return cached;
 
-  const collector = collectors[serviceName];
+  const collector = collectors[normalized];
   if (!collector) {
     // No dedicated collector -- return basic info from container
     return null;
@@ -309,13 +352,21 @@ export async function collectServiceDetail(serviceName: string): Promise<Record<
   try {
     const data = await collector();
     if (data) {
-      setCache(serviceName, data);
+      setCache(normalized, data);
     }
     return data;
   } catch (error) {
     logger.debug(`Collector failed for ${serviceName}`, { error: String(error) });
     return null;
   }
+}
+
+/**
+ * Get the required env vars for a service collector (for UI hints).
+ */
+export function getRequiredEnvVars(serviceName: string): string[] {
+  const normalized = normalizeServiceName(serviceName);
+  return requiredEnvVars[normalized] || [];
 }
 
 /**

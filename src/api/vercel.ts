@@ -180,6 +180,23 @@ async function collectProject(project: VercelProjectConfig, token: string, teamI
 // Public API
 // ============================================================================
 
+/**
+ * Auto-discover projects from Vercel team when no explicit projects configured.
+ */
+async function discoverTeamProjects(token: string, teamId: string): Promise<VercelProjectConfig[]> {
+  try {
+    const data = await vercelFetch('/v9/projects?limit=50', token, teamId) as Record<string, unknown>;
+    const projectsList = (data?.projects as Array<Record<string, unknown>>) || [];
+    return projectsList.map((p: Record<string, unknown>) => ({
+      name: p.name as string,
+      id: p.id as string,
+    }));
+  } catch (error) {
+    logger.debug('Failed to discover Vercel projects from team', { error: String(error) });
+    return [];
+  }
+}
+
 export async function getVercelStatus(): Promise<VercelStatus> {
   const config = getConfig();
   if (!config) {
@@ -191,12 +208,21 @@ export async function getVercelStatus(): Promise<VercelStatus> {
     return cachedStatus;
   }
 
-  if (config.projects.length === 0) {
-    return { enabled: true, projects: [], summary: 'No projects configured' };
+  // Auto-discover projects from team if none explicitly configured
+  let projectConfigs = config.projects;
+  if (projectConfigs.length === 0 && config.teamId) {
+    logger.debug('No VERCEL_PROJECTS set, auto-discovering from team...');
+    projectConfigs = await discoverTeamProjects(config.apiToken, config.teamId);
+    if (projectConfigs.length === 0) {
+      return { enabled: true, projects: [], summary: 'No projects found in team' };
+    }
+    logger.debug(`Discovered ${projectConfigs.length} projects from team`);
+  } else if (projectConfigs.length === 0) {
+    return { enabled: true, projects: [], summary: 'No projects configured — set VERCEL_TEAM_ID or VERCEL_PROJECTS' };
   }
 
   const projects = await Promise.all(
-    config.projects.map(p => collectProject(p, config.apiToken, config.teamId))
+    projectConfigs.map(p => collectProject(p, config.apiToken, config.teamId))
   );
 
   const healthyCount = projects.filter(p => p.production.status === 'READY').length;

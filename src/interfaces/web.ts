@@ -17,7 +17,7 @@ import { getPendingChanges, setStreamCallback } from '../core/cursor-agent.js';
 import { exportConversations } from '../core/memory.js';
 import { onCheckpoint, getExecutionStatus } from '../core/prd-executor.js';
 import { isHomelabEnabled, getDashboardStatus } from '../homelab/index.js';
-import { collectServiceDetail } from '../homelab/services/collectors.js';
+import { collectServiceDetail, getRequiredEnvVars } from '../homelab/services/collectors.js';
 import { getActivitySnapshot } from '../models/activity.js';
 import { getCostDashboardData } from '../core/cost-tracker.js';
 import { getProjects, addProject, moveTask } from '../models/projects.js';
@@ -116,7 +116,11 @@ export class WebInterface implements MessageInterface {
         if (data) {
           res.json(data);
         } else {
-          res.json({ error: 'No detailed data available for this service' });
+          const required = getRequiredEnvVars(req.params.name);
+          const hint = required.length > 0
+            ? `Set ${required.join(', ')} in .env to enable`
+            : 'No collector available for this service';
+          res.json({ error: hint });
         }
       } catch (error) {
         res.json({ error: String(error) });

@@ -370,7 +370,7 @@ class CommandCenter {
       /^\[security-response\]/i,
       /^\[vercel-security\]/i,
       /^\[COST\]/i,
-      /^Self-update:/i,
+      /^Self-update/i,
       /^Scout loop/i,
       /^Scheduler ran task/i,
       /^Signal (connection timeout|socket error|socket closed|Reconnecting)/i,

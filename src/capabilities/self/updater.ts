@@ -177,7 +177,7 @@ export async function checkForUpdates(): Promise<{
   } catch (err) {
     state.lastError = String(err);
     addEvent('check', `Check failed: ${err}`, false);
-    logger.error('Self-update check failed', { error: String(err) });
+    logger.debug('Self-update check failed', { error: String(err) });
     throw err;
   }
 }

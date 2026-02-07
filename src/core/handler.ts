@@ -150,6 +150,40 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
     }
     
     // ==========================================
+    // CURSOR AGENT FAST PATH (skip cognitive layer)
+    // ==========================================
+    // Cursor commands are explicit and unambiguous — no need for cognitive processing
+    const cursorFastPath = /^(?:cursor\s+(?:build|code|implement|work\s+on|tasks?|status|agents?|repos|progress|conversation|stop)|send\s+to\s+cursor|tell\s+cursor|have\s+cursor|stop\s+cursor|cancel\s+cursor|show\s+(?:me\s+)?what\s+cursor|what'?s\s+cursor)/i.test(content.trim());
+    if (cursorFastPath) {
+      logger.debug('Cursor fast path — skipping cognitive layer', { content: content.substring(0, 50) });
+      const intent = await parseIntent(content);
+      if (message.attachments?.length) {
+        const imgs = message.attachments.filter(a => a.type === 'image' && a.data).map(a => ({ name: a.name || 'image', data: a.data!, mimeType: a.mimeType }));
+        if (imgs.length) intent.attachments = imgs;
+      }
+      const result = await executeCommand(intent);
+      stats.lastCommand = { action: intent.action, timestamp: new Date().toISOString(), success: result.success };
+      return { recipient: sender, content: formatResponse(intent, result), replyTo: message.id };
+    }
+
+    // Also fast-path "go"/"yes"/"do it" when a Cursor task is pending confirmation
+    const isConfirmation = /^(go|yes|do\s+it|confirm|launch|execute|send\s+it|approved?)$/i.test(content.trim());
+    if (isConfirmation) {
+      try {
+        const { hasPendingCursorTask } = await import('./cursor-orchestrator-check.js');
+        if (hasPendingCursorTask()) {
+          logger.debug('Cursor confirm fast path');
+          const intent = await parseIntent(content);
+          const result = await executeCommand(intent);
+          stats.lastCommand = { action: intent.action, timestamp: new Date().toISOString(), success: result.success };
+          return { recipient: sender, content: formatResponse(intent, result), replyTo: message.id };
+        }
+      } catch {
+        // Cursor module not available, continue normal flow
+      }
+    }
+
+    // ==========================================
     // COGNITIVE PROCESSING LAYER
     // ==========================================
     

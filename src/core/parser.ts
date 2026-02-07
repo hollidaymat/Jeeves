@@ -257,6 +257,9 @@ const PATTERNS = {
   homelabFirewallDeny: /^firewall\s+deny\s+(\d+)$/i,
 
   // Media commands
+  // Feedback / discussion (not a command -- user is providing input, not requesting action)
+  feedback: /^(?:I think|you should|the .+ should|change the|instead of|don't|do not|stop|maybe|how about|what if|consider|note that|remember that|keep in mind|fyi|heads up|one thing|also,? |actually,? |correction|btw|by the way|can you not|please don't|feedback|my preference|i prefer|i'd rather|i want you to|when you|next time|going forward|in the future|from now on)/i,
+
   // Backup commands
   backupRun: /^backup\s*(?:now|full|run)?$/i,
   backupPostgres: /^backup\s+(?:postgres|pg|database|db)$/i,
@@ -1357,6 +1360,20 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
   
   // Ask patterns check moved earlier in the function (before terminal commands)
   
+  // Feedback / discussion -- user is providing input, not a command
+  // MUST be checked BEFORE edit patterns so "change the backup to X" 
+  // doesn't immediately trigger code changes
+  if (PATTERNS.feedback.test(trimmed)) {
+    return {
+      action: 'feedback',
+      prompt: trimmed,
+      confidence: 0.85,
+      resolutionMethod: 'pattern',
+      estimatedCost: 0,
+      message: trimmed
+    };
+  }
+
   // Edit patterns - "add X", "fix Y", "update Z", etc.
   const editMatch = trimmed.match(/^(add|fix|update|change|modify|create|remove|delete|refactor|implement|write|insert)\s+(.+)$/i);
   if (editMatch) {

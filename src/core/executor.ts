@@ -360,6 +360,31 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     };
   }
 
+  // Handle feedback -- acknowledge, store, but do NOT immediately start coding
+  if (intent.action === 'feedback') {
+    const feedbackText = intent.prompt || intent.message || '';
+    logger.info('Feedback received', { feedback: feedbackText.substring(0, 100) });
+
+    // Store as an annotation/preference for future reference
+    try {
+      const { setAnnotation } = await import('./context/layers/annotations.js');
+      setAnnotation(
+        `feedback.${Date.now()}`,
+        feedbackText,
+        'preference',
+        'user-confirmed'
+      );
+    } catch {
+      // Context system not available, that's fine
+    }
+
+    return {
+      success: true,
+      output: `Noted. ${feedbackText.length > 80 ? 'I\'ve stored that feedback.' : ''} Want me to make changes based on this, or is this just for future reference?`,
+      duration_ms: Date.now() - startTime
+    };
+  }
+
   if (intent.action === 'unknown') {
     return {
       success: false,

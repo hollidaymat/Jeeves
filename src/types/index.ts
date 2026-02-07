@@ -128,6 +128,7 @@ export type ActionType =
   | 'media_select'            // Select from pending media results (by number)
   | 'media_more'              // Show next page of media results
   | 'media_status'            // Check download queue status
+  | 'feedback'              // User is giving feedback/preference, not requesting action
   | 'unknown'
   | 'denied';
 

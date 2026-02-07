@@ -386,6 +386,81 @@ export class WebInterface implements MessageInterface {
       }
     });
 
+    // API: Self-improvement proposals
+    this.app.get('/api/self/proposals', async (_req: Request, res: Response) => {
+      try {
+        const { getProposalStatus } = await import('../capabilities/self/proposals.js');
+        res.json(getProposalStatus());
+      } catch (error) {
+        res.json({ currentBatch: [], canApprove: false, approvalsToday: 0, batchDate: '', historyCount: 0 });
+      }
+    });
+
+    // API: Generate proposals (trigger)
+    this.app.post('/api/self/proposals/generate', async (_req: Request, res: Response) => {
+      try {
+        const { generateProposals } = await import('../capabilities/self/proposals.js');
+        const proposals = await generateProposals();
+        res.json({ proposals });
+      } catch (error) {
+        res.status(500).json({ error: String(error) });
+      }
+    });
+
+    // API: Approve proposal
+    this.app.post('/api/self/proposals/:num/approve', async (req: Request, res: Response) => {
+      try {
+        const { approveProposal } = await import('../capabilities/self/proposals.js');
+        const result = await approveProposal(parseInt(req.params.num, 10));
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ success: false, message: String(error) });
+      }
+    });
+
+    // API: Reject proposal
+    this.app.post('/api/self/proposals/:num/reject', async (req: Request, res: Response) => {
+      try {
+        const { rejectProposal } = await import('../capabilities/self/proposals.js');
+        const result = rejectProposal(parseInt(req.params.num, 10));
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ success: false, message: String(error) });
+      }
+    });
+
+    // API: Self-update status
+    this.app.get('/api/self/update', async (_req: Request, res: Response) => {
+      try {
+        const { getUpdateStatus } = await import('../capabilities/self/updater.js');
+        res.json(getUpdateStatus());
+      } catch (error) {
+        res.json({ behind: 0, autoUpdateEnabled: false, lastCheck: '', lastError: 'Not available' });
+      }
+    });
+
+    // API: Check for updates
+    this.app.post('/api/self/update/check', async (_req: Request, res: Response) => {
+      try {
+        const { checkForUpdates } = await import('../capabilities/self/updater.js');
+        const status = await checkForUpdates();
+        res.json(status);
+      } catch (error) {
+        res.status(500).json({ error: String(error) });
+      }
+    });
+
+    // API: Pull and restart
+    this.app.post('/api/self/update/pull', async (_req: Request, res: Response) => {
+      try {
+        const { pullAndRestart } = await import('../capabilities/self/updater.js');
+        const result = await pullAndRestart();
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ success: false, message: String(error) });
+      }
+    });
+
     // API: Send command
     this.app.post('/api/command', async (req: Request, res: Response) => {
       const { content, attachments } = req.body;

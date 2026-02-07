@@ -108,6 +108,25 @@ async function main() {
     logger.debug('Decision recorder not started', { error: String(err) });
   }
 
+  // Start Self-Update Checker
+  try {
+    const { startUpdateChecker, setUpdateBroadcast, setActiveTaskChecker } = await import('./capabilities/self/updater.js');
+    // Wire broadcasts
+    import('./interfaces/web.js').then(({ webInterface }) => {
+      setUpdateBroadcast((type, payload) => {
+        (webInterface as any).broadcast?.({ type, payload });
+      });
+    }).catch(() => {});
+    // Wire active task checker
+    import('./integrations/cursor-orchestrator.js').then(({ getActiveCursorTasks }) => {
+      setActiveTaskChecker(() => getActiveCursorTasks().length > 0);
+    }).catch(() => {});
+    startUpdateChecker();
+    logger.info('Self-update checker started');
+  } catch (err) {
+    logger.debug('Self-update checker not started', { error: String(err) });
+  }
+
   logger.info('System ready');
   logger.info(`Open http://${config.server.host}:${config.server.port} in your browser`);
   if (signalInterface.isAvailable()) {
@@ -147,6 +166,10 @@ async function main() {
       try {
         const { stopSecurityMonitor } = await import('./capabilities/security/monitor.js');
         stopSecurityMonitor();
+      } catch {}
+      try {
+        const { stopUpdateChecker } = await import('./capabilities/self/updater.js');
+        stopUpdateChecker();
       } catch {}
     
     process.exit(0);

@@ -365,6 +365,127 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
       }
     }
 
+    // ==========================================
+    // SELF-IMPROVEMENT FAST PATHS
+    // ==========================================
+
+    // "suggest improvements" / "what would you improve" / "improvement proposals" / "pitch me"
+    const proposalMatch = /^(?:suggest\s+improvement|improvement\s+proposals?|what\s+would\s+you\s+improve|pitch\s+me|self.?improve|what\s+do\s+you\s+want\s+to\s+(?:build|add|improve)|your\s+ideas)/i.test(content.trim());
+    if (proposalMatch) {
+      logger.info('Self-improvement proposals fast path');
+      try {
+        const { generateProposals, getProposalStatus } = await import('../capabilities/self/proposals.js');
+        const proposals = await generateProposals();
+        const status = getProposalStatus();
+
+        if (proposals.length === 0) {
+          stats.lastCommand = { action: 'self_proposals', timestamp: new Date().toISOString(), success: true };
+          return { recipient: sender, content: 'No proposals available yet. I\'ll generate some ideas shortly.', replyTo: message.id };
+        }
+
+        const lines = [`Here are my 3 improvement proposals for today:\n`];
+        proposals.forEach((p, i) => {
+          lines.push(`${i + 1}. **${p.title}** [${p.category}/${p.estimatedComplexity}]`);
+          lines.push(`   ${p.description}`);
+          lines.push(`   _${p.rationale}_\n`);
+        });
+
+        if (status.canApprove) {
+          lines.push('Reply "approve 1", "approve 2", or "approve 3" to pick one. Max 1 per day.');
+        } else {
+          lines.push('Already approved one today. New proposals tomorrow.');
+        }
+
+        stats.lastCommand = { action: 'self_proposals', timestamp: new Date().toISOString(), success: true };
+        return { recipient: sender, content: lines.join('\n'), replyTo: message.id };
+      } catch (err) {
+        return { recipient: sender, content: `Failed to generate proposals: ${err}`, replyTo: message.id };
+      }
+    }
+
+    // "approve 1" / "approve 2" / "approve 3" / "approve proposal X"
+    const approveMatch = content.trim().match(/^approve\s+(?:proposal\s+)?(\d)/i);
+    if (approveMatch) {
+      logger.info('Approve proposal fast path');
+      try {
+        const { approveProposal } = await import('../capabilities/self/proposals.js');
+        const result = await approveProposal(parseInt(approveMatch[1], 10));
+
+        if (result.success) {
+          // If a Cursor task was created, set the confirmation flag
+          const { hasPendingCursorTask } = await import('../integrations/cursor-orchestrator.js');
+          if (hasPendingCursorTask()) {
+            awaitingCursorConfirmation = true;
+          }
+        }
+
+        stats.lastCommand = { action: 'approve_proposal', timestamp: new Date().toISOString(), success: result.success };
+        return { recipient: sender, content: result.message, replyTo: message.id };
+      } catch (err) {
+        return { recipient: sender, content: `Failed to approve: ${err}`, replyTo: message.id };
+      }
+    }
+
+    // "reject 1" / "reject proposal 2" / "pass on all"
+    const rejectMatch = content.trim().match(/^(?:reject|pass\s+on)\s+(?:proposal\s+)?(\d|all)/i);
+    if (rejectMatch) {
+      logger.info('Reject proposal fast path');
+      try {
+        const { rejectProposal, getCurrentProposals } = await import('../capabilities/self/proposals.js');
+        if (rejectMatch[1] === 'all') {
+          const proposals = getCurrentProposals();
+          proposals.forEach((_, i) => rejectProposal(i + 1));
+          stats.lastCommand = { action: 'reject_proposals', timestamp: new Date().toISOString(), success: true };
+          return { recipient: sender, content: 'Rejected all proposals. Fresh batch tomorrow.', replyTo: message.id };
+        }
+        const result = rejectProposal(parseInt(rejectMatch[1], 10));
+        stats.lastCommand = { action: 'reject_proposal', timestamp: new Date().toISOString(), success: result.success };
+        return { recipient: sender, content: result.message, replyTo: message.id };
+      } catch (err) {
+        return { recipient: sender, content: `Failed to reject: ${err}`, replyTo: message.id };
+      }
+    }
+
+    // "update yourself" / "pull and restart" / "self update" / "update status"
+    const updateMatch = content.trim().match(/^(?:update\s+yourself|self[- ]?update|pull\s+and\s+restart|update\s+jeeves|upgrade\s+yourself|check\s+for\s+updates?|update\s+status)/i);
+    if (updateMatch) {
+      logger.info('Self-update fast path');
+      try {
+        const { checkForUpdates, pullAndRestart, getUpdateStatus } = await import('../capabilities/self/updater.js');
+
+        // If "update status" just show status
+        if (/status/i.test(updateMatch[0])) {
+          const s = getUpdateStatus();
+          const lines = [
+            `Self-update status:`,
+            `Auto-update: ${s.autoUpdateEnabled ? 'ON' : 'OFF'}`,
+            `Last check: ${s.lastCheck || 'never'}`,
+            `Local HEAD: ${s.localHead?.substring(0, 8) || 'unknown'}`,
+            `Remote HEAD: ${s.remoteHead?.substring(0, 8) || 'unknown'}`,
+            `Behind: ${s.behind} commits`,
+            s.updateInProgress ? 'UPDATE IN PROGRESS' : '',
+            s.lastError ? `Last error: ${s.lastError}` : '',
+          ].filter(Boolean);
+          stats.lastCommand = { action: 'update_status', timestamp: new Date().toISOString(), success: true };
+          return { recipient: sender, content: lines.join('\n'), replyTo: message.id };
+        }
+
+        // Check for updates first
+        const status = await checkForUpdates();
+        if (status.behind === 0) {
+          stats.lastCommand = { action: 'self_update', timestamp: new Date().toISOString(), success: true };
+          return { recipient: sender, content: `Already up to date. HEAD: ${status.localHead.substring(0, 8)}`, replyTo: message.id };
+        }
+
+        // Pull and restart
+        const result = await pullAndRestart();
+        stats.lastCommand = { action: 'self_update', timestamp: new Date().toISOString(), success: result.success };
+        return { recipient: sender, content: result.message, replyTo: message.id };
+      } catch (err) {
+        return { recipient: sender, content: `Self-update failed: ${err}`, replyTo: message.id };
+      }
+    }
+
     // 3. Cursor commands: "cursor build X", "cursor tasks", "tell cursor to Y", etc.
     //    Skip cognitive processing — these are explicit and unambiguous
     const cursorFastPath = /^(?:cursor\s+(?:build|code|implement|work\s+on|tasks?|status|agents?|repos|progress|conversation|stop)|send\s+to\s+cursor|tell\s+cursor|have\s+cursor|stop\s+cursor|cancel\s+cursor|show\s+(?:me\s+)?what\s+cursor|what'?s\s+cursor)/i.test(content.trim());

@@ -117,6 +117,7 @@ const defaultConfig: Config = {
       freelance_analysis: { maxTokens: 500,  maxCallsPerPeriod: 5,  periodMs: 86400000, dailyCap: 0.10 },
       decision_predict:   { maxTokens: 200,  maxCallsPerPeriod: 20, periodMs: 86400000, dailyCap: 0.05 },
       cursor_refinement:  { maxTokens: 500,  maxCallsPerPeriod: 10, periodMs: 86400000, dailyCap: 0.50 },
+      self_proposals:     { maxTokens: 600,  maxCallsPerPeriod: 2,  periodMs: 86400000, dailyCap: 0.02 },
     }
   },
   homelab: {

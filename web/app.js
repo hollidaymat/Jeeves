@@ -769,17 +769,20 @@ class CommandCenter {
   async sendCommand(command) {
     this.addToHistory(command);
     
-    let fullCommand = command;
-    const attachmentInfo = [];
+    // Show the command in chat
+    this.log('command', command);
+    
+    // Show attached files as visual previews in chat
     if (this.attachedFiles.length > 0) {
       for (const file of this.attachedFiles) {
-        attachmentInfo.push(file.isImage ? `[Image: ${file.name}]` : `[File: ${file.name}]`);
+        if (file.isImage && file.content) {
+          // Show image thumbnail in chat
+          this.logAttachment(file.name, file.content);
+        } else {
+          this.log('system', `Attached: ${file.name} (${this.formatFileSize(file.size || 0)})`);
+        }
       }
     }
-    
-    const displayCommand = attachmentInfo.length > 0 
-      ? `${command} ${attachmentInfo.join(' ')}` : command;
-    this.log('command', displayCommand);
     
     try {
       const requestBody = { 
@@ -802,6 +805,43 @@ class CommandCenter {
     } catch (error) {
       this.log('error', `Failed to send command: ${error.message}`);
     }
+  }
+  
+  logAttachment(name, dataUrl) {
+    const line = document.createElement('div');
+    line.className = 'console-line system';
+    
+    const timestamp = document.createElement('span');
+    timestamp.className = 'timestamp';
+    timestamp.textContent = `[${new Date().toLocaleTimeString()}]`;
+    
+    const messageSpan = document.createElement('span');
+    messageSpan.className = 'message';
+    
+    const label = document.createElement('div');
+    label.textContent = `Attached: ${name}`;
+    label.style.marginBottom = '4px';
+    messageSpan.appendChild(label);
+    
+    const img = document.createElement('img');
+    img.src = dataUrl;
+    img.alt = name;
+    img.style.maxWidth = '300px';
+    img.style.maxHeight = '200px';
+    img.style.borderRadius = '4px';
+    img.style.border = '1px solid rgba(0, 240, 255, 0.3)';
+    messageSpan.appendChild(img);
+    
+    line.appendChild(timestamp);
+    line.appendChild(messageSpan);
+    this.elements.consoleOutput.appendChild(line);
+    this.elements.consoleOutput.scrollTop = this.elements.consoleOutput.scrollHeight;
+  }
+  
+  formatFileSize(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
   
   log(type, message) {
@@ -2134,5 +2174,19 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('download-md')?.addEventListener('click', () => {
     window.location.href = '/api/conversations/download?format=markdown';
+  });
+
+  // Clear history button
+  document.getElementById('clear-history')?.addEventListener('click', async () => {
+    if (!confirm('Clear all conversation history? This cannot be undone. Exported files are not affected.')) return;
+    try {
+      const res = await fetch('/api/conversations', { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        window.commandCenter?.log('system', `Cleared ${data.cleared} messages from history.`);
+      }
+    } catch (err) {
+      window.commandCenter?.log('error', `Failed to clear history: ${err}`);
+    }
   });
 });

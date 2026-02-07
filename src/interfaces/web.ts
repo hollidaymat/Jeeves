@@ -14,7 +14,7 @@ import { logger, registerWSClient, unregisterWSClient } from '../utils/logger.js
 import { getSystemStatus, handleMessage } from '../core/handler.js';
 import { getProjectIndex, listProjects } from '../core/project-scanner.js';
 import { getPendingChanges, setStreamCallback } from '../core/cursor-agent.js';
-import { exportConversations } from '../core/memory.js';
+import { exportConversations, clearGeneralConversations, addGeneralMessage } from '../core/memory.js';
 import { onCheckpoint, getExecutionStatus } from '../core/prd-executor.js';
 import { isHomelabEnabled, getDashboardStatus } from '../homelab/index.js';
 import { collectServiceDetail, getRequiredEnvVars } from '../homelab/services/collectors.js';
@@ -113,6 +113,12 @@ export class WebInterface implements MessageInterface {
       res.setHeader('Content-Type', mimeType);
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       res.send(content);
+    });
+
+    // API: Clear conversation history
+    this.app.delete('/api/conversations', (_req: Request, res: Response) => {
+      const result = clearGeneralConversations();
+      res.json({ success: true, cleared: result.cleared });
     });
     
     // API: Homelab status (dashboard data)
@@ -649,9 +655,15 @@ export class WebInterface implements MessageInterface {
         // Signal stream end
         this.broadcast({ type: 'stream_end', payload: { streamId } });
         
+        const responseContent = response?.content || 'No response';
+        
+        // Store conversation in memory for export
+        addGeneralMessage('user', content);
+        addGeneralMessage('assistant', responseContent);
+        
         res.json({
           success: true,
-          response: response?.content || 'No response'
+          response: responseContent
         });
         
         // Broadcast final response (for non-streaming clients)

@@ -18,6 +18,7 @@ import type { MatchedPattern } from './layers/patterns.js';
 import type { DocResult } from './layers/docs.js';
 import type { Learning } from './layers/learnings.js';
 import type { RuntimeSnapshot } from './layers/runtime.js';
+import type { ProjectContext } from './layers/project-context.js';
 
 // ==========================================
 // TYPES
@@ -33,6 +34,10 @@ export interface TaskContext {
   tier?: ContextTier;
   touchesSystem?: boolean;
   needsDocs?: boolean;
+  /** Model in use (haiku/sonnet) — determines token budget. Sonnet gets 4000–6000, Haiku 2000. */
+  model?: string;
+  /** Project path for code-review / agent_ask context */
+  projectPath?: string;
 }
 
 export interface AssembledContext {
@@ -42,6 +47,7 @@ export interface AssembledContext {
   docs?: DocResult[];
   learnings?: Learning[];
   runtime?: RuntimeSnapshot;
+  project?: ProjectContext;
 }
 
 export interface ContextResult {
@@ -52,14 +58,23 @@ export interface ContextResult {
 }
 
 // ==========================================
-// TOKEN BUDGETS
+// TOKEN BUDGETS (tied to model: Haiku simple, Sonnet complex)
 // ==========================================
 
-const TOKEN_BUDGETS: Record<ContextTier, number> = {
+const TIER_BUDGETS: Record<ContextTier, number> = {
   minimal: 500,
   standard: 2000,
   full: 8000
 };
+
+function getTokenBudget(tier: ContextTier, model?: string): number {
+  const base = TIER_BUDGETS[tier];
+  const isSonnet = /sonnet/i.test(model || '');
+  if (isSonnet && tier !== 'minimal') {
+    return Math.min(base * 2, 6000);
+  }
+  return Math.min(base, 2000);
+}
 
 // ==========================================
 // LAZY LAYER LOADERS
@@ -155,7 +170,8 @@ function touchesSystem(task: TaskContext): boolean {
   const systemActions = [
     'homelab_install', 'homelab_uninstall', 'homelab_update',
     'homelab_status', 'homelab_health', 'homelab_firewall',
-    'media_search', 'media_download', 'media_select', 'media_more', 'media_status'
+    'media_search', 'media_download', 'media_select', 'media_more', 'media_status',
+    'qbittorrent_status', 'qbittorrent_add'
   ];
 
   if (task.action && systemActions.includes(task.action)) return true;
@@ -174,7 +190,7 @@ function touchesSystem(task: TaskContext): boolean {
 export async function assembleContext(task: TaskContext): Promise<ContextResult> {
   const startTime = Date.now();
   const tier = determineTier(task);
-  const tokenBudget = TOKEN_BUDGETS[tier];
+  const tokenBudget = getTokenBudget(tier, task.model);
   const context: AssembledContext = {};
   const layersIncluded: string[] = [];
   let tokensUsed = 0;
@@ -182,11 +198,49 @@ export async function assembleContext(task: TaskContext): Promise<ContextResult>
   const entities = extractEntities(task.message);
   const service = task.service || entities[0];
   const isSystem = touchesSystem(task);
+  const needsProject = task.projectPath && (task.action === 'agent_ask' || task.action === 'code_review');
+  const needsDocs = task.needsDocs || tier === 'full';
+
+  const LAYER_TIMEOUT_MS = 3000;
+
+  async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+    return Promise.race([
+      p,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))
+    ]);
+  }
 
   try {
-    // Layer 1: Schema (always, cheap -- only relevant services)
-    const schemaModule = await getSchema();
-    const schema = schemaModule.getRelevantSchema(entities);
+    // Fetch all layers in parallel with per-layer timeout (including project context when needed)
+    const projectPromise = needsProject && task.projectPath
+      ? (async () => {
+          const { getProjectContext } = await import('./layers/project-context.js');
+          return getProjectContext(task.projectPath!);
+        })()
+      : Promise.resolve(null);
+
+    const [schemaMod, annMod, patMod, docsMod, learnMod, runtimeMod] = await Promise.all([
+      getSchema(),
+      getAnnotations(),
+      getPatterns(),
+      needsDocs ? getDocs() : Promise.resolve(null),
+      getLearnings(),
+      isSystem ? getRuntime() : Promise.resolve(null),
+    ]);
+
+    const [schema, annotations, pattern, docsRaw, learningsRaw, runtime, project] = await Promise.all([
+      withTimeout(schemaMod.getRelevantSchema(entities), LAYER_TIMEOUT_MS),
+      withTimeout(Promise.resolve(annMod.getRelevantAnnotations(task.message, entities)), LAYER_TIMEOUT_MS),
+      withTimeout(Promise.resolve(patMod.findMatchingPattern(task.message, task.action)), LAYER_TIMEOUT_MS),
+      docsMod ? withTimeout(Promise.resolve(docsMod.searchDocs(task.message, 3)), LAYER_TIMEOUT_MS) : Promise.resolve([]),
+      withTimeout(Promise.resolve(learnMod.findRelevantLearnings(task.message, service)), LAYER_TIMEOUT_MS),
+      runtimeMod ? withTimeout(runtimeMod.getRuntimeSnapshot(), LAYER_TIMEOUT_MS) : Promise.resolve(null),
+      withTimeout(projectPromise, LAYER_TIMEOUT_MS),
+    ]);
+    const docs = Array.isArray(docsRaw) ? docsRaw : [];
+    const learnings = Array.isArray(learningsRaw) ? learningsRaw : [];
+
+    // Apply layers in priority order, respecting token budget
     if (schema) {
       const schemaTokens = estimateTokens(schema);
       if (tokensUsed + schemaTokens <= tokenBudget) {
@@ -195,10 +249,6 @@ export async function assembleContext(task: TaskContext): Promise<ContextResult>
         layersIncluded.push('schema');
       }
     }
-
-    // Layer 2: Annotations (always, cheap -- only applicable rules)
-    const annotationsModule = await getAnnotations();
-    const annotations = annotationsModule.getRelevantAnnotations(task.message, entities);
     if (annotations) {
       const annTokens = estimateTokens(annotations);
       if (tokensUsed + annTokens <= tokenBudget) {
@@ -207,10 +257,6 @@ export async function assembleContext(task: TaskContext): Promise<ContextResult>
         layersIncluded.push('annotations');
       }
     }
-
-    // Layer 3: Patterns (if similar task exists)
-    const patternsModule = await getPatterns();
-    const pattern = patternsModule.findMatchingPattern(task.message, task.action);
     if (pattern) {
       const patTokens = estimateTokens(pattern);
       if (tokensUsed + patTokens <= tokenBudget) {
@@ -219,24 +265,14 @@ export async function assembleContext(task: TaskContext): Promise<ContextResult>
         layersIncluded.push('patterns');
       }
     }
-
-    // Layer 4: Docs (only if budget allows and task might need docs)
-    if (tokensUsed < tokenBudget * 0.6 && (task.needsDocs || tier === 'full')) {
-      const docsModule = await getDocs();
-      const docs = docsModule.searchDocs(task.message, 3);
-      if (docs.length > 0) {
-        const docTokens = estimateTokens(docs);
-        if (tokensUsed + docTokens <= tokenBudget) {
-          context.docs = docs;
-          tokensUsed += docTokens;
-          layersIncluded.push('docs');
-        }
+    if (docs && docs.length > 0 && tokensUsed < tokenBudget * 0.6) {
+      const docTokens = estimateTokens(docs);
+      if (tokensUsed + docTokens <= tokenBudget) {
+        context.docs = docs;
+        tokensUsed += docTokens;
+        layersIncluded.push('docs');
       }
     }
-
-    // Layer 5: Learnings (if relevant errors/fixes exist)
-    const learningsModule = await getLearnings();
-    const learnings = learningsModule.findRelevantLearnings(task.message, service);
     if (learnings.length > 0) {
       const learnTokens = estimateTokens(learnings);
       if (tokensUsed + learnTokens <= tokenBudget) {
@@ -245,18 +281,23 @@ export async function assembleContext(task: TaskContext): Promise<ContextResult>
         layersIncluded.push('learnings');
       }
     }
+    if (runtime) {
+      const rtTokens = estimateTokens(runtime);
+      if (tokensUsed + rtTokens <= tokenBudget) {
+        context.runtime = runtime;
+        tokensUsed += rtTokens;
+        layersIncluded.push('runtime');
+      }
+    }
 
-    // Layer 6: Runtime (only for system operations)
-    if (isSystem) {
-      const runtimeModule = await getRuntime();
-      const runtime = await runtimeModule.getRuntimeSnapshot();
-      if (runtime) {
-        const rtTokens = estimateTokens(runtime);
-        if (tokensUsed + rtTokens <= tokenBudget) {
-          context.runtime = runtime;
-          tokensUsed += rtTokens;
-          layersIncluded.push('runtime');
-        }
+    if (project) {
+      const parts = [project.files, project.dependencies, project.recentChanges].filter(Boolean);
+      const projectText = parts.join('\n\n');
+      const projTokens = estimateTokens(projectText);
+      if (tokensUsed + projTokens <= tokenBudget) {
+        context.project = project;
+        tokensUsed += projTokens;
+        layersIncluded.push('project');
       }
     }
   } catch (error) {
@@ -313,6 +354,14 @@ export function formatContextForPrompt(result: ContextResult): string {
   if (result.layers.runtime) {
     const rt = result.layers.runtime;
     parts.push(`## Current System State\nRAM: ${rt.ramAvailableMB}MB free\nCPU: ${rt.cpuPercent}%\nContainers: ${rt.containerCount} running\nTemp: ${rt.tempCelsius}°C`);
+  }
+
+  if (result.layers.project) {
+    const p = result.layers.project;
+    const projectParts = [p.files, p.dependencies, p.recentChanges].filter(Boolean);
+    if (projectParts.length > 0) {
+      parts.push(`## Project Context\n${projectParts.join('\n\n')}`);
+    }
   }
 
   if (parts.length === 0) return '';

@@ -153,13 +153,14 @@ export function getLatestSnapshot(): SchemaSnapshot | null {
 /**
  * Get schema information relevant to specific entities.
  * Returns only the services/storage mentioned, plus server basics.
+ * Live fallback: when DB is empty or containers empty, build from service registry.
  */
-export function getRelevantSchema(entities: string[]): Partial<SchemaSnapshot> | null {
+export async function getRelevantSchema(entities: string[]): Promise<Partial<SchemaSnapshot> | null> {
   let snapshot = getLatestSnapshot();
 
-  // If no snapshot exists, build one and save it
-  if (!snapshot) {
-    snapshot = buildSchemaFromRegistry();
+  // Live fallback: if no snapshot or containers empty, build from registry (docker, etc.)
+  if (!snapshot || Object.keys(snapshot.containers).length === 0) {
+    snapshot = await buildSchemaFromRegistryAsync();
     saveSnapshot(snapshot);
   }
 
@@ -198,6 +199,7 @@ export function getRelevantSchema(entities: string[]): Partial<SchemaSnapshot> |
     timestamp: snapshot.timestamp
   };
 }
+
 
 /**
  * Refresh the schema snapshot (call periodically or on-demand).

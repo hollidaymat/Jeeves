@@ -605,6 +605,8 @@ function archiveTask(task: CursorTask): void {
   if (completedTasks.length > MAX_COMPLETED) {
     completedTasks.pop();
   }
+  // Record for CursorFeedbackLoop (fire-and-forget)
+  import('../core/cursor-feedback-loop.js').then(({ recordCursorOutcome }) => recordCursorOutcome(task)).catch(() => {});
 }
 
 /**

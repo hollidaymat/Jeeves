@@ -6,7 +6,7 @@
  */
 
 import { logger } from '../../utils/logger.js';
-import { config } from '../../config.js';
+import { getOwnerNumber } from '../../config.js';
 
 // Broadcast hook (same pattern as other capabilities)
 let broadcastFn: ((type: string, payload: unknown) => void) | null = null;
@@ -156,7 +156,7 @@ export async function runMorningBriefing(): Promise<void> {
     const { signalInterface } = await import('../../interfaces/signal.js');
     if (signalInterface.isAvailable()) {
       await signalInterface.send({
-        recipient: config.signal.number,
+        recipient: getOwnerNumber(),
         content: briefingText,
       });
       logger.info('Morning briefing sent via Signal');

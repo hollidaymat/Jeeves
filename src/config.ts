@@ -198,6 +198,12 @@ function loadConfig(): Config {
 // Export singleton config
 export const config = loadConfig();
 
+/** Number to send proactive notifications to (owner's phone). Use first allowed_number, not the bot's own number (which would be Note to Self when phone is linked). */
+export function getOwnerNumber(): string {
+  const owner = config.security.allowed_numbers[0];
+  return owner || config.signal.number;
+}
+
 // Validate critical configuration
 export function validateConfig(): { valid: boolean; errors: string[] } {
   const errors: string[] = [];

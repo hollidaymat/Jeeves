@@ -421,7 +421,7 @@ async function getSonarrQueue(): Promise<QueueItem[]> {
     });
   } catch (error) {
     logger.error('Sonarr queue fetch failed', { error: String(error) });
-    return [];
+    throw new Error(`Sonarr API: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -580,7 +580,7 @@ async function getRadarrQueue(): Promise<QueueItem[]> {
     });
   } catch (error) {
     logger.error('Radarr queue fetch failed', { error: String(error) });
-    return [];
+    throw new Error(`Radarr API: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -727,16 +727,31 @@ export async function addMedia(
 
 /**
  * Get the combined download queue from Sonarr + Radarr.
+ * Returns success: false with error message if APIs fail (never fabricates empty).
  */
 export async function getDownloadQueue(): Promise<MediaQueueResult> {
   logger.info('Fetching download queue');
 
-  const [sonarrQueue, radarrQueue] = await Promise.all([
+  const [sonarrResult, radarrResult] = await Promise.allSettled([
     getSonarrQueue(),
     getRadarrQueue(),
   ]);
 
+  const errors: string[] = [];
+  const sonarrQueue = sonarrResult.status === 'fulfilled' ? sonarrResult.value : [];
+  const radarrQueue = radarrResult.status === 'fulfilled' ? radarrResult.value : [];
+  if (sonarrResult.status === 'rejected') errors.push(sonarrResult.reason?.message || String(sonarrResult.reason));
+  if (radarrResult.status === 'rejected') errors.push(radarrResult.reason?.message || String(radarrResult.reason));
+
   const queue = [...sonarrQueue, ...radarrQueue];
+
+  if (errors.length > 0) {
+    return {
+      success: false,
+      queue,
+      message: `Error: ${errors.join('; ')}`,
+    };
+  }
 
   if (queue.length === 0) {
     return {

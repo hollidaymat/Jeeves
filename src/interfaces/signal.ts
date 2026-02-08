@@ -324,8 +324,8 @@ export class SignalInterface implements MessageInterface {
       return;
     }
     
-    // Truncate long messages (Signal has a limit)
-    let content = message.content;
+    const { formatForSignal } = await import('../utils/signal-format.js');
+    let content = formatForSignal(message.content);
     if (content.length > 4000) {
       content = content.substring(0, 3950) + '\n\n... (truncated)';
     }

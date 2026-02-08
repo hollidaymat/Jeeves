@@ -163,7 +163,7 @@ export async function analyzePRImpact(
       const highImpacts = report.impacts.filter(i => i.severity === 'high');
       if (highImpacts.length > 0) {
         try {
-          const { config } = await import('../../config.js');
+          const { getOwnerNumber } = await import('../../config.js');
           const { signalInterface } = await import('../../interfaces/signal.js');
           if (signalInterface.isAvailable()) {
             const alertLines = [
@@ -173,7 +173,7 @@ export async function analyzePRImpact(
               'Review before merging.',
             ];
             await signalInterface.send({
-              recipient: config.signal.number,
+              recipient: getOwnerNumber(),
               content: alertLines.join('\n'),
             });
           }

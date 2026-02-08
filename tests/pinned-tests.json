@@ -1,0 +1,22 @@
+{
+  "pinned_at": "2026-02-08",
+  "score": "124/143",
+  "passing_suites": [
+    "api-endpoints",
+    "backup",
+    "browser",
+    "cognitive-context-layers",
+    "cognitive-ooda",
+    "commands",
+    "cursor-commands",
+    "dev-server",
+    "homelab",
+    "media",
+    "model-switching",
+    "routing-accuracy",
+    "self-assessment",
+    "terminal",
+    "vercel"
+  ],
+  "rule": "If ANY pinned suite drops below current score, REVERT the change"
+}

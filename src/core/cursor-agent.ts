@@ -33,6 +33,7 @@ import { getLastBrowseResult } from './browser.js';
 import { trackLLMUsage } from './cost-tracker.js';
 import type { ImageAttachment } from '../types/index.js';
 import { buildSkillsSummary, getSkillContext, loadAllSkills, isCapabilitiesQuery, getCapabilitiesContext, isCapabilitiesFollowUp } from './skill-loader.js';
+import { PERSONALITY_RULES } from './personality.js';
 
 interface FileChange {
   filePath: string;
@@ -795,7 +796,7 @@ export async function startAgentSession(projectPath: string): Promise<{ success:
 /**
  * Send a prompt to the AI assistant
  */
-export async function sendToAgent(prompt: string, attachments?: ImageAttachment[]): Promise<string> {
+export async function sendToAgent(prompt: string, attachments?: ImageAttachment[], assembledContext?: string): Promise<string> {
   const lowerPrompt = prompt.toLowerCase().trim();
   
   // Handle model switching commands
@@ -813,7 +814,7 @@ export async function sendToAgent(prompt: string, attachments?: ImageAttachment[
   if (!activeSession) {
     // No project loaded - use general mode for conversational questions
     logger.debug('No active session, using general mode');
-    return askGeneral(prompt, attachments);
+    return askGeneral(prompt, attachments, assembledContext);
   }
 
   logger.info('Processing AI request', { prompt: prompt.substring(0, 50) });
@@ -932,6 +933,7 @@ PROJECT: ${activeSession.workingDir.split(/[\\/]/).pop()}
 PROJECT ROOT: ${activeSession.workingDir}
 
 ${personalityContext ? `## USER PREFERENCES & MEMORY\n${personalityContext}\n` : ''}
+${assembledContext ? `## BRAIN 2 CONTEXT (grounded layers)\n${assembledContext}\n` : ''}
 ${conversationContext}
 === PROJECT FILES ===
 ${activeSession.projectContext}
@@ -1888,8 +1890,8 @@ function buildSystemPrompt(
   analysis: PromptAnalysis,
   skillsContext?: string
 ): string {
-  // Core identity - always included (~100 tokens)
-  const corePrompt = `You are Jeeves, an AI employee. You work for the user - coding, sysadmin, DevOps, home server management. You run locally and take action: run commands, edit files, solve problems. Be direct and professional.`;
+  // Core identity - always included, Jeeves persona (not chatbot)
+  const corePrompt = `${PERSONALITY_RULES}\n\nYou work for Matt - coding, sysadmin, DevOps, home server management. You run locally and take action: run commands, edit files, solve problems.`;
   
   if (tier === 'minimal') {
     // ~150 tokens total
@@ -1991,7 +1993,7 @@ ${trustConstraints}`;
   return prompt;
 }
 
-export async function askGeneral(prompt: string, attachments?: ImageAttachment[]): Promise<string> {
+export async function askGeneral(prompt: string, attachments?: ImageAttachment[], assembledContext?: string): Promise<string> {
   // Analyze prompt complexity first
   const analysis = analyzePromptComplexity(prompt);
   logger.debug('Prompt analysis', { tier: analysis.tier, historyCount: analysis.historyCount, attachments: attachments?.length || 0 });
@@ -2061,7 +2063,7 @@ export async function askGeneral(prompt: string, attachments?: ImageAttachment[]
   }
   
   // Build tiered system prompt
-  const systemPrompt = buildSystemPrompt(
+  let systemPrompt = buildSystemPrompt(
     analysis.tier,
     trustLevel,
     trustName,
@@ -2073,12 +2075,18 @@ export async function askGeneral(prompt: string, attachments?: ImageAttachment[]
     skillsContext
   );
 
+  if (assembledContext) {
+    systemPrompt += `\n\n## BRAIN 2 CONTEXT (grounded layers)\n${assembledContext}\n`;
+  }
+
   try {
     // Smart model selection based on prompt complexity (with forced model support)
     const selectedModel = selectModel(prompt, forcedModel ?? undefined);
     const modelDisplay = forcedModel ? `[FORCED: ${forcedModel.toUpperCase()}]` : `[AUTO: ${selectedModel.tier.toUpperCase()}]`;
     const promptTokenEstimate = Math.ceil(systemPrompt.length / 4);
+    const contextLayers = (systemPrompt.match(/## BRAIN 2 CONTEXT|## PROJECTS|## PREFERENCES|## CAPABILITIES/g) || []).length;
     logger.info(`Using ${selectedModel.tier.toUpperCase()} model ${modelDisplay} [${analysis.tier.toUpperCase()} prompt ~${promptTokenEstimate} tokens]`);
+    console.log(`[COGNITIVE] Prompt size: ${systemPrompt.length} chars, context sections: ${contextLayers}, model: ${selectedModel.modelId}`);
 
     // Load conversation history based on complexity tier
     const recentHistory = getGeneralConversations(analysis.historyCount);

@@ -183,11 +183,11 @@ export async function runUptimeCheck(): Promise<void> {
 
           // Send Signal alert
           try {
-            const { config } = await import('../../config.js');
+            const { getOwnerNumber } = await import('../../config.js');
             const { signalInterface } = await import('../../interfaces/signal.js');
             if (signalInterface.isAvailable()) {
               await signalInterface.send({
-                recipient: config.signal.number,
+                recipient: getOwnerNumber(),
                 content: `ALERT: ${alert.message}`,
               });
             }

@@ -1,0 +1,32 @@
+[
+  {
+    "phrase": "dev status",
+    "commandId": "dev.start",
+    "useCount": 3,
+    "lastUsed": "2026-02-08T14:24:30.921Z"
+  },
+  {
+    "phrase": "process status",
+    "commandId": "vercel.projects",
+    "useCount": 2,
+    "lastUsed": "2026-02-08T14:31:31.211Z"
+  },
+  {
+    "phrase": "cursor tasks",
+    "commandId": "cursor.status",
+    "useCount": 3,
+    "lastUsed": "2026-02-08T19:10:30.529Z"
+  },
+  {
+    "phrase": "browser status",
+    "commandId": "system.trust",
+    "useCount": 2,
+    "lastUsed": "2026-02-08T19:08:29.379Z"
+  },
+  {
+    "phrase": "process status",
+    "commandId": "system.trust",
+    "useCount": 2,
+    "lastUsed": "2026-02-08T19:19:37.204Z"
+  }
+]

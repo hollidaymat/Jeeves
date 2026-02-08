@@ -197,6 +197,136 @@ async function discoverTeamProjects(token: string, teamId: string): Promise<Verc
   }
 }
 
+/**
+ * Get the production URL for a specific project (by name).
+ * Searches discovered/configured projects and returns the production domain.
+ */
+export async function getProjectUrl(projectName: string): Promise<{ found: boolean; name?: string; url?: string; domains?: string[]; status?: string }> {
+  const vercelStatus = await getVercelStatus();
+  if (!vercelStatus.enabled) {
+    return { found: false };
+  }
+
+  const lower = projectName.toLowerCase().trim();
+  const match = vercelStatus.projects.find(p =>
+    p.name.toLowerCase() === lower ||
+    p.name.toLowerCase().includes(lower) ||
+    lower.includes(p.name.toLowerCase())
+  );
+
+  if (!match) {
+    return { found: false };
+  }
+
+  const primaryDomain = match.domains[0] || match.production.url;
+  return {
+    found: true,
+    name: match.name,
+    url: primaryDomain ? `https://${primaryDomain}` : undefined,
+    domains: match.domains,
+    status: match.production.status
+  };
+}
+
+/**
+ * Trigger a new deployment for a project by creating a deployment via the Vercel API.
+ * Uses the project's latest git integration hook.
+ */
+export async function triggerDeployment(projectName: string): Promise<{ success: boolean; message: string; url?: string }> {
+  const cfg = getConfig();
+  if (!cfg) {
+    return { success: false, message: 'Vercel not configured (missing VERCEL_API_TOKEN)' };
+  }
+
+  // Find the project ID
+  const vercelStatus = await getVercelStatus();
+  const lower = projectName.toLowerCase().trim();
+  const match = vercelStatus.projects.find(p =>
+    p.name.toLowerCase() === lower ||
+    p.name.toLowerCase().includes(lower) ||
+    lower.includes(p.name.toLowerCase())
+  );
+
+  if (!match) {
+    return { success: false, message: `Project "${projectName}" not found on Vercel` };
+  }
+
+  try {
+    // Trigger redeployment using the latest deployment as reference
+    const latestDeploy = match.recentDeploys[0];
+    if (!latestDeploy) {
+      return { success: false, message: `No existing deployments found for ${match.name}` };
+    }
+
+    const url = new URL('https://api.vercel.com/v13/deployments');
+    if (cfg.teamId) url.searchParams.set('teamId', cfg.teamId);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    try {
+      const res = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${cfg.apiToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: match.name,
+          deploymentId: latestDeploy.url ? undefined : undefined,
+          target: 'production',
+          project: match.name,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const body = await res.text();
+        // If redeploy via API fails, suggest using git push instead
+        if (res.status === 400 || res.status === 403) {
+          return {
+            success: false,
+            message: `Vercel API can't trigger deploy directly for git-connected projects. Push to the repo's main branch to trigger a new deploy. Project: ${match.name}`
+          };
+        }
+        return { success: false, message: `Deploy failed (HTTP ${res.status}): ${body.substring(0, 200)}` };
+      }
+
+      const data = await res.json() as Record<string, unknown>;
+      const deployUrl = data.url as string;
+      return {
+        success: true,
+        message: `Deployment triggered for ${match.name}`,
+        url: deployUrl ? `https://${deployUrl}` : undefined
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch (error) {
+    return { success: false, message: `Deploy error: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
+/**
+ * List all Vercel projects with their URLs.
+ */
+export async function listVercelProjects(): Promise<{ enabled: boolean; projects: Array<{ name: string; url: string; status: string; domains: string[] }> }> {
+  const vercelStatus = await getVercelStatus();
+  if (!vercelStatus.enabled) {
+    return { enabled: false, projects: [] };
+  }
+
+  return {
+    enabled: true,
+    projects: vercelStatus.projects.map(p => ({
+      name: p.name,
+      url: p.domains[0] ? `https://${p.domains[0]}` : (p.production.url ? `https://${p.production.url}` : ''),
+      status: p.production.status,
+      domains: p.domains
+    }))
+  };
+}
+
 export async function getVercelStatus(): Promise<VercelStatus> {
   const config = getConfig();
   if (!config) {

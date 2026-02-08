@@ -75,6 +75,7 @@ import {
   executePendingPlan
 } from './cursor-agent.js';
 import { recordSuccess, recordError } from './context/index.js';
+import { runSelfTest, formatSelfTestReport } from './self-test.js';
 
 // Whitelisted executables
 const ALLOWED_EXECUTABLES: Record<string, string> = {
@@ -136,6 +137,14 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
   
   if (intent.action === 'help' || intent.action === 'list_projects') {
     if (intent.resolutionMethod === 'pattern') trackPatternMatch(intent.action);
+    if (intent.action === 'list_projects') {
+      const { listProjects } = await import('./project-scanner.js');
+      return {
+        success: true,
+        output: listProjects(),
+        duration_ms: Date.now() - startTime
+      };
+    }
     return {
       success: true,
       output: intent.message || 'No message available',
@@ -163,6 +172,26 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
   }
   
   // Lessons learned - shows optimization rules and anti-patterns
+  if (intent.action === 'jeeves_self_test') {
+    trackPatternMatch('jeeves_self_test');
+    try {
+      const results = await runSelfTest();
+      const output = formatSelfTestReport(results);
+      return {
+        success: true,
+        output,
+        duration_ms: Date.now() - startTime,
+      };
+    } catch (err) {
+      logger.error('Self-test failed', { error: String(err) });
+      return {
+        success: false,
+        output: `Self-test failed: ${err instanceof Error ? err.message : String(err)}. Ensure jeeves-qa is at ../jeeves-qa and runnable.`,
+        duration_ms: Date.now() - startTime,
+      };
+    }
+  }
+
   if (intent.action === 'show_lessons') {
     trackPatternMatch('show_lessons');
     const lessons = loadLessons();
@@ -322,7 +351,14 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
   }
   
   // ===== HOMELAB ACTIONS =====
-  if (intent.action.startsWith('homelab_') || intent.action.startsWith('media_')) {
+  const homelabActions = [
+    'homelab_', 'media_', 'qbittorrent_', 'disk_health', 'docker_cleanup', 'log_errors',
+    'pihole_stats', 'speed_test', 'image_updates', 'ssl_check', 'service_deps',
+    'home_assistant', 'tailscale_status', 'nextcloud_', 'grafana_', 'uptime_kuma',
+    'bandwidth', 'note_', 'reminder_', 'schedule_', 'timeline', 'quiet_hours',
+    'file_share',
+  ];
+  if (homelabActions.some(prefix => intent.action.startsWith(prefix))) {
     trackPatternMatch(intent.action);
     
     if (!isHomelabEnabled()) {
@@ -626,7 +662,7 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
       cost: 0,
     });
     try {
-      const response = await sendToAgent(intent.prompt, intent.attachments);
+      const response = await sendToAgent(intent.prompt, intent.attachments, intent.assembledContext);
       completeTask();
       return {
         success: true,
@@ -683,7 +719,7 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
         duration_ms: Date.now() - startTime
       };
     }
-    const response = await sendToAgent(intent.prompt, intent.attachments);
+    const response = await sendToAgent(intent.prompt, intent.attachments, intent.assembledContext);
     
     // Auto-apply any pending changes
     const { applyChanges, getAgentStatus, getPendingChanges } = await import('./cursor-agent.js');
@@ -1032,10 +1068,96 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
       success: result.success,
       output: result.success ? output : undefined,
       error: result.success ? undefined : output,
-      duration_ms: Date.now() - startTime
+      duration_ms: Date.now() - startTime,
+      attachments: result.screenshotPath ? [result.screenshotPath] : undefined
     };
   }
   
+  // ===== VERCEL COMMANDS =====
+  
+  if (intent.action === 'vercel_url') {
+    try {
+      const { getProjectUrl } = await import('../api/vercel.js');
+      const result = await getProjectUrl(intent.target || '');
+      if (result.found) {
+        const domainList = result.domains && result.domains.length > 0
+          ? result.domains.map(d => `https://${d}`).join(', ')
+          : 'none';
+        return {
+          success: true,
+          output: `${result.name}: ${result.url || 'no URL available'}\nDomains: ${domainList}\nStatus: ${result.status}`,
+          duration_ms: Date.now() - startTime
+        };
+      } else {
+        return {
+          success: false,
+          error: `Couldn't find a Vercel project matching "${intent.target}". Try "vercel projects" to see what's available.`,
+          duration_ms: Date.now() - startTime
+        };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: `Vercel lookup failed: ${error instanceof Error ? error.message : String(error)}`,
+        duration_ms: Date.now() - startTime
+      };
+    }
+  }
+
+  if (intent.action === 'vercel_deploy') {
+    try {
+      const { triggerDeployment } = await import('../api/vercel.js');
+      const result = await triggerDeployment(intent.target || '');
+      return {
+        success: result.success,
+        output: result.success ? `${result.message}${result.url ? `\n${result.url}` : ''}` : undefined,
+        error: result.success ? undefined : result.message,
+        duration_ms: Date.now() - startTime
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: `Deploy failed: ${error instanceof Error ? error.message : String(error)}`,
+        duration_ms: Date.now() - startTime
+      };
+    }
+  }
+
+  if (intent.action === 'vercel_projects') {
+    try {
+      const { listVercelProjects } = await import('../api/vercel.js');
+      const result = await listVercelProjects();
+      if (!result.enabled) {
+        return {
+          success: false,
+          error: 'Vercel not configured. Set VERCEL_API_TOKEN and VERCEL_TEAM_ID.',
+          duration_ms: Date.now() - startTime
+        };
+      }
+      if (result.projects.length === 0) {
+        return {
+          success: true,
+          output: 'No Vercel projects found.',
+          duration_ms: Date.now() - startTime
+        };
+      }
+      const lines = result.projects.map(p =>
+        `${p.name}: ${p.url || 'no URL'} (${p.status})`
+      );
+      return {
+        success: true,
+        output: `Vercel Projects:\n${lines.join('\n')}`,
+        duration_ms: Date.now() - startTime
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: `Vercel projects failed: ${error instanceof Error ? error.message : String(error)}`,
+        duration_ms: Date.now() - startTime
+      };
+    }
+  }
+
   if (intent.action === 'screenshot') {
     try {
       // If target URL provided, navigate first
@@ -1053,8 +1175,9 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
       const screenshotPath = await takeScreenshot();
       return {
         success: true,
-        output: `📸 Screenshot saved: ${screenshotPath}`,
-        duration_ms: Date.now() - startTime
+        output: `📸 Screenshot captured`,
+        duration_ms: Date.now() - startTime,
+        attachments: [screenshotPath]
       };
     } catch (error) {
       return {
@@ -1166,14 +1289,15 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     const result = await openDevPreview(agentStatus.workingDir);
     let output = result.message;
     if (result.screenshotPath) {
-      output += `\n📸 Screenshot: ${result.screenshotPath}`;
+      output += `\n📸 Screenshot attached`;
     }
     
     return {
       success: result.success,
       output: result.success ? output : undefined,
       error: result.success ? undefined : result.message,
-      duration_ms: Date.now() - startTime
+      duration_ms: Date.now() - startTime,
+      attachments: result.screenshotPath ? [result.screenshotPath] : undefined
     };
   }
   

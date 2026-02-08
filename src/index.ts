@@ -4,7 +4,7 @@
  * Updated: max_tokens now 8000 for complete file generation
  */
 
-import { config, validateConfig } from './config.js';
+import { config, validateConfig, getOwnerNumber } from './config.js';
 import { logger } from './utils/logger.js';
 import { scanProjects } from './core/project-scanner.js';
 import { registerInterface, handleMessage, sendResponse } from './core/handler.js';
@@ -13,6 +13,16 @@ import { mockInterface } from './interfaces/mock.js';
 import { signalInterface } from './interfaces/signal.js';
 import { initMemory } from './core/memory.js';
 import { initTrust } from './core/trust.js';
+
+function formatDuration(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm > 0 ? `${h}h ${rm}m` : `${h}h`;
+}
 
 async function main() {
   console.log(`
@@ -51,6 +61,10 @@ async function main() {
 
   // Initialize trust system
   initTrust();
+
+  // Initialize alias store (learned command aliases)
+  const { initAliasStore } = await import('./core/alias-store.js');
+  await initAliasStore();
 
   // Set up message handling
   const messageHandler = async (message: Parameters<typeof handleMessage>[0]) => {
@@ -143,11 +157,222 @@ async function main() {
     
     const { registerCostAdvisorHandler } = await import('./capabilities/revenue/cost-advisor.js');
     registerCostAdvisorHandler();
-    
+
+    // Register new monitoring scheduled handlers
+    const { registerHandler, addSchedule } = await import('./capabilities/scheduler/engine.js');
+
+    // Daily SMART disk health check
+    registerHandler('disk_health_check', async () => {
+      try {
+        const { getSmartHealth } = await import('./homelab/system/smart-monitor.js');
+        const report = await getSmartHealth();
+        const { addTimelineEvent } = await import('./capabilities/timeline/timeline.js');
+        addTimelineEvent('scheduler', 'system', `Disk health check: ${report.summary}`, report.overallHealthy ? 'info' : 'warning');
+        if (!report.overallHealthy && signalInterface.isAvailable()) {
+          const { shouldSendNow, queueNotification } = await import('./capabilities/notifications/quiet-hours.js');
+          const msg = `⚠️ Disk health alert: ${report.summary}`;
+          if (shouldSendNow('critical')) {
+            await signalInterface.send({ recipient: getOwnerNumber(), content: msg });
+          } else {
+            queueNotification(msg, 'critical', 'disk-health');
+          }
+        }
+      } catch { /* ignore */ }
+    });
+    addSchedule('Daily disk health', '0 6 * * *', 'disk_health_check');
+
+    // Weekly Docker cleanup
+    registerHandler('docker_cleanup', async () => {
+      try {
+        const { runCleanup } = await import('./homelab/system/docker-cleanup.js');
+        const result = await runCleanup();
+        const { addTimelineEvent } = await import('./capabilities/timeline/timeline.js');
+        addTimelineEvent('scheduler', 'system', `Docker cleanup: ${result.message}`, 'info');
+      } catch { /* ignore */ }
+    });
+    addSchedule('Weekly Docker cleanup', '0 3 * * 0', 'docker_cleanup');
+
+    // Daily container log scan
+    registerHandler('log_error_scan', async () => {
+      try {
+        const { scanContainerLogs } = await import('./homelab/system/log-scanner.js');
+        const result = await scanContainerLogs(1440); // last 24h
+        const { addTimelineEvent } = await import('./capabilities/timeline/timeline.js');
+        if (result.errors.length > 0) {
+          addTimelineEvent('scheduler', 'system', `Log scan: ${result.errors.length} errors across ${result.containersScanned} containers`, 'warning');
+        }
+      } catch { /* ignore */ }
+    });
+    addSchedule('Daily log error scan', '0 7 * * *', 'log_error_scan');
+
+    // Daily SSL cert check
+    registerHandler('ssl_cert_check', async () => {
+      try {
+        const { checkCertificates } = await import('./homelab/system/ssl-monitor.js');
+        const report = await checkCertificates();
+        const expiring = report.certs.filter(c => c.status !== 'ok');
+        if (expiring.length > 0 && signalInterface.isAvailable()) {
+          const { shouldSendNow, queueNotification } = await import('./capabilities/notifications/quiet-hours.js');
+          const msg = `🔒 SSL alert: ${expiring.map(c => `${c.domain} (${c.daysLeft}d)`).join(', ')}`;
+          if (shouldSendNow('critical')) {
+            await signalInterface.send({ recipient: getOwnerNumber(), content: msg });
+          } else {
+            queueNotification(msg, 'critical', 'ssl-monitor');
+          }
+        }
+      } catch { /* ignore */ }
+    });
+    addSchedule('Daily SSL cert check', '0 8 * * *', 'ssl_cert_check');
+
+    // Daily image update check
+    registerHandler('image_update_check', async () => {
+      try {
+        const { checkImageUpdates } = await import('./homelab/system/image-updates.js');
+        const result = await checkImageUpdates();
+        const { addTimelineEvent } = await import('./capabilities/timeline/timeline.js');
+        addTimelineEvent('scheduler', 'system', `Image update check: ${result.message}`, 'info');
+      } catch { /* ignore */ }
+    });
+    addSchedule('Daily image update check', '0 9 * * *', 'image_update_check');
+
+    // Daily speed test
+    registerHandler('speed_test', async () => {
+      try {
+        const { runSpeedTest } = await import('./homelab/system/speed-test.js');
+        const result = await runSpeedTest();
+        const { addTimelineEvent } = await import('./capabilities/timeline/timeline.js');
+        if (result) {
+          addTimelineEvent('scheduler', 'system', `Speed test: ${result.download} Mbps down / ${result.upload} Mbps up`, 'info');
+        }
+      } catch { /* ignore */ }
+    });
+    addSchedule('Daily speed test', '0 12 * * *', 'speed_test');
+
+    // Custom schedule executor (runs every minute to check if any custom schedules are due)
+    registerHandler('custom_schedule_check', async () => {
+      try {
+        const { getSchedulesDueNow } = await import('./capabilities/scheduler/custom-schedules.js');
+        const due = getSchedulesDueNow();
+        for (const schedule of due) {
+          if (signalInterface.isAvailable()) {
+            await signalInterface.send({
+              recipient: getOwnerNumber(),
+              content: `📋 Scheduled: ${schedule.action}`,
+            });
+          }
+        }
+      } catch { /* ignore */ }
+    });
+    addSchedule('Custom schedule check', 60000, 'custom_schedule_check'); // Every 60 seconds
+
+    // Quiet hours flush (deliver queued notifications when quiet hours end)
+    registerHandler('quiet_hours_flush', async () => {
+      try {
+        const { isQuietHours, flushQueue } = await import('./capabilities/notifications/quiet-hours.js');
+        if (!isQuietHours()) {
+          const queued = flushQueue();
+          if (queued.length > 0 && signalInterface.isAvailable()) {
+            const summary = queued.map(n => n.message).join('\n');
+            await signalInterface.send({
+              recipient: getOwnerNumber(),
+              content: `📬 While you were away (${queued.length} notifications):\n\n${summary}`,
+            });
+          }
+        }
+      } catch { /* ignore */ }
+    });
+    addSchedule('Quiet hours flush', 300000, 'quiet_hours_flush'); // Every 5 minutes
+
     startScheduler();
     logger.info('Scheduler started with default schedules');
   } catch (err) {
     logger.debug('Scheduler not started', { error: String(err) });
+  }
+
+  // Initialize Download Watcher callbacks
+  try {
+    const { onDownloadComplete, onDownloadStall, setDownloadBroadcast } = await import('./homelab/media/download-watcher.js');
+
+    // Signal notification on completion (respects quiet hours)
+    onDownloadComplete(async (download) => {
+      if (signalInterface.isAvailable()) {
+        const icon = download.type === 'movie' ? '🎬' : '📺';
+        const size = download.size ? ` (${download.size})` : '';
+        const duration = download.completedAt && download.addedAt
+          ? ` in ${formatDuration(download.completedAt - download.addedAt)}`
+          : '';
+        const message = `${icon} Download complete: ${download.title}${size}${duration}`;
+        try {
+          const { shouldSendNow, queueNotification } = await import('./capabilities/notifications/quiet-hours.js');
+          if (shouldSendNow('normal')) {
+            await signalInterface.send({ recipient: getOwnerNumber(), content: message });
+          } else {
+            queueNotification(message, 'normal', 'download-watcher');
+          }
+        } catch {
+          await signalInterface.send({ recipient: getOwnerNumber(), content: message });
+        }
+        // Log to timeline
+        try {
+          const { addTimelineEvent } = await import('./capabilities/timeline/timeline.js');
+          addTimelineEvent('download-watcher', 'download', `Completed: ${download.title}`, 'info');
+        } catch { /* skip */ }
+      }
+    });
+
+    // Log stalls (could also alert via Signal if desired)
+    onDownloadStall(async (download, action) => {
+      logger.warn('[download-watcher] Stall detected', { title: download.title, action });
+      // Log to timeline
+      try {
+        const { addTimelineEvent } = await import('./capabilities/timeline/timeline.js');
+        addTimelineEvent('download-watcher', 'download', `Stall: ${download.title} — ${action}`, 'warning');
+      } catch { /* skip */ }
+      // Notify via Signal for restarts
+      if (download.restarted && signalInterface.isAvailable()) {
+        await signalInterface.send({
+          recipient: getOwnerNumber(),
+          content: `⚠️ ${action}`,
+        });
+      }
+    });
+
+    // WebSocket broadcast
+    import('./interfaces/web.js').then(({ webInterface }) => {
+      setDownloadBroadcast((status) => {
+        (webInterface as any).broadcast?.({ type: 'download_status', payload: status });
+      });
+    }).catch(() => {});
+
+    logger.info('Download watcher callbacks registered');
+  } catch (err) {
+    logger.debug('Download watcher not initialized', { error: String(err) });
+  }
+
+  // Initialize Reminders (re-schedule pending from disk)
+  try {
+    const { initReminders, setReminderCallback } = await import('./capabilities/reminders/reminders.js');
+    setReminderCallback(async (message: string) => {
+      if (signalInterface.isAvailable()) {
+        await signalInterface.send({
+          recipient: getOwnerNumber(),
+          content: message,
+        });
+      }
+    });
+    initReminders();
+    logger.info('Reminders initialized');
+  } catch (err) {
+    logger.debug('Reminders not initialized', { error: String(err) });
+  }
+
+  // Initialize Timeline event tracking
+  try {
+    const { addTimelineEvent } = await import('./capabilities/timeline/timeline.js');
+    addTimelineEvent('system', 'system', 'Jeeves started', 'info');
+    logger.info('Timeline initialized');
+  } catch (err) {
+    logger.debug('Timeline not initialized', { error: String(err) });
   }
 
   logger.info('System ready');

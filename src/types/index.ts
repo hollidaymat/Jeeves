@@ -114,7 +114,8 @@ export type ActionType =
   | 'homelab_diagnose'        // Run diagnostics on a service
   | 'homelab_stacks'          // List docker compose stacks
   | 'homelab_health'          // Run health checks
-  | 'homelab_self_test'       // Run self-test suite
+  | 'homelab_self_test'       // Run homelab self-test
+  | 'jeeves_self_test'        // Run full Jeeves cognitive/functional test suite
   | 'homelab_security_status' // Security overview
   | 'homelab_firewall'        // Firewall management
   // Backup commands
@@ -129,6 +130,8 @@ export type ActionType =
   | 'media_select'            // Select from pending media results (by number)
   | 'media_more'              // Show next page of media results
   | 'media_status'            // Check download queue status
+  | 'qbittorrent_status'      // qBittorrent torrent list and transfer stats
+  | 'qbittorrent_add'         // Add torrent via magnet or URL
   | 'feedback'              // User is giving feedback/preference, not requesting action
   // Cursor Background Agent commands
   | 'cursor_launch'          // Launch a Cursor agent for a coding task
@@ -138,6 +141,41 @@ export type ActionType =
   | 'cursor_conversation'    // View Cursor agent conversation
   | 'cursor_confirm'         // Confirm pending Cursor task ("go", "yes")
   | 'cursor_repos'           // List available repos
+  // Vercel commands
+  | 'vercel_url'             // Look up project URL
+  | 'vercel_deploy'          // Trigger deployment
+  | 'vercel_projects'        // List all Vercel projects
+  // System monitoring
+  | 'disk_health'            // SMART disk monitoring
+  | 'docker_cleanup'         // Prune unused Docker resources
+  | 'log_errors'             // Scan container logs for errors
+  | 'pihole_stats'           // Pi-hole DNS blocking stats
+  | 'speed_test'             // Network speed test
+  | 'image_updates'          // Check for container image updates
+  | 'ssl_check'              // SSL/TLS certificate expiry check
+  | 'service_deps'           // Service dependency mapping
+  // Integrations
+  | 'home_assistant'         // Home Assistant control
+  | 'tailscale_status'       // VPN/Tailscale status
+  | 'nextcloud_status'       // Nextcloud storage info
+  | 'nextcloud_upload'       // Upload file to Nextcloud
+  | 'grafana_dashboards'     // List Grafana dashboards
+  | 'grafana_snapshot'       // Render Grafana panel to image
+  | 'uptime_kuma'            // Uptime Kuma monitor status
+  | 'bandwidth'              // Per-container bandwidth stats
+  // Productivity
+  | 'note_add'               // Save a quick note
+  | 'note_search'            // Search notes
+  | 'note_list'              // List all notes
+  | 'reminder_set'           // Set a reminder
+  | 'reminder_list'          // List pending reminders
+  | 'schedule_create'        // Create custom scheduled task
+  | 'schedule_list'          // List custom schedules
+  | 'schedule_delete'        // Delete a custom schedule
+  | 'timeline'               // System event timeline
+  | 'quiet_hours'            // Quiet hours settings
+  | 'quiet_hours_set'        // Set quiet hours window
+  | 'file_share'             // Send a file via Signal
   | 'unknown'
   | 'denied';
 
@@ -183,8 +221,9 @@ export interface ParsedIntent {
   requiresAsync?: boolean;  // Action needs async handling
   data?: Record<string, unknown>;  // Additional data for the action
   attachments?: ImageAttachment[];  // Image attachments from web interface
+  assembledContext?: string;  // Brain 2 context for agent_ask/code_review (injected into prompt)
   // Token optimization tracking
-  resolutionMethod?: 'pattern' | 'llm';  // How intent was resolved
+  resolutionMethod?: 'pattern' | 'llm' | 'registry';  // How intent was resolved
   estimatedCost?: number;  // Estimated cost in dollars (0 for pattern-matched)
 }
 
@@ -197,6 +236,7 @@ export interface ExecutionResult {
   output?: string;
   error?: string;
   duration_ms: number;
+  attachments?: string[];  // File paths to send as attachments (screenshots, exports, etc.)
 }
 
 // ============================================================================
@@ -343,7 +383,7 @@ export interface LogEntry {
 // ============================================================================
 
 export interface WSMessage {
-  type: 'command' | 'status' | 'log' | 'projects' | 'response' | 'agent_status' | 'pending_changes' | 'prd_status' | 'prd_checkpoint' | 'stream_start' | 'stream_chunk' | 'stream_end' | 'homelab_status' | 'cost_update' | 'activity_update' | 'project_update' | 'service_detail' | 'task:started' | 'task:progress' | 'task:completed' | 'task:failed' | 'queue:updated' | 'cursor:task:started' | 'cursor:task:progress' | 'cursor:task:completed' | 'cursor:task:stuck' | 'cursor:task:error';
+  type: 'command' | 'status' | 'log' | 'projects' | 'response' | 'agent_status' | 'pending_changes' | 'prd_status' | 'prd_checkpoint' | 'stream_start' | 'stream_chunk' | 'stream_end' | 'homelab_status' | 'cost_update' | 'activity_update' | 'project_update' | 'service_detail' | 'task:started' | 'task:progress' | 'task:completed' | 'task:failed' | 'queue:updated' | 'cursor:task:started' | 'cursor:task:progress' | 'cursor:task:completed' | 'cursor:task:stuck' | 'cursor:task:error' | 'self_test_started' | 'self_test_progress' | 'self_test_complete';
   payload: unknown;
 }
 

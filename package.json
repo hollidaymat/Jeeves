@@ -8,7 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "tsx tests/parser.test.ts",
+    "test": "tsx tests/parser.test.ts; tsx tests/routing.test.ts",
     "test:watch": "tsx watch tests/parser.test.ts"
   },
   "keywords": [

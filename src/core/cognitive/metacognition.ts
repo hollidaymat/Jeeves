@@ -135,7 +135,9 @@ export async function think(
     contextResult = await assembleContext({
       message,
       action: context?.action,
-      target: context?.target
+      target: context?.target,
+      projectPath: context?.projectPath,
+      model: 'haiku' // metacognition uses Haiku; Sonnet used in agent_ask path
     });
     
     if (contextResult.layersIncluded.length > 0) {

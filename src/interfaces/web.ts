@@ -16,12 +16,17 @@ import { getProjectIndex, listProjects } from '../core/project-scanner.js';
 import { getPendingChanges, setStreamCallback } from '../core/cursor-agent.js';
 import { exportConversations, clearGeneralConversations, addGeneralMessage } from '../core/memory.js';
 import { onCheckpoint, getExecutionStatus } from '../core/prd-executor.js';
+import { getLastTrace, getTraceById, getTraceStats } from '../core/ooda-logger.js';
+import { recordScenarioRun, getGrowthStats, recordRunSummary, getGrowthTrend } from '../core/growth-tracker.js';
+import { getScenarioRunCounts } from '../core/novel-scenario-generator.js';
+import { detectGamingSignals } from '../core/anti-gaming.js';
 import { isHomelabEnabled, getDashboardStatus } from '../homelab/index.js';
 import { collectServiceDetail, getRequiredEnvVars } from '../homelab/services/collectors.js';
 import { getActivitySnapshot } from '../models/activity.js';
 import { getCostDashboardData } from '../core/cost-tracker.js';
 import { getProjects, addProject, moveTask } from '../models/projects.js';
 import { getVercelStatus } from '../api/vercel.js';
+import { runSelfTest, formatSelfTestReport } from '../core/self-test.js';
 import type { IncomingMessage, OutgoingMessage, MessageInterface, WSMessage, PrdCheckpoint } from '../types/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -146,6 +151,97 @@ export class WebInterface implements MessageInterface {
         }
       } catch (error) {
         res.json({ error: String(error) });
+      }
+    });
+
+    // API: Download watcher status
+    this.app.get('/api/downloads', async (_req: Request, res: Response) => {
+      try {
+        const { getWatcherStatus } = await import('../homelab/media/download-watcher.js');
+        res.json(getWatcherStatus());
+      } catch (error) {
+        res.json({ active: false, watching: [], recentlyCompleted: [], pollIntervalMs: 30000, lastPollAt: null });
+      }
+    });
+
+    // API: Timeline events
+    this.app.get('/api/timeline', async (req: Request, res: Response) => {
+      try {
+        const { getRecentEvents } = await import('../capabilities/timeline/timeline.js');
+        const hours = parseInt(req.query.hours as string) || 24;
+        res.json({ events: getRecentEvents(hours) });
+      } catch (error) {
+        res.json({ events: [] });
+      }
+    });
+
+    // API: Notes
+    this.app.get('/api/notes', async (_req: Request, res: Response) => {
+      try {
+        const { listNotes } = await import('../capabilities/notes/scratchpad.js');
+        res.json({ notes: listNotes() });
+      } catch (error) {
+        res.json({ notes: [] });
+      }
+    });
+
+    // API: Reminders
+    this.app.get('/api/reminders', async (_req: Request, res: Response) => {
+      try {
+        const { listReminders } = await import('../capabilities/reminders/reminders.js');
+        res.json({ reminders: listReminders() });
+      } catch (error) {
+        res.json({ reminders: [] });
+      }
+    });
+
+    // API: Custom schedules
+    this.app.get('/api/schedules', async (_req: Request, res: Response) => {
+      try {
+        const { listCustomSchedules } = await import('../capabilities/scheduler/custom-schedules.js');
+        res.json({ schedules: listCustomSchedules() });
+      } catch (error) {
+        res.json({ schedules: [] });
+      }
+    });
+
+    // API: Quiet hours
+    this.app.get('/api/quiet-hours', async (_req: Request, res: Response) => {
+      try {
+        const { getPrefs, isQuietHours } = await import('../capabilities/notifications/quiet-hours.js');
+        res.json({ ...getPrefs(), isCurrentlyQuiet: isQuietHours() });
+      } catch (error) {
+        res.json({ quietHoursEnabled: false, isCurrentlyQuiet: false });
+      }
+    });
+
+    // API: Disk health
+    this.app.get('/api/disk-health', async (_req: Request, res: Response) => {
+      try {
+        const { getSmartHealth } = await import('../homelab/system/smart-monitor.js');
+        res.json(await getSmartHealth());
+      } catch (error) {
+        res.json({ disks: [], overallHealthy: true, summary: 'SMART not available' });
+      }
+    });
+
+    // API: Bandwidth
+    this.app.get('/api/bandwidth', async (_req: Request, res: Response) => {
+      try {
+        const { getBandwidthStats } = await import('../homelab/integrations/bandwidth-monitor.js');
+        res.json(await getBandwidthStats());
+      } catch (error) {
+        res.json({ containers: [], totalIn: '0B', totalOut: '0B', summary: 'unavailable' });
+      }
+    });
+
+    // API: Tailscale
+    this.app.get('/api/tailscale', async (_req: Request, res: Response) => {
+      try {
+        const { getTailscaleStatus } = await import('../homelab/integrations/tailscale.js');
+        res.json(await getTailscaleStatus() || { connected: false, devices: [] });
+      } catch (error) {
+        res.json({ connected: false, devices: [] });
       }
     });
 
@@ -595,6 +691,145 @@ export class WebInterface implements MessageInterface {
       }
     });
 
+    // API: Debug OODA traces
+    this.app.get('/api/debug/last-ooda', (_req: Request, res: Response) => {
+      const trace = getLastTrace();
+      res.json(trace ?? { error: 'No trace recorded' });
+    });
+    this.app.get('/api/debug/ooda/:requestId', (req: Request, res: Response) => {
+      const trace = getTraceById(req.params.requestId);
+      res.json(trace ?? { error: 'Trace not found' });
+    });
+    this.app.get('/api/debug/ooda/stats', (_req: Request, res: Response) => {
+      res.json(getTraceStats());
+    });
+
+    // API: Cognitive debug (Brain 2)
+    this.app.get('/api/debug/last-trace', (_req: Request, res: Response) => {
+      const trace = getLastTrace();
+      if (!trace) {
+        res.json({ error: 'No trace recorded' });
+        return;
+      }
+      res.json({
+        requestId: trace.requestId,
+        timestamp: trace.timestamp,
+        routingPath: trace.routingPath,
+        contextLoaded: trace.observe.contextLoaded,
+        tokenBudget: trace.observe.tokensUsed,
+        classification: trace.orient.classification,
+        action: trace.decide.action,
+        full: trace,
+      });
+    });
+    this.app.get('/api/debug/context-layers', (_req: Request, res: Response) => {
+      const trace = getLastTrace();
+      if (!trace) {
+        res.json({ error: 'No trace recorded', contextLoaded: [], tokenBudget: 0, classification: null });
+        return;
+      }
+      res.json({
+        contextLoaded: trace.observe.contextLoaded,
+        tokenBudget: trace.observe.tokensUsed,
+        classification: trace.orient.classification,
+      });
+    });
+    this.app.get('/api/debug/cognitive-health', async (_req: Request, res: Response) => {
+      const trace = getLastTrace();
+      const lastTraceAge = trace ? Date.now() - trace.timestamp : null;
+
+      let dbConnected = false;
+      try {
+        const { getDb } = await import('../core/context/db.js');
+        getDb().prepare('SELECT 1').get();
+        dbConnected = true;
+      } catch {
+        /* ignore */
+      }
+
+      let assemblerConnected = false;
+      try {
+        const { assembleContext } = await import('../core/context/index.js');
+        await assembleContext({ message: 'ping', action: 'agent_ask' });
+        assemblerConnected = true;
+      } catch {
+        /* ignore */
+      }
+
+      const layersAvailable = ['schema', 'annotations', 'patterns', 'docs', 'learnings', 'runtime', 'project'];
+
+      res.json({
+        assemblerConnected,
+        dbConnected,
+        layersAvailable,
+        lastTraceAge,
+      });
+    });
+
+    this.app.post('/api/debug/growth/scenario-run', (req: Request, res: Response) => {
+      const { scenarioId, passed, responseMs, oodaRequestId } = req.body ?? {};
+      if (!scenarioId || typeof passed !== 'boolean') {
+        res.status(400).json({ error: 'Missing scenarioId or passed' });
+        return;
+      }
+      recordScenarioRun(scenarioId, passed, { responseMs, oodaRequestId });
+      res.json({ ok: true });
+    });
+    this.app.get('/api/debug/growth/stats', (_req: Request, res: Response) => {
+      res.json(getGrowthStats());
+    });
+    this.app.get('/api/debug/growth/anti-gaming', (_req: Request, res: Response) => {
+      res.json({ signals: detectGamingSignals() });
+    });
+    this.app.get('/api/debug/growth/scenario-counts', (_req: Request, res: Response) => {
+      res.json(getScenarioRunCounts());
+    });
+    this.app.post('/api/debug/growth/run-summary', (req: Request, res: Response) => {
+      const { total_pass, total_fail, novel_pass, novel_fail, context_loaded_rate, avg_confidence_score } = req.body ?? {};
+      if (
+        typeof total_pass !== 'number' ||
+        typeof total_fail !== 'number' ||
+        typeof novel_pass !== 'number' ||
+        typeof novel_fail !== 'number' ||
+        typeof context_loaded_rate !== 'number'
+      ) {
+        res.status(400).json({ error: 'Missing or invalid: total_pass, total_fail, novel_pass, novel_fail, context_loaded_rate' });
+        return;
+      }
+      const id = recordRunSummary({
+        total_pass,
+        total_fail,
+        novel_pass,
+        novel_fail,
+        context_loaded_rate,
+        avg_confidence_score,
+      });
+      res.json({ ok: true, id });
+    });
+    this.app.get('/api/debug/growth-trend', (req: Request, res: Response) => {
+      const limit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) || 10 : 10;
+      res.json(getGrowthTrend(limit));
+    });
+
+    // API: Self-test (runs jeeves-qa, cognitive check, growth trend)
+    this.app.post('/api/self-test', async (_req: Request, res: Response) => {
+      try {
+        this.broadcast({ type: 'self_test_started', payload: {} });
+        const apiBase = `http://127.0.0.1:${config.server.port}`;
+        const results = await runSelfTest({
+          onProgress: (msg) => this.broadcast({ type: 'self_test_progress', payload: { message: msg } }),
+          apiBase,
+        });
+        const report = formatSelfTestReport(results);
+        this.broadcast({ type: 'self_test_complete', payload: { report, results } });
+        res.json({ success: true, report, results });
+      } catch (err) {
+        const msg = `Self-test failed: ${err instanceof Error ? err.message : String(err)}`;
+        this.broadcast({ type: 'self_test_complete', payload: { report: msg, error: true } });
+        res.status(500).json({ success: false, error: msg });
+      }
+    });
+
     // API: Send command
     this.app.post('/api/command', async (req: Request, res: Response) => {
       const { content, attachments } = req.body;
@@ -655,7 +890,8 @@ export class WebInterface implements MessageInterface {
         // Signal stream end
         this.broadcast({ type: 'stream_end', payload: { streamId } });
         
-        const responseContent = response?.content || 'No response';
+        const { stripMarkdown } = await import('../utils/signal-format.js');
+        const responseContent = stripMarkdown(response?.content || 'No response');
         
         // Store conversation in memory for export
         addGeneralMessage('user', content);
@@ -671,7 +907,7 @@ export class WebInterface implements MessageInterface {
           type: 'response',
           payload: {
             request: content,
-            response: response?.content || 'No response',
+            response: responseContent,
             timestamp: new Date().toISOString()
           }
         });
@@ -808,6 +1044,16 @@ export class WebInterface implements MessageInterface {
         const monthlyLimit = config.trust?.monthly_spend_limit || 50;
         this.broadcast({ type: 'cost_update', payload: getCostDashboardData(monthlyLimit) });
         this.broadcast({ type: 'activity_update', payload: getActivitySnapshot() });
+        
+        // Broadcast download status if watcher is active
+        try {
+          const { getWatcherStatus, isWatching } = await import('../homelab/media/download-watcher.js');
+          if (isWatching()) {
+            this.broadcast({ type: 'download_status' as any, payload: getWatcherStatus() });
+          }
+        } catch {
+          // Download watcher not available
+        }
       } catch {
         // Non-critical, skip this cycle
       }

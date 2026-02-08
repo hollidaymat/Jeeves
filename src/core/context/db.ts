@@ -138,6 +138,112 @@ function runMigrations(database: Database.Database): void {
         CREATE INDEX IF NOT EXISTS idx_learnings_applies_to ON learnings(applies_to);
         CREATE INDEX IF NOT EXISTS idx_learnings_confidence ON learnings(confidence);
       `
+    },
+    {
+      name: '002_growth_tables',
+      sql: `
+        -- Growth: persisted OODA traces for learning (beyond in-memory window)
+        CREATE TABLE IF NOT EXISTS growth_ooda_traces (
+          request_id TEXT PRIMARY KEY,
+          timestamp INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+          routing_path TEXT NOT NULL,
+          raw_input TEXT NOT NULL,
+          context_loaded TEXT NOT NULL DEFAULT '[]',
+          classification TEXT,
+          confidence_score REAL,
+          action TEXT NOT NULL,
+          success INTEGER NOT NULL DEFAULT 1,
+          total_time_ms INTEGER DEFAULT 0,
+          model_used TEXT,
+          loop_count INTEGER DEFAULT 1
+        );
+        CREATE INDEX IF NOT EXISTS idx_growth_ooda_routing ON growth_ooda_traces(routing_path);
+        CREATE INDEX IF NOT EXISTS idx_growth_ooda_timestamp ON growth_ooda_traces(timestamp);
+
+        -- Growth: scenario run history for NovelScenarioGenerator and AntiGaming
+        CREATE TABLE IF NOT EXISTS growth_scenario_runs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          scenario_id TEXT NOT NULL,
+          run_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+          passed INTEGER NOT NULL DEFAULT 0,
+          response_ms INTEGER,
+          ooda_request_id TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_growth_scenario_id ON growth_scenario_runs(scenario_id);
+        CREATE INDEX IF NOT EXISTS idx_growth_scenario_run_at ON growth_scenario_runs(run_at);
+
+        -- Growth: Cursor task outcomes for feedback loop
+        CREATE TABLE IF NOT EXISTS growth_cursor_outcomes (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          task_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          summary TEXT,
+          pr_url TEXT,
+          completed_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_growth_cursor_task ON growth_cursor_outcomes(task_id);
+      `
+    },
+    {
+      name: '003_cognitive_fix',
+      sql: `
+        -- Preferences (owner rules per domain)
+        CREATE TABLE IF NOT EXISTS preferences (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          domain TEXT DEFAULT 'global',
+          key TEXT NOT NULL,
+          value TEXT NOT NULL,
+          source TEXT DEFAULT 'inferred',
+          created_at INTEGER DEFAULT (strftime('%s', 'now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_preferences_domain ON preferences(domain);
+
+        -- Decisions (decision log for learning)
+        CREATE TABLE IF NOT EXISTS decisions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          category TEXT NOT NULL,
+          context_summary TEXT,
+          decision TEXT NOT NULL,
+          reasoning TEXT,
+          confidence REAL,
+          timestamp INTEGER DEFAULT (strftime('%s', 'now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_decisions_category ON decisions(category);
+
+        -- Cognitive traces (debug + growth comparison)
+        CREATE TABLE IF NOT EXISTS cognitive_traces (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          message_id TEXT,
+          message TEXT,
+          classification TEXT,
+          context_loaded TEXT,
+          token_budget INTEGER,
+          model TEXT,
+          response_time_ms INTEGER,
+          confidence REAL,
+          timestamp INTEGER DEFAULT (strftime('%s', 'now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_cognitive_traces_timestamp ON cognitive_traces(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_cognitive_traces_classification ON cognitive_traces(classification);
+        CREATE INDEX IF NOT EXISTS idx_cognitive_traces_message_id ON cognitive_traces(message_id);
+      `
+    },
+    {
+      name: '004_growth_run_summaries',
+      sql: `
+        -- Growth run summaries (Phase 6: after each test run)
+        CREATE TABLE IF NOT EXISTS growth_run_summaries (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          run_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+          total_pass INTEGER NOT NULL DEFAULT 0,
+          total_fail INTEGER NOT NULL DEFAULT 0,
+          novel_pass INTEGER NOT NULL DEFAULT 0,
+          novel_fail INTEGER NOT NULL DEFAULT 0,
+          context_loaded_rate REAL NOT NULL DEFAULT 0,
+          avg_confidence_score REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_growth_run_summaries_run_at ON growth_run_summaries(run_at);
+      `
     }
   ];
 

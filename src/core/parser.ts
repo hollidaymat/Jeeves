@@ -292,7 +292,7 @@ const PATTERNS = {
   mediaDownload: /^(?:download|get|grab|add|queue)\s+(.+)/i,
   mediaSelect: /^([1-9]\d?)$/,  // Just a number (1-99) when pending media results exist
   mediaMore: /^(?:more|next|next\s+results|more\s+results|show\s+more|next\s+page)$/i,
-  mediaStatus: /^(?:download(?:s|ing)?|queue|what'?s downloading|download status|download queue|media status|media queue)$/i,
+  mediaStatus: /^(?:(?:download(?:s|ing)?|queue|what'?s downloading|download status|download queue|media status|media queue)|(?:check|get|show|what'?s?)\s+(?:downloads?|queue|download\s+(?:status|queue)|media\s+(?:status|queue))|(?:what(?:'?s)?\s+)?(?:are\s+)?(?:my\s+)?downloads?)$/i,
   
   // List projects patterns  
   listProjects: /^(list|projects|list projects|show projects|what projects)$/i,
@@ -339,6 +339,8 @@ const PATTERNS = {
   
   // Personality/remember patterns
   remember: /^(?:remember|remember that|jeeves remember|note that)[:\s]+(.+)$/i,
+  // Preference statements: "my favorite X is Y", "I like X", etc.
+  preferenceStatement: /^(?:my\s+favorite\s+.+\s+is\s+.+|I\s+(?:really\s+)?(?:like|love)\s+.+)$/i,
   // "you are" pattern for role assignment - exclude negative feedback patterns
   // Must NOT match: "you are wrong", "you are hallucinating", "you are broken", etc.
   youAre: /^(?:you are|you're|your role is)[:\s]+(?!(?:wrong|bad|broken|hallucinating|stupid|incorrect|not|an idiot|dumb|useless|terrible|awful|horrible|failing|confused|mistaken|lying)\b)(.+)$/i,
@@ -382,6 +384,49 @@ const PATTERNS = {
   listBackups: /^(?:list\s+)?backups(?:\s+(?:for\s+)?(.+))?$/i,
   restoreBackup: /^restore\s+(.+?)(?:\s+(\d+))?$/i,
   
+  // Vercel commands
+  vercelUrl: /^(?:(?:can you\s+)?(?:check\s+)?vercel\s+(?:and\s+)?find\s+the\s+url\s+for\s+|vercel\s+url|vercel\s+link|url\s+(?:for|of)\s+|(?:get|send|give|show)\s+(?:me\s+)?(?:the\s+)?(?:vercel\s+)?(?:url|link)\s+(?:for|of)\s+|what'?s\s+the\s+(?:vercel\s+)?(?:url|link)\s+(?:for|of)\s+|(?:find|get)\s+(?:the\s+)?(?:vercel\s+)?(?:url|link)\s+for\s+)(.+?)$/i,
+  vercelDeploy: /^(?:deploy|vercel deploy|deploy\s+to\s+vercel|push\s+to\s+vercel|deploy\s+that\s+(?:repo|project)|ship)\s+(.+?)(?:\s+(?:to|on)\s+vercel)?$/i,
+  vercelProjects: /^(?:vercel\s+projects|list\s+vercel|show\s+vercel|my\s+vercel|vercel\s+status|vercel)$/i,
+  
+  // ===== NEW SYSTEM MONITORING =====
+  diskHealth: /^(?:disk\s+health|smart|smart\s+status|drive\s+health|disk\s+check|check\s+disks?)$/i,
+  dockerCleanup: /^(?:docker\s+clean(?:up)?|prune|docker\s+prune|clean(?:up)?\s+docker|reclaim\s+space)$/i,
+  logErrors: /^(?:errors?|log\s+errors?|container\s+errors?|show\s+errors?|recent\s+errors?)$/i,
+  piholeStats: /^(?:pihole|pi-?hole|dns|ad\s*block|ads?\s+blocked|blocked\s+queries)$/i,
+  speedTest: /^(?:speed\s*test|internet\s+speed|bandwidth\s+test|test\s+speed|how\s+fast|connection\s+speed)$/i,
+  imageUpdates: /^(?:image\s+updates?|container\s+updates?|check\s+updates?|available\s+updates?|outdated\s+(?:images?|containers?))$/i,
+  sslCheck: /^(?:ssl|ssl\s+check|cert(?:s|ificates?)?|ssl\s+status|tls|cert\s+expiry|check\s+certs?)$/i,
+  serviceDeps: /^(?:dep(?:s|endenc(?:y|ies))\s+(?:for\s+)?(.+)|what\s+depends\s+on\s+(.+)|(.+)\s+dependencies|if\s+(.+)\s+(?:goes?\s+down|dies|crashes))$/i,
+
+  // ===== INTEGRATIONS =====
+  homeAssistant: /^(?:ha|home\s*assistant)\s+(.+)$/i,
+  lightsControl: /^(?:(?:turn\s+)?(?:on|off)\s+(?:the\s+)?(.+?)\s*(?:lights?)?|(?:lights?)\s+(?:on|off))$/i,
+  haTemperature: /^(?:(?:indoor?\s+)?temp(?:erature)?s?\s*(?:inside)?|how\s+(?:hot|cold|warm)\s+is\s+it\s+inside|what'?s\s+the\s+temp(?:erature)?\s+inside)$/i,
+  tailscaleStatus: /^(?:tailscale|vpn|vpn\s+status|tailscale\s+status|who'?s\s+connected|connected\s+devices)$/i,
+  nextcloudStatus: /^(?:nextcloud|nextcloud\s+status|nextcloud\s+storage|cloud\s+storage)$/i,
+  grafanaDashboards: /^(?:grafana|grafana\s+(?:dashboards?|status)|show\s+grafana)$/i,
+  grafanaSnapshot: /^(?:grafana\s+(?:snapshot|graph|chart|render)\s+(.+)|show\s+(?:me\s+)?(?:the\s+)?(?:cpu|memory|disk|network)\s+graph)$/i,
+  uptimeKuma: /^(?:uptime(?:\s+kuma)?|monitors?|uptime\s+status|service\s+uptime|is\s+.+\s+up\??)$/i,
+  bandwidthStats: /^(?:bandwidth|network\s+usage|net\s+usage|who'?s\s+(?:using|eating)\s+bandwidth)$/i,
+  qbittorrentStatus: /^(?:qbittorrent|qbit|qbit\s+status|torrent\s+status|qbit\s+torrents|qbit\s+list)$/i,
+  qbittorrentAdd: /^(?:add\s+torrent|add\s+to\s+qbit|qbit\s+add)\s+(.+)$/i,
+
+  // ===== PRODUCTIVITY =====
+  noteAdd: /^(?:note|save|jot|write\s+down)[:\s]+(.+)$/i,
+  noteSearch: /^(?:find\s+note|search\s+notes?|notes?\s+about|what\s+did\s+I\s+save\s+about)\s+(.+)$/i,
+  noteList: /^(?:notes?|my\s+notes?|show\s+notes?|list\s+notes?)$/i,
+  reminderSet: /^(?:remind\s+me|reminder|set\s+(?:a\s+)?reminder)\s+(.+?)(?:\s+to\s+(.+))?$/i,
+  reminderList: /^(?:reminders?|my\s+reminders?|pending\s+reminders?|show\s+reminders?|list\s+reminders?)$/i,
+  scheduleCreate: /^(?:every\s+.+)$/i,
+  scheduleList: /^(?:schedules?|my\s+schedules?|scheduled\s+tasks?|show\s+schedules?|custom\s+schedules?|list\s+schedules?)$/i,
+  scheduleDelete: /^(?:delete|remove|cancel)\s+schedule\s+(.+)$/i,
+  timeline: /^(?:timeline|what\s+happened\s+(?:today|yesterday|recently)|event\s+log|events|activity\s+log|what'?s\s+been\s+happening)$/i,
+  quietHours: /^(?:quiet\s+hours?|notification\s+(?:settings?|prefs?)|do\s+not\s+disturb|dnd)$/i,
+  quietHoursSet: /^(?:quiet\s+hours?\s+(\d{1,2}(?::\d{2})?)\s*(?:to|-)\s*(\d{1,2}(?::\d{2})?)|(?:don'?t|do\s+not)\s+(?:message|notify|bother)\s+me\s+(?:between|from)\s+(\d{1,2}(?::\d{2})?(?:\s*(?:am|pm))?)\s*(?:to|and|-)\s*(\d{1,2}(?::\d{2})?(?:\s*(?:am|pm))?))/i,
+  quietHoursOff: /^(?:(?:disable|turn\s+off|stop)\s+quiet\s+hours?|notifications?\s+on|dnd\s+off)$/i,
+  fileShare: /^(?:send\s+(?:me\s+)?(?:the\s+)?(?:file\s+)?|share\s+(?:file\s+)?)(.+?)(?:\s+file)?$/i,
+
   // Open in Cursor IDE (explicit)
   openInCursor: /^(?:open in cursor|cursor open|launch|open in ide)\s+(.+)$/i,
   
@@ -399,7 +444,8 @@ const PATTERNS = {
 };
 
 /**
- * Simple commands that don't need Claude
+ * Simple commands not in the registry (terminal, backup, browse, PRD, etc.).
+ * Registry matches are handled first in parseIntent; this is fallback for parseIntent callers.
  */
 function handleSimpleCommand(message: string): ParsedIntent | null {
   const trimmed = message.trim();
@@ -438,6 +484,25 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
     return { action: 'show_lessons', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
   }
   
+  // ===== VERCEL COMMANDS (all pattern-matched, FREE) =====
+  
+  // Vercel project URL lookup
+  const vercelUrlMatch = trimmed.match(PATTERNS.vercelUrl);
+  if (vercelUrlMatch) {
+    return { action: 'vercel_url', target: vercelUrlMatch[1].trim(), confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+  }
+  
+  // Vercel deploy
+  const vercelDeployMatch = trimmed.match(PATTERNS.vercelDeploy);
+  if (vercelDeployMatch) {
+    return { action: 'vercel_deploy', target: vercelDeployMatch[1].trim(), confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+  }
+  
+  // Vercel projects list / status
+  if (PATTERNS.vercelProjects.test(lower)) {
+    return { action: 'vercel_projects', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+  }
+
   // ===== HOMELAB COMMANDS (all pattern-matched, FREE) =====
   // Only match if homelab is enabled
   if (config.homelab?.enabled || process.env.HOMELAB_DEV_MODE) {
@@ -617,6 +682,195 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
     if (searchMatch) {
       return { action: 'media_search', target: searchMatch[1].trim(), confidence: 0.9, resolutionMethod: 'pattern', estimatedCost: 0 };
     }
+
+    // ===== SYSTEM MONITORING COMMANDS =====
+
+    // Disk health / SMART
+    if (PATTERNS.diskHealth.test(lower)) {
+      return { action: 'disk_health', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Docker cleanup
+    if (PATTERNS.dockerCleanup.test(lower)) {
+      return { action: 'docker_cleanup', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Log errors
+    if (PATTERNS.logErrors.test(lower)) {
+      return { action: 'log_errors', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Pi-hole stats
+    if (PATTERNS.piholeStats.test(lower)) {
+      return { action: 'pihole_stats', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Speed test
+    if (PATTERNS.speedTest.test(lower)) {
+      return { action: 'speed_test', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Image updates
+    if (PATTERNS.imageUpdates.test(lower)) {
+      return { action: 'image_updates', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // SSL check
+    if (PATTERNS.sslCheck.test(lower)) {
+      return { action: 'ssl_check', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Service dependencies
+    const depsMatch = trimmed.match(PATTERNS.serviceDeps);
+    if (depsMatch) {
+      const target = (depsMatch[1] || depsMatch[2] || depsMatch[3] || depsMatch[4] || '').trim();
+      return { action: 'service_deps', target, confidence: 0.9, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // ===== INTEGRATION COMMANDS =====
+
+    // HA temperature (check before general HA)
+    if (PATTERNS.haTemperature.test(lower)) {
+      return { action: 'home_assistant', target: 'temperature', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Lights control
+    const lightsMatch = lower.match(PATTERNS.lightsControl);
+    if (lightsMatch) {
+      return { action: 'home_assistant', target: trimmed, confidence: 0.9, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Home Assistant commands
+    const haMatch = trimmed.match(PATTERNS.homeAssistant);
+    if (haMatch) {
+      return { action: 'home_assistant', target: haMatch[1].trim(), confidence: 0.9, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Tailscale
+    if (PATTERNS.tailscaleStatus.test(lower)) {
+      return { action: 'tailscale_status', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Nextcloud
+    if (PATTERNS.nextcloudStatus.test(lower)) {
+      return { action: 'nextcloud_status', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Grafana snapshot (before dashboards list)
+    const grafSnapMatch = trimmed.match(PATTERNS.grafanaSnapshot);
+    if (grafSnapMatch) {
+      return { action: 'grafana_snapshot', target: (grafSnapMatch[1] || '').trim(), confidence: 0.9, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Grafana dashboards
+    if (PATTERNS.grafanaDashboards.test(lower)) {
+      return { action: 'grafana_dashboards', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Uptime Kuma
+    if (PATTERNS.uptimeKuma.test(lower)) {
+      return { action: 'uptime_kuma', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Bandwidth
+    if (PATTERNS.bandwidthStats.test(lower)) {
+      return { action: 'bandwidth', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // qBittorrent
+    if (PATTERNS.qbittorrentStatus.test(lower)) {
+      return { action: 'qbittorrent_status', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+    const qbitAddMatch = trimmed.match(PATTERNS.qbittorrentAdd);
+    if (qbitAddMatch) {
+      const target = qbitAddMatch[1].trim();
+      if (target.startsWith('magnet:') || target.startsWith('http://') || target.startsWith('https://')) {
+        return { action: 'qbittorrent_add', target, confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+      }
+    }
+    // Bare magnet link or torrent URL pasted directly
+    if (trimmed.startsWith('magnet:') || /^https?:\/\/.+\/(.+)\.torrent(\?|$)/i.test(trimmed)) {
+      return { action: 'qbittorrent_add', target: trimmed, confidence: 0.95, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // ===== PRODUCTIVITY COMMANDS =====
+
+    // Note add
+    const noteAddMatch = trimmed.match(PATTERNS.noteAdd);
+    if (noteAddMatch) {
+      return { action: 'note_add', target: noteAddMatch[1].trim(), confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Note search
+    const noteSearchMatch = trimmed.match(PATTERNS.noteSearch);
+    if (noteSearchMatch) {
+      return { action: 'note_search', target: noteSearchMatch[1].trim(), confidence: 0.9, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Note list
+    if (PATTERNS.noteList.test(lower)) {
+      return { action: 'note_list', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Reminder set (before reminder list)
+    const reminderMatch = trimmed.match(PATTERNS.reminderSet);
+    if (reminderMatch) {
+      return { action: 'reminder_set', target: reminderMatch[0], confidence: 0.9, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Reminder list
+    if (PATTERNS.reminderList.test(lower)) {
+      return { action: 'reminder_list', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Schedule delete (before create)
+    const schedDeleteMatch = lower.match(PATTERNS.scheduleDelete);
+    if (schedDeleteMatch) {
+      return { action: 'schedule_delete', target: schedDeleteMatch[1].trim(), confidence: 0.9, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Schedule list
+    if (PATTERNS.scheduleList.test(lower)) {
+      return { action: 'schedule_list', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Schedule create ("every friday at 5pm ...")
+    if (PATTERNS.scheduleCreate.test(lower)) {
+      return { action: 'schedule_create', target: trimmed, confidence: 0.8, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Timeline
+    if (PATTERNS.timeline.test(lower)) {
+      return { action: 'timeline', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Quiet hours off
+    if (PATTERNS.quietHoursOff.test(lower)) {
+      return { action: 'quiet_hours_set', target: 'off', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Quiet hours set
+    const qhSetMatch = trimmed.match(PATTERNS.quietHoursSet);
+    if (qhSetMatch) {
+      const start = (qhSetMatch[1] || qhSetMatch[3] || '23:00').trim();
+      const end = (qhSetMatch[2] || qhSetMatch[4] || '07:00').trim();
+      return { action: 'quiet_hours_set', target: `${start}-${end}`, confidence: 0.9, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Quiet hours status
+    if (PATTERNS.quietHours.test(lower)) {
+      return { action: 'quiet_hours', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // File share (check late to avoid false positives)
+    const fileShareMatch = trimmed.match(PATTERNS.fileShare);
+    if (fileShareMatch) {
+      const target = fileShareMatch[1].trim();
+      // Only match if it looks like a file path
+      if (target.includes('/') || target.includes('.')) {
+        return { action: 'file_share', target, confidence: 0.8, resolutionMethod: 'pattern', estimatedCost: 0 };
+      }
+    }
   }
   
   // Help
@@ -707,7 +961,38 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
 \`search <title>\` → Search for movies/shows
 \`download <title>\` → Add to library and download
 \`download <title> season 2\` → Download specific season
-\`downloads\` / \`queue\` → View download queue`
+\`downloads\` / \`queue\` → View download queue
+
+**System Monitoring**:
+\`disk health\` / \`smart\` → SMART disk health check
+\`errors\` → Scan container logs for errors
+\`docker cleanup\` / \`prune\` → Clean unused Docker resources
+\`speed test\` → Run internet speed test
+\`image updates\` → Check for container image updates
+\`ssl check\` / \`certs\` → Check SSL certificate expiry
+\`pihole\` → Pi-hole DNS blocking stats
+\`bandwidth\` → Per-container network usage
+\`deps <service>\` → Service dependency map
+
+**Integrations**:
+\`tailscale\` / \`vpn\` → VPN status and connected devices
+\`grafana\` → List Grafana dashboards
+\`uptime\` / \`monitors\` → Uptime Kuma status
+\`nextcloud\` → Nextcloud storage info
+\`ha <command>\` → Home Assistant control
+\`lights on/off\` → Control lights
+
+**Productivity**:
+\`note: <text>\` → Save a quick note
+\`notes\` → List all notes
+\`find note <query>\` → Search notes
+\`remind me in 2h to ...\` → Set a reminder
+\`reminders\` → List pending reminders
+\`every friday at 5pm ...\` → Create scheduled task
+\`schedules\` → List custom schedules
+\`timeline\` / \`what happened today\` → Event timeline
+\`quiet hours 23:00-07:00\` → Set notification quiet hours
+\`send me /path/to/file\` → Send a file via Signal`
     };
   }
   
@@ -1078,6 +1363,15 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
     };
   }
   
+  // Personality: Preference statements ("my favorite language is Rust", "I like TypeScript")
+  if (PATTERNS.preferenceStatement.test(trimmed)) {
+    return {
+      action: 'remember',
+      confidence: 1.0,
+      message: rememberPersonality(trimmed)
+    };
+  }
+
   // Personality: Remember statements
   const rememberMatch = trimmed.match(PATTERNS.remember);
   if (rememberMatch) {
@@ -1553,6 +1847,8 @@ export async function parseIntent(message: string): Promise<ParsedIntent> {
     return { action: 'autonomous_build', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
   }
   
+  // STAGE 0.5 removed: vercel, notes, reminders, timeline, quiet, schedule — now handled by command registry (STAGE 3)
+
   // ==========================================
   // STAGE 1: Pre-processing (FREE)
   // ==========================================
@@ -1594,7 +1890,16 @@ export async function parseIntent(message: string): Promise<ParsedIntent> {
   // STAGE 3: Simple Commands (FREE)
   // ==========================================
   
-  // Check for simple commands first
+  // Try command registry first (single source of truth)
+  const { matchCommand, matchResultToParsedIntent } = await import('./command-matcher.js');
+  const registryMatch = matchCommand(processedMessage);
+  if (registryMatch) {
+    const simple = matchResultToParsedIntent(registryMatch);
+    referenceResolver.update(simple);
+    return simple as ParsedIntent;
+  }
+
+  // Fallback: handleSimpleCommand for terminal/git/npm/backup and other patterns not in registry
   const simple = handleSimpleCommand(processedMessage);
   if (simple) {
     simple.resolutionMethod = 'pattern';

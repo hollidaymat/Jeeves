@@ -153,7 +153,7 @@ export async function reviewCompletedTask(
 
   // Send via Signal
   try {
-    const { config } = await import('../../config.js');
+    const { getOwnerNumber } = await import('../../config.js');
     const { signalInterface } = await import('../../interfaces/signal.js');
     
     if (signalInterface.isAvailable()) {
@@ -163,7 +163,7 @@ export async function reviewCompletedTask(
       ].filter(Boolean);
 
       await signalInterface.send({
-        recipient: config.signal.number,
+        recipient: getOwnerNumber(),
         content: `Visual review for "${taskSpec.summary || taskId}":\n${url}\n\nDesktop + mobile screenshots attached. Reply "looks good" or note any issues.`,
         attachments: attachments.length > 0 ? attachments : undefined,
       });

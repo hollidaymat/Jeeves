@@ -57,6 +57,42 @@ const TRUST_REQUIREMENTS: Record<string, number> = {
   media_select: 2,
   media_more: 2,
   media_status: 2,
+
+  // System monitoring: trust level 2+ (read-only)
+  disk_health: 2,
+  docker_cleanup: 3,   // Actually modifies system
+  log_errors: 2,
+  pihole_stats: 2,
+  speed_test: 2,
+  image_updates: 2,
+  ssl_check: 2,
+  service_deps: 2,
+
+  // Integrations: trust level 2+
+  home_assistant: 2,
+  tailscale_status: 2,
+  nextcloud_status: 2,
+  nextcloud_upload: 3,
+  grafana_dashboards: 2,
+  grafana_snapshot: 2,
+  uptime_kuma: 2,
+  bandwidth: 2,
+  qbittorrent_status: 2,
+  qbittorrent_add: 2,
+
+  // Productivity: trust level 2+
+  note_add: 2,
+  note_search: 2,
+  note_list: 2,
+  reminder_set: 2,
+  reminder_list: 2,
+  schedule_create: 2,
+  schedule_list: 2,
+  schedule_delete: 2,
+  timeline: 2,
+  quiet_hours: 2,
+  quiet_hours_set: 2,
+  file_share: 3,
 };
 
 // ============================================================================
@@ -248,6 +284,225 @@ export async function executeHomelabAction(
 
       case 'media_status':
         return await handleMediaStatus();
+
+      // ===== SYSTEM MONITORING =====
+
+      case 'disk_health': {
+        const { getSmartHealth, formatSmartReport } = await import('./system/smart-monitor.js');
+        const report = await getSmartHealth();
+        return { success: true, output: formatSmartReport(report), duration_ms: Date.now() - startTime };
+      }
+
+      case 'docker_cleanup': {
+        const { runCleanup } = await import('./system/docker-cleanup.js');
+        const result = await runCleanup();
+        return { success: result.success, output: result.message, duration_ms: Date.now() - startTime };
+      }
+
+      case 'log_errors': {
+        const { scanContainerLogs, formatLogScan } = await import('./system/log-scanner.js');
+        const result = await scanContainerLogs(60);
+        return { success: true, output: formatLogScan(result), duration_ms: Date.now() - startTime };
+      }
+
+      case 'pihole_stats': {
+        const { getPiholeStats, formatPiholeStats } = await import('./system/pihole-stats.js');
+        const stats = await getPiholeStats();
+        if (!stats) return { success: false, error: 'Pi-hole not configured. Set PIHOLE_API_KEY in .env.', duration_ms: Date.now() - startTime };
+        return { success: true, output: formatPiholeStats(stats), duration_ms: Date.now() - startTime };
+      }
+
+      case 'speed_test': {
+        const { runSpeedTest, getSpeedHistory, formatSpeedResult } = await import('./system/speed-test.js');
+        const result = await runSpeedTest();
+        const history = getSpeedHistory();
+        return { success: !!result, output: formatSpeedResult(result, history), duration_ms: Date.now() - startTime };
+      }
+
+      case 'image_updates': {
+        const { checkImageUpdates, formatUpdateCheck } = await import('./system/image-updates.js');
+        const result = await checkImageUpdates();
+        return { success: true, output: formatUpdateCheck(result), duration_ms: Date.now() - startTime };
+      }
+
+      case 'ssl_check': {
+        const { checkCertificates, formatCertReport } = await import('./system/ssl-monitor.js');
+        const report = await checkCertificates();
+        return { success: true, output: formatCertReport(report), duration_ms: Date.now() - startTime };
+      }
+
+      case 'service_deps': {
+        const { formatDependencies } = await import('./system/dependency-map.js');
+        const target = intent.target || '';
+        if (!target) return { success: false, error: 'Which service? E.g., "deps for sonarr" or "what depends on postgres"', duration_ms: Date.now() - startTime };
+        return { success: true, output: formatDependencies(target), duration_ms: Date.now() - startTime };
+      }
+
+      // ===== INTEGRATIONS =====
+
+      case 'home_assistant': {
+        const { handleHACommand } = await import('./integrations/home-assistant.js');
+        const result = await handleHACommand(intent.target || '');
+        return { success: true, output: result, duration_ms: Date.now() - startTime };
+      }
+
+      case 'tailscale_status': {
+        const { getTailscaleStatus, formatTailscaleStatus } = await import('./integrations/tailscale.js');
+        const status = await getTailscaleStatus();
+        return { success: true, output: formatTailscaleStatus(status), duration_ms: Date.now() - startTime };
+      }
+
+      case 'nextcloud_status': {
+        const { getStorageInfo, formatStorageInfo } = await import('./integrations/nextcloud.js');
+        const info = await getStorageInfo();
+        return { success: true, output: formatStorageInfo(info), duration_ms: Date.now() - startTime };
+      }
+
+      case 'nextcloud_upload': {
+        const { uploadFile } = await import('./integrations/nextcloud.js');
+        const parts = (intent.target || '').split(' to ');
+        const localPath = parts[0]?.trim() || '';
+        const remotePath = parts[1]?.trim() || localPath.split('/').pop() || 'upload';
+        const ok = await uploadFile(localPath, remotePath);
+        return { success: ok, output: ok ? `Uploaded to Nextcloud: ${remotePath}` : 'Upload failed', duration_ms: Date.now() - startTime };
+      }
+
+      case 'grafana_dashboards': {
+        const { listDashboards, formatDashboardList } = await import('./integrations/grafana.js');
+        const dashboards = await listDashboards();
+        return { success: true, output: formatDashboardList(dashboards), duration_ms: Date.now() - startTime };
+      }
+
+      case 'grafana_snapshot': {
+        const { listDashboards, renderPanel } = await import('./integrations/grafana.js');
+        const dashboards = await listDashboards();
+        const target = intent.target || '';
+        const match = dashboards.find(d => d.title.toLowerCase().includes(target.toLowerCase()) || d.uid === target);
+        if (!match) return { success: false, error: `Dashboard not found: ${target}. Use 'grafana' to list.`, duration_ms: Date.now() - startTime };
+        const path = await renderPanel(match.uid);
+        if (!path) return { success: false, error: 'Grafana render failed. Is the image renderer plugin installed?', duration_ms: Date.now() - startTime };
+        return { success: true, output: `Grafana snapshot: ${match.title}`, duration_ms: Date.now() - startTime, attachments: [path] };
+      }
+
+      case 'uptime_kuma': {
+        const { getKumaStatus, formatKumaStatus } = await import('./integrations/uptime-kuma.js');
+        const status = await getKumaStatus();
+        return { success: true, output: formatKumaStatus(status), duration_ms: Date.now() - startTime };
+      }
+
+      case 'bandwidth': {
+        const { getBandwidthStats, formatBandwidthReport } = await import('./integrations/bandwidth-monitor.js');
+        const report = await getBandwidthStats();
+        return { success: true, output: formatBandwidthReport(report), duration_ms: Date.now() - startTime };
+      }
+
+      case 'qbittorrent_status': {
+        const { getQbittorrentStatus, formatQbittorrentStatus } = await import('./integrations/qbittorrent.js');
+        const status = await getQbittorrentStatus();
+        return { success: status.success, output: formatQbittorrentStatus(status), duration_ms: Date.now() - startTime };
+      }
+
+      case 'qbittorrent_add': {
+        const { addTorrent } = await import('./integrations/qbittorrent.js');
+        const target = (intent.target || '').trim();
+        if (!target) return { success: false, error: 'Provide a magnet link or .torrent URL.', duration_ms: Date.now() - startTime };
+        const result = await addTorrent(target);
+        return { success: result.success, output: result.message, duration_ms: Date.now() - startTime };
+      }
+
+      // ===== PRODUCTIVITY =====
+
+      case 'note_add': {
+        const { addNote } = await import('../capabilities/notes/scratchpad.js');
+        const note = addNote(intent.target || '');
+        return { success: true, output: `Saved: "${note.content}"`, duration_ms: Date.now() - startTime };
+      }
+
+      case 'note_search': {
+        const { searchNotes, formatNotes } = await import('../capabilities/notes/scratchpad.js');
+        const results = searchNotes(intent.target || '');
+        return { success: true, output: formatNotes(results), duration_ms: Date.now() - startTime };
+      }
+
+      case 'note_list': {
+        const { listNotes, formatNotes } = await import('../capabilities/notes/scratchpad.js');
+        const notes = listNotes();
+        return { success: true, output: formatNotes(notes), duration_ms: Date.now() - startTime };
+      }
+
+      case 'reminder_set': {
+        const { createReminder } = await import('../capabilities/reminders/reminders.js');
+        // Parse "remind me in 2h to check the backup"
+        const input = intent.target || '';
+        const toMatch = input.match(/(.+?)\s+to\s+(.+)/i);
+        if (!toMatch) return { success: false, error: 'Try: "remind me in 2h to check the backup"', duration_ms: Date.now() - startTime };
+        const reminder = createReminder(toMatch[1], toMatch[2]);
+        if (!reminder) return { success: false, error: 'Could not parse time. Try: "in 30m", "in 2 hours", "tomorrow at 9am"', duration_ms: Date.now() - startTime };
+        const when = new Date(reminder.triggerAt);
+        return { success: true, output: `Reminder set for ${when.toLocaleString()}: ${reminder.message}`, duration_ms: Date.now() - startTime };
+      }
+
+      case 'reminder_list': {
+        const { listReminders, formatReminders } = await import('../capabilities/reminders/reminders.js');
+        const reminders = listReminders();
+        return { success: true, output: formatReminders(reminders), duration_ms: Date.now() - startTime };
+      }
+
+      case 'schedule_create': {
+        const { createCustomSchedule } = await import('../capabilities/scheduler/custom-schedules.js');
+        const input = intent.target || '';
+        // Extract time pattern and action: "every friday at 5pm send me a homelab summary"
+        const actionMatch = input.match(/(every\s+.+?)\s+(send|check|run|do|show|notify|test)\s+(.+)/i);
+        if (!actionMatch) return { success: false, error: 'Try: "every friday at 5pm send me a homelab summary"', duration_ms: Date.now() - startTime };
+        const schedule = createCustomSchedule(actionMatch[1], `${actionMatch[2]} ${actionMatch[3]}`);
+        if (!schedule) return { success: false, error: 'Could not parse schedule. Try: "every day at 8am", "every friday at 5pm"', duration_ms: Date.now() - startTime };
+        return { success: true, output: `Scheduled: ${schedule.description}`, duration_ms: Date.now() - startTime };
+      }
+
+      case 'schedule_list': {
+        const { listCustomSchedules, formatSchedules } = await import('../capabilities/scheduler/custom-schedules.js');
+        const schedules = listCustomSchedules();
+        return { success: true, output: formatSchedules(schedules), duration_ms: Date.now() - startTime };
+      }
+
+      case 'schedule_delete': {
+        const { deleteCustomSchedule } = await import('../capabilities/scheduler/custom-schedules.js');
+        const ok = deleteCustomSchedule(intent.target || '');
+        return { success: ok, output: ok ? 'Schedule deleted.' : 'Schedule not found.', duration_ms: Date.now() - startTime };
+      }
+
+      case 'timeline': {
+        const { formatTimeline } = await import('../capabilities/timeline/timeline.js');
+        return { success: true, output: formatTimeline(24), duration_ms: Date.now() - startTime };
+      }
+
+      case 'quiet_hours': {
+        const { formatNotificationPrefs } = await import('../capabilities/notifications/quiet-hours.js');
+        return { success: true, output: formatNotificationPrefs(), duration_ms: Date.now() - startTime };
+      }
+
+      case 'quiet_hours_set': {
+        const target = intent.target || '';
+        if (target === 'off') {
+          const { disableQuietHours } = await import('../capabilities/notifications/quiet-hours.js');
+          disableQuietHours();
+          return { success: true, output: 'Quiet hours disabled. Notifications will come through anytime.', duration_ms: Date.now() - startTime };
+        }
+        const parts = target.split('-');
+        if (parts.length === 2) {
+          const { setQuietHours, formatNotificationPrefs } = await import('../capabilities/notifications/quiet-hours.js');
+          setQuietHours(parts[0].trim(), parts[1].trim());
+          return { success: true, output: `Quiet hours updated. ${formatNotificationPrefs()}`, duration_ms: Date.now() - startTime };
+        }
+        return { success: false, error: 'Specify start-end times, e.g., "quiet hours 23:00-07:00"', duration_ms: Date.now() - startTime };
+      }
+
+      case 'file_share': {
+        const { validateFileForSharing } = await import('../capabilities/file-share/file-share.js');
+        const result = validateFileForSharing(intent.target || '');
+        if (!result.valid) return { success: false, error: result.error, duration_ms: Date.now() - startTime };
+        return { success: true, output: `Sending file: ${result.path}`, duration_ms: Date.now() - startTime, attachments: [result.path!] };
+      }
 
       default:
         return {
@@ -694,6 +949,17 @@ async function handleMediaDownload(query: string): Promise<ExecutionResult> {
   const parsed = media.parseMediaQuery(query);
   const result = await media.addMedia(parsed.query, { season: parsed.season, type: parsed.type });
 
+  // Start watching this download if it was successfully added
+  if (result.success && result.title) {
+    try {
+      const { trackDownload } = await import('./media/download-watcher.js');
+      const source = parsed.type === 'movie' ? 'radarr' : 'sonarr';
+      trackDownload(result.title, parsed.type === 'movie' ? 'movie' : 'episode', source as 'sonarr' | 'radarr');
+    } catch {
+      // Watcher is optional
+    }
+  }
+
   const icon = result.success ? '✅' : '❌';
   return {
     success: result.success,
@@ -712,6 +978,16 @@ async function handleMediaSelect(indexStr: string): Promise<ExecutionResult> {
 
   const index = parseInt(indexStr, 10);
   const result = await media.selectMedia(index);
+
+  // Start watching this download if it was successfully added
+  if (result.success && result.title) {
+    try {
+      const { trackDownload } = await import('./media/download-watcher.js');
+      trackDownload(result.title, 'episode', 'sonarr');
+    } catch {
+      // Watcher is optional
+    }
+  }
 
   const icon = result.success ? '✅' : '❌';
   return {
@@ -738,17 +1014,44 @@ async function handleMediaStatus(): Promise<ExecutionResult> {
   const media = await getMediaSearch();
   const result = await media.getDownloadQueue();
 
-  if (!result.success || result.queue.length === 0) {
-    return { success: true, output: result.message, duration_ms: Date.now() - startTime };
+  let output = '';
+
+  if (!result.success) {
+    return { success: false, output: result.message, duration_ms: Date.now() - startTime };
   }
 
-  let output = '## Download Queue\n\n';
-  output += '| Title | Status | Progress | Size | ETA |\n';
-  output += '|-------|--------|----------|------|-----|\n';
+  if (result.queue.length > 0) {
+    output += '## Download Queue\n\n';
+    output += '| Title | Status | Progress | Size | ETA |\n';
+    output += '|-------|--------|----------|------|-----|\n';
 
-  for (const item of result.queue) {
-    const bar = makeBar(item.progress, 10);
-    output += `| ${item.title} | ${item.status} | ${bar} ${item.progress}% | ${item.size} | ${item.timeLeft} |\n`;
+    for (const item of result.queue) {
+      const bar = makeBar(item.progress, 10);
+      output += `| ${item.title} | ${item.status} | ${bar} ${item.progress}% | ${item.size} | ${item.timeLeft} |\n`;
+    }
+  } else {
+    output = 'No active downloads';
+  }
+
+  // Append recently completed info from the watcher
+  try {
+    const { getWatcherStatus, isWatching } = await import('./media/download-watcher.js');
+    const watcherStatus = getWatcherStatus();
+
+    if (isWatching()) {
+      output += '\n\n🔍 Download watcher: active';
+    }
+
+    if (watcherStatus.recentlyCompleted.length > 0) {
+      output += '\n\n## Recently Completed\n';
+      for (const d of watcherStatus.recentlyCompleted.slice(0, 5)) {
+        const icon = d.type === 'movie' ? '🎬' : '📺';
+        const size = d.size ? ` (${d.size})` : '';
+        output += `${icon} ${d.title}${size}\n`;
+      }
+    }
+  } catch {
+    // Watcher not available
   }
 
   return { success: true, output, duration_ms: Date.now() - startTime };

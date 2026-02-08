@@ -5,6 +5,10 @@
 
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
+import { matchCommand, matchResultToParsedIntent } from './command-matcher.js';
+import { COMMAND_REGISTRY } from './command-registry.js';
+import { fuzzyMatch } from './fuzzy-matcher.js';
+import { addAlias } from './alias-store.js';
 import { parseIntent } from './parser.js';
 import { executeCommand } from './executor.js';
 import type { 
@@ -22,6 +26,23 @@ import { checkAndCompact } from './session-compactor.js';
 import { think, quickDecision } from './cognitive/index.js';
 import { getDb } from './context/db.js';
 import { seedAnnotations } from './context/layers/annotations.js';
+import { addGeneralMessage, getGeneralConversations } from './memory.js';
+import { recordTrace } from './ooda-logger.js';
+import { assembleContext, formatContextForPrompt } from './context/index.js';
+import { checkForLoop } from './behavior-tracker.js';
+import { PERSONALITY_RULES, sanitizeResponse, getMaxChars, truncateToMaxChars } from './personality.js';
+
+// Brain 2 whitelist: intents that always trigger context assembly (skip status, greeting, feedback, registry)
+const BRAIN2_WHITELIST = new Set<string>([
+  'agent_ask',
+  'homelab_install',
+  'homelab_uninstall',
+  'homelab_update',
+  'homelab_update_all',
+  'homelab_service_start',
+  'homelab_service_stop',
+  'homelab_service_restart',
+]);
 
 // Initialize 6-layer context system
 try {
@@ -37,6 +58,10 @@ loadWorkflows().catch(err => logger.warn('Failed to load workflows', { error: St
 
 // Compaction check counter (run every N messages)
 let messagesSinceCompactionCheck = 0;
+
+// Pending fuzzy confirmation: sender -> { originalPhrase, suggestion, timestamp }
+const pendingFuzzyConfirm = new Map<string, { originalPhrase: string; suggestion: string; commandId: string; timestamp: number }>();
+const PENDING_FUZZY_TTL_MS = 5 * 60 * 1000;
 
 // Cursor confirmation flag — set when a "cursor build" command produces a pending plan
 let awaitingCursorConfirmation = false;
@@ -130,7 +155,15 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
   
   logger.security.authorized(sender, 'message');
   stats.messagesToday++;
-  
+
+  // Use first line for command matching (avoids attachment suffixes breaking patterns)
+  const primaryCommand = content.trim().split(/\n\n/)[0].trim();
+  const isSelfTest = /^(?:(?:run\s+)?self\s*test|selftest|test\s+yourself|run\s+diagnostic|check\s+yourself)$/i.test(primaryCommand);
+  const selfTestCmd = COMMAND_REGISTRY.find(c => c.id === 'system.jeeves_self_test');
+  const registryMatch = isSelfTest && selfTestCmd
+    ? { commandId: selfTestCmd.id, command: selfTestCmd, action: 'jeeves_self_test' as const, params: {} as Record<string, unknown>, confidence: 1 }
+    : matchCommand(primaryCommand);
+
   // Learn from every message (non-blocking)
   import('../capabilities/self/memory-learner.js')
     .then(({ learnFromMessage }) => learnFromMessage(content))
@@ -142,6 +175,7 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
     const workflowResult = await tryExecuteWorkflow(content, activeProject?.workingDir);
     
     if (workflowResult) {
+      recordTrace({ routingPath: 'workflow', rawInput: content, action: 'workflow', success: workflowResult.success });
       logger.debug('Workflow executed', { success: workflowResult.success, tokens: workflowResult.tokensUsed });
       
       // Update stats
@@ -650,58 +684,72 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
       }
     }
 
-    // 3. Cursor commands: "cursor build X", "cursor tasks", "tell cursor to Y", etc.
-    //    Skip cognitive processing — these are explicit and unambiguous
-    const cursorFastPath = /^(?:cursor\s+(?:build|code|implement|work\s+on|tasks?|status|agents?|repos|progress|conversation|stop)|send\s+to\s+cursor|tell\s+cursor|have\s+cursor|stop\s+cursor|cancel\s+cursor|show\s+(?:me\s+)?what\s+cursor|what'?s\s+cursor)/i.test(content.trim());
-    if (cursorFastPath) {
-      logger.info('Cursor fast path — skipping cognitive layer', { content: content.substring(0, 50) });
-      const intent = await parseIntent(content);
-      if (message.attachments?.length) {
-        const imgs = message.attachments.filter(a => a.type === 'image' && a.data).map(a => ({ name: a.name || 'image', data: a.data!, mimeType: a.mimeType }));
-        if (imgs.length) intent.attachments = imgs;
-      }
-      const result = await executeCommand(intent);
+    const LLM_ROUTED_ACTIONS = ['agent_ask', 'feedback', 'approvePlan', 'rejectPlan', 'showPlan'] as const;
 
-      // If the executor created a pending cursor task, set the confirmation flag
-      if (intent.action === 'cursor_launch' && result.success) {
+    // 2c. Layer 3: Pending fuzzy confirmation — user said "yes" to "Did you mean X?"
+    const pending = pendingFuzzyConfirm.get(sender);
+    if (pending && /^(yes|y|yeah|yep|confirm|do it|run it)$/i.test(content.trim())) {
+      const age = Date.now() - pending.timestamp;
+      if (age < PENDING_FUZZY_TTL_MS) {
+        pendingFuzzyConfirm.delete(sender);
+        const resolved = matchCommand(pending.suggestion);
+        if (resolved && !LLM_ROUTED_ACTIONS.includes(resolved.action as (typeof LLM_ROUTED_ACTIONS)[number])) {
+          await addAlias(pending.originalPhrase, pending.commandId);
+          logger.info('Fuzzy confirm — executing and learned alias', { phrase: pending.originalPhrase, commandId: pending.commandId });
+          const intent = matchResultToParsedIntent(resolved);
+          const result = await executeCommand(intent as ParsedIntent);
+          stats.lastCommand = { action: resolved.action, timestamp: new Date().toISOString(), success: result.success };
+          recordTrace({ routingPath: 'registry', rawInput: content, classification: pending.commandId, confidenceScore: 1, action: String(resolved.action), success: result.success });
+          return { recipient: sender, content: formatResponse(intent as ParsedIntent, result), replyTo: message.id, attachments: result.attachments };
+        }
+      } else {
+        pendingFuzzyConfirm.delete(sender);
+      }
+    }
+
+    // 2d. Layer 2: Command registry — execute if high-confidence match and not LLM-routed
+    if (registryMatch && registryMatch.confidence >= 0.9 && !LLM_ROUTED_ACTIONS.includes(registryMatch.action as (typeof LLM_ROUTED_ACTIONS)[number])) {
+      logger.info('Registry match — executing', { commandId: registryMatch.commandId, action: registryMatch.action });
+      const intent = matchResultToParsedIntent(registryMatch);
+      if (message.attachments?.length && registryMatch.action === 'cursor_launch') {
+        const imgs = message.attachments.filter(a => a.type === 'image' && a.data).map(a => ({ name: a.name || 'image', data: a.data!, mimeType: a.mimeType }));
+        if (imgs.length) (intent as ParsedIntent & { attachments?: unknown[] }).attachments = imgs;
+      }
+      const result = await executeCommand(intent as ParsedIntent);
+      if (registryMatch.action === 'cursor_launch' && result.success) {
         awaitingCursorConfirmation = true;
         logger.info('Cursor plan created — awaiting confirmation');
       }
+      stats.lastCommand = { action: registryMatch.action, timestamp: new Date().toISOString(), success: result.success };
+      recordTrace({ routingPath: 'registry', rawInput: content, classification: registryMatch.commandId, confidenceScore: registryMatch.confidence, action: String(registryMatch.action), success: result.success });
+      return { recipient: sender, content: formatResponse(intent as ParsedIntent, result), replyTo: message.id, attachments: result.attachments };
+    }
 
-      stats.lastCommand = { action: intent.action, timestamp: new Date().toISOString(), success: result.success };
-      return { recipient: sender, content: formatResponse(intent, result), replyTo: message.id };
+    // 2e. Layer 3: Fuzzy match — "Did you mean: X?" for near-misses
+    if (!registryMatch) {
+      const fuzzy = fuzzyMatch(primaryCommand);
+      if (fuzzy) {
+        pendingFuzzyConfirm.set(sender, {
+          originalPhrase: primaryCommand,
+          suggestion: fuzzy.suggestion,
+          commandId: fuzzy.commandId,
+          timestamp: Date.now(),
+        });
+        logger.info('Fuzzy match — awaiting confirmation', { phrase: primaryCommand.substring(0, 40), suggestion: fuzzy.suggestion });
+        recordTrace({ routingPath: 'fuzzy_pending', rawInput: content, classification: fuzzy.commandId, confidenceScore: fuzzy.confidence, action: 'fuzzy_suggest' });
+        return { recipient: sender, content: `Did you mean: ${fuzzy.suggestion}? Reply yes to run.`, replyTo: message.id };
+      }
     }
 
     // ==========================================
     // CONVERSATIONAL FAST PATH
     // ==========================================
-    // Detect casual conversation, feedback, meta-discussion, compliments, etc.
-    // Respond naturally as Jeeves — skip the expensive cognitive layer entirely.
+    // Commands already consumed by registry/fuzzy. Short casual messages go to conversational LLM.
     {
       const trimmed = content.trim();
-      const lower = trimmed.toLowerCase();
-      const isConversational = (
-        // Short-to-medium messages that aren't commands
-        (trimmed.length < 300 && !/^(open|edit|fix|add|create|update|delete|run|deploy|build|push|pull|commit|install|test|scan|check|show|list|get|set|find|search)\s/i.test(trimmed)) &&
-        (
-          // Feedback / meta-conversation
-          /\b(feedback|conversation|your\s+performance|how\s+you|about\s+you|self.?assess|pretty\s+(cool|amazing|good|great|awesome)|well\s+done|good\s+job|nice\s+work|impressed|just\s+for\s+(you|reference)|for\s+your\s+records|more\s+features?\s+for\s+you|features?\s+for\s+you|added\s+.*for\s+you|built\s+.*for\s+you|made\s+.*for\s+you)\b/i.test(lower) ||
-          // Casual chat / greetings — exact match for short messages
-          /^(hey|hi|hello|yo|sup|good\s+(morning|afternoon|evening|night)|cheers|nice(\s+one)?|cool|great|awesome|perfect|sweet|dope|sick|brilliant|love\s+it|that'?s?\s+(it|all|great|cool|good|amazing|funny|hilarious|wild|crazy)|no\s*,?\s*that'?s?\s*(it|all|fine|good)|never\s*mind|nah|ok(ay)?|got\s+it|understood|i\s+(see|know|understand|get\s+it)|we'?re?\s+(good|done|all\s+set)|do\s+it|[?!.]+)\s*[.!?]*$/i.test(lower) ||
-          // Conversational starters — prefix match (allows trailing content)
-          /^(thanks|thank\s+you|haha|lol|wow|damn|how'?s?\s+it\s+going|how\s+are\s+you|how\s+you\s+doing|h\w{0,2}\s+are\s+you|what'?s?\s+up|just\s+wanted\s+to|you\s+(busy|free|there|around|available)|what\s+(have\s+you\s+been|are\s+you)\s+up\s+to|man\s+what\s+a)/i.test(lower) ||
-          // Opinions / reflections (not commands) — expanded for "i'm ..."
-          /^(i\s+(think|feel|believe|love|hate|like|prefer|wish|wonder|just)|i'?m\s+(thinking|feeling|wondering|considering|curious|excited|tired|done|happy|glad)|that\s+(is|was|looks?|seems?|feels?)|this\s+(is|was)|it'?s?\s+(pretty|really|very|quite|so)|what\s+do\s+you\s+think|how\s+do\s+you\s+feel)/i.test(lower) ||
-          // Questions about Jeeves itself
-          /\b(are\s+you|do\s+you|can\s+you\s+(feel|think|learn)|what\s+are\s+you|who\s+are\s+you|tell\s+me\s+about\s+yourself)\b/i.test(lower) ||
-          // Chat intent — wants to talk, not execute a command
-          /\b(just\s+want(ed)?\s+to\s+(chat|talk|say|check\s+in|catch\s+up|hang)|let'?s?\s+(chat|talk|catch\s+up)|how'?s?\s+(it\s+going|everything|things|your\s+day|life)|what'?s?\s+(up|new|good|happening|going\s+on)|how\s+are\s+you|you\s+good|what\s+have\s+you\s+been|been\s+up\s+to|having\s+a\s+good|you\s+there|you\s+around|you\s+busy)\b/i.test(lower) ||
-          // Casual chat about the day / coding / work (non-command chatter)
-          /\b(been\s+coding|finally\s+(done|finished)|feels?\s+good|long\s+day|what\s+a\s+(day|night|week)|so\s+tired|taking\s+a\s+break|just\s+finished)\b/i.test(lower) ||
-          // Short non-command messages (< 60 chars, no command-like structure)
-          (trimmed.length < 60 && !/[.]\s*\w/.test(trimmed) && !/^(status|help|trust|projects?|homelab|security|scout|uptime|cost|changelog|merge|approve|reject|suggest|briefing|use\s|backup|browser|dev\s|terminal|process|downloads?|queue|stacks?|containers?|docker|firewall|self.?test)/i.test(lower))
-        )
-      );
+      const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+      const casualPattern = /^(hey|hi|hello|yo|sup|thanks|thank\s+you|ok(ay)?|cool|great|nice|cheers|haha|lol|wow|good\s+(morning|afternoon|night)|(how|hwo)\s+are\s+you|what'?s\s+up|got\s+it|understood|love\s+it|never\s*mind|nah)$/i;
+      const isConversational = wordCount <= 8 && casualPattern.test(trimmed);
 
       if (isConversational) {
         logger.info('Conversational fast path', { content: trimmed.substring(0, 50) });
@@ -710,6 +758,7 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
         const { enforceBudget, recordFeatureUsage, recordLLMFailure, getFeatureMaxTokens } = await import('./cost-tracker.js');
         const budgetCheck = enforceBudget('conversation');
         if (!budgetCheck.allowed) {
+          recordTrace({ routingPath: 'conversational', rawInput: trimmed, action: 'refuse', success: false });
           logger.debug('Conversational budget blocked', { reason: budgetCheck.reason });
           return { recipient: sender, content: budgetCheck.reason || 'Budget limit reached.', replyTo: message.id };
         }
@@ -721,36 +770,36 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
 
           const { text } = await generateText({
             model: provider(config.claude.haiku_model),
-            system: `You are Jeeves — a chill, sharp engineering partner who runs Matt's homelab and dev infrastructure. You talk like a relaxed senior engineer: direct, confident, minimal words, dry humor.
+            system: `${PERSONALITY_RULES}
 
-STRICT RULES (never break these):
-- NEVER use bullet points, numbered lists, headers, or any markdown formatting
-- NEVER use a dash followed by a space anywhere in your response. Use commas, semicolons, or "and" instead
-- NEVER refer to yourself as an "AI assistant", "AI", or say "as an AI". You're Jeeves
-- NEVER say "specifically designed", "core purpose", "my purpose", "I'm designed to", or "technical tasks"
-- NEVER list your capabilities or what you can help with
-- NEVER use the word "assist". Use "help" if needed
-- Keep responses to 1-2 sentences. Max 3 if the topic needs it
-- Your entire response must be under 250 characters
+Matt's actual setup (ONLY reference these, never invent others):
+- Beelink mini-PC, Intel N150, 16GB RAM, Ubuntu 24.04
+- 98GB boot drive, 1.8TB data drive
+- 23 Docker containers via docker-compose (NO Kubernetes)
+- Services: Sonarr, Radarr, Jellyfin, Prowlarr, qBittorrent, Home Assistant, Grafana, Prometheus, Traefik, Pi-hole, Nextcloud, Portainer, Paperless, Vaultwarden, Uptime Kuma, Overseerr, Tautulli, Bazarr, Lidarr, NZBGet, Redis, Postgres
+- Jeeves runs as a systemd service on the same box
+- Cursor Background Agents handle coding tasks
 
-Personality:
-- Chill but competent. You know your stuff and it shows
-- Dry humor, not forced. Modern, not theatrical
-- Call the user Matt (not sir, not boss, not buddy)
-- No roleplay actions (no *adjusts monocle*, no *raises eyebrow*, no asterisk actions)
-- Accept compliments without being weird about it
-- When asked for opinions, give real ones. Be genuine
-- When given feedback, acknowledge it naturally and briefly
-- If the message is just punctuation like "?" respond with brief confusion
-
-Context: You manage Matt's homelab, build projects, and delegate coding tasks to Cursor Background Agents.`,
-            messages: [{ role: 'user', content: trimmed }],
+- Your entire response must be under 400 characters`,
+            messages: [
+              // Inject recent conversation history for context
+              ...getGeneralConversations(8).map(m => ({
+                role: m.role as 'user' | 'assistant',
+                content: m.content
+              })),
+              { role: 'user' as const, content: trimmed }
+            ],
             maxTokens: getFeatureMaxTokens('conversation'),
           });
 
           recordFeatureUsage('conversation', 0.001); // ~200 tokens Haiku ≈ $0.001
+          recordTrace({ routingPath: 'conversational', rawInput: trimmed, action: 'chat', success: true, modelUsed: 'haiku' });
           stats.lastCommand = { action: 'conversation', timestamp: new Date().toISOString(), success: true };
-          return { recipient: sender, content: text, replyTo: message.id };
+          // Save both sides to conversation history
+          addGeneralMessage('user', trimmed);
+          addGeneralMessage('assistant', text);
+          const out = text.length > 400 ? text.slice(0, 397) + '...' : text;
+          return { recipient: sender, content: out, replyTo: message.id };
         } catch (err) {
           recordLLMFailure();
           logger.debug('Conversational response failed, falling through', { error: String(err) });
@@ -766,6 +815,7 @@ Context: You manage Matt's homelab, build projects, and delegate coding tasks to
     // Quick decision for trivial/dangerous requests
     const quickResult = quickDecision(content);
     if (quickResult && quickResult.action === 'refuse') {
+      recordTrace({ routingPath: 'cognitive', rawInput: content, action: 'refuse', success: false, modelUsed: 'haiku' });
       logger.debug('Quick refuse', { reason: quickResult.response });
       return {
         recipient: sender,
@@ -773,15 +823,19 @@ Context: You manage Matt's homelab, build projects, and delegate coding tasks to
         replyTo: message.id
       };
     }
-    
+
+    let cognitiveResult: Awaited<ReturnType<typeof think>> | null = null;
+
     // Full metacognitive processing for non-trivial requests
     if (!quickResult) {
-      const cognitiveResult = await think({
+      cognitiveResult = await think({
         message: content,
         sender,
         context: {
           projectPath: activeProject?.workingDir,
-          previousMessages: [],  // TODO: Connect to session history
+          previousMessages: getGeneralConversations(8).map(m =>
+            `${m.role}: ${m.content}`
+          ),
           activeTask: undefined  // TODO: Connect to task manager
         }
       });
@@ -800,9 +854,22 @@ Context: You manage Matt's homelab, build projects, and delegate coding tasks to
           // Check if this is actually dangerous (file deletion, force push, etc.)
           const isDangerous = /\b(rm\s+-rf|force\s+push|drop\s+table|delete\s+all|format\s+drive)\b/i.test(content);
           if (isDangerous) {
+            recordTrace({
+              routingPath: 'cognitive',
+              rawInput: content,
+              contextLoaded: cognitiveResult.contextResult?.layersIncluded ?? [],
+              tokensUsed: cognitiveResult.tokensUsed,
+              confidenceScore: cognitiveResult.confidence.overall,
+              action: 'refuse',
+              success: false,
+              totalTime: cognitiveResult.processingTime,
+            });
+            const refusalMsg = cognitiveResult.response || 'Cannot perform this action.';
+            addGeneralMessage('user', content);
+            addGeneralMessage('assistant', refusalMsg);
             return {
               recipient: sender,
-              content: cognitiveResult.response || 'Cannot perform this action.',
+              content: refusalMsg,
               replyTo: message.id
             };
           }
@@ -832,7 +899,26 @@ Context: You manage Matt's homelab, build projects, and delegate coding tasks to
     
     // Fall back to intent parsing and execution
     const intent = await parseIntent(content);
-    
+
+    // Brain 2: Assemble context for whitelisted intents (agent_ask, code_review, homelab actions)
+    if (BRAIN2_WHITELIST.has(intent.action)) {
+      try {
+        const ctxResult = await assembleContext({
+          message: content,
+          action: intent.action,
+          target: intent.target,
+          projectPath: activeProject?.workingDir,
+          model: 'sonnet', // agent_ask/code_review typically use Sonnet
+        });
+        if (ctxResult.layersIncluded.length > 0) {
+          intent.assembledContext = formatContextForPrompt(ctxResult);
+          logger.debug('Brain 2 context assembled', { layers: ctxResult.layersIncluded });
+        }
+      } catch (err) {
+        logger.debug('Context assembly skipped for whitelist intent', { error: String(err) });
+      }
+    }
+
     // Attach any image attachments from the message to the intent
     if (message.attachments && message.attachments.length > 0) {
       const imageAttachments = message.attachments
@@ -852,6 +938,32 @@ Context: You manage Matt's homelab, build projects, and delegate coding tasks to
     // Execute the command
     const result = await executeCommand(intent);
 
+    // Record OODA trace for cognitive or normal path
+    if (cognitiveResult) {
+      recordTrace({
+        routingPath: 'cognitive',
+        rawInput: content,
+        contextLoaded: cognitiveResult.contextResult?.layersIncluded ?? [],
+        tokensUsed: cognitiveResult.tokensUsed,
+        classification: String(intent.action),
+        confidenceScore: cognitiveResult.confidence.overall,
+        action: String(intent.action),
+        success: result.success,
+        totalTime: cognitiveResult.processingTime,
+        modelUsed: 'haiku',
+        loopCount: 1,
+      });
+    } else {
+      recordTrace({
+        routingPath: 'normal',
+        rawInput: content,
+        classification: String(intent.action),
+        confidenceScore: intent.confidence ?? 0.8,
+        action: String(intent.action),
+        success: result.success,
+      });
+    }
+
     // Record decision for Digital Twin learning
     try {
       const { recordDecision } = await import('../capabilities/twin/decision-recorder.js');
@@ -859,7 +971,7 @@ Context: You manage Matt's homelab, build projects, and delegate coding tasks to
     } catch {
       // Decision recording is optional
     }
-    
+
     // Update stats
     stats.lastCommand = {
       action: intent.action,
@@ -868,7 +980,37 @@ Context: You manage Matt's homelab, build projects, and delegate coding tasks to
     };
     
     // Format and return response
-    const response = formatResponse(intent, result);
+    let response = formatResponse(intent, result);
+
+    // Sanitize: log banned phrases (personality injection check)
+    response = sanitizeResponse(response);
+
+    // Apply length limit for LLM responses (agent_ask, conversational fallback)
+    const maxChars = getMaxChars(intent.action, false);
+    response = truncateToMaxChars(response, maxChars);
+
+    // Loop detection: if same response 3+ times in last 5, replace with breaker
+    const loopResult = checkForLoop(response);
+    if (loopResult.isLoop && loopResult.response) {
+      response = loopResult.response;
+      try {
+        const { recordLearning } = await import('./context/layers/learnings.js');
+        recordLearning({
+          category: 'loop_detected',
+          trigger: content.substring(0, 200),
+          rootCause: 'same_response_repeated',
+          fix: 'break_loop',
+          lesson: 'User received same response 3+ times; breaker fired.',
+          appliesTo: 'general',
+        });
+      } catch {
+        /* learnings optional */
+      }
+    }
+
+    // Save both sides to conversation history
+    addGeneralMessage('user', content);
+    addGeneralMessage('assistant', response);
     
     // Periodically check for session compaction
     messagesSinceCompactionCheck++;
@@ -883,7 +1025,8 @@ Context: You manage Matt's homelab, build projects, and delegate coding tasks to
     return {
       recipient: sender,
       content: response,
-      replyTo: message.id
+      replyTo: message.id,
+      attachments: result.attachments
     };
     
   } catch (error) {

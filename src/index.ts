@@ -78,6 +78,9 @@ async function main() {
   webInterface.onMessage(messageHandler);
   registerInterface(webInterface);
   await webInterface.start();
+  if (config.voice?.enabled) {
+    logger.info('Voice tablet interface available at /voice and /voice/test');
+  }
 
   // Register mock interface for testing
   mockInterface.onMessage(messageHandler);
@@ -169,17 +172,19 @@ async function main() {
         const { addTimelineEvent } = await import('./capabilities/timeline/timeline.js');
         addTimelineEvent('scheduler', 'system', `Disk health check: ${report.summary}`, report.overallHealthy ? 'info' : 'warning');
         if (!report.overallHealthy && signalInterface.isAvailable()) {
-          const { shouldSendNow, queueNotification } = await import('./capabilities/notifications/quiet-hours.js');
-          const msg = `⚠️ Disk health alert: ${report.summary}`;
-          if (shouldSendNow('critical')) {
-            await signalInterface.send({ recipient: getOwnerNumber(), content: msg });
-          } else {
-            queueNotification(msg, 'critical', 'disk-health');
+          const { isMuted, shouldSendNow, queueNotification } = await import('./capabilities/notifications/quiet-hours.js');
+          if (!isMuted()) {
+            const msg = `⚠️ Disk health alert: ${report.summary}`;
+            if (shouldSendNow('critical')) {
+              await signalInterface.send({ recipient: getOwnerNumber(), content: msg });
+            } else {
+              queueNotification(msg, 'critical', 'disk-health');
+            }
           }
         }
       } catch { /* ignore */ }
     });
-    addSchedule('Daily disk health', '0 6 * * *', 'disk_health_check');
+    addSchedule('Daily disk health', '06:00', 'disk_health_check');
 
     // Weekly Docker cleanup
     registerHandler('docker_cleanup', async () => {
@@ -190,7 +195,7 @@ async function main() {
         addTimelineEvent('scheduler', 'system', `Docker cleanup: ${result.message}`, 'info');
       } catch { /* ignore */ }
     });
-    addSchedule('Weekly Docker cleanup', '0 3 * * 0', 'docker_cleanup');
+    addSchedule('Weekly Docker cleanup', '03:00:0', 'docker_cleanup'); // Sunday 3am
 
     // Daily container log scan
     registerHandler('log_error_scan', async () => {
@@ -203,7 +208,7 @@ async function main() {
         }
       } catch { /* ignore */ }
     });
-    addSchedule('Daily log error scan', '0 7 * * *', 'log_error_scan');
+    addSchedule('Daily log error scan', '07:00', 'log_error_scan');
 
     // Daily SSL cert check
     registerHandler('ssl_cert_check', async () => {
@@ -212,17 +217,19 @@ async function main() {
         const report = await checkCertificates();
         const expiring = report.certs.filter(c => c.status !== 'ok');
         if (expiring.length > 0 && signalInterface.isAvailable()) {
-          const { shouldSendNow, queueNotification } = await import('./capabilities/notifications/quiet-hours.js');
-          const msg = `🔒 SSL alert: ${expiring.map(c => `${c.domain} (${c.daysLeft}d)`).join(', ')}`;
-          if (shouldSendNow('critical')) {
-            await signalInterface.send({ recipient: getOwnerNumber(), content: msg });
-          } else {
-            queueNotification(msg, 'critical', 'ssl-monitor');
+          const { isMuted, shouldSendNow, queueNotification } = await import('./capabilities/notifications/quiet-hours.js');
+          if (!isMuted()) {
+            const msg = `🔒 SSL alert: ${expiring.map(c => `${c.domain} (${c.daysLeft}d)`).join(', ')}`;
+            if (shouldSendNow('critical')) {
+              await signalInterface.send({ recipient: getOwnerNumber(), content: msg });
+            } else {
+              queueNotification(msg, 'critical', 'ssl-monitor');
+            }
           }
         }
       } catch { /* ignore */ }
     });
-    addSchedule('Daily SSL cert check', '0 8 * * *', 'ssl_cert_check');
+    addSchedule('Daily SSL cert check', '08:00', 'ssl_cert_check');
 
     // Daily image update check
     registerHandler('image_update_check', async () => {
@@ -233,7 +240,7 @@ async function main() {
         addTimelineEvent('scheduler', 'system', `Image update check: ${result.message}`, 'info');
       } catch { /* ignore */ }
     });
-    addSchedule('Daily image update check', '0 9 * * *', 'image_update_check');
+    addSchedule('Daily image update check', '09:00', 'image_update_check');
 
     // Daily speed test
     registerHandler('speed_test', async () => {
@@ -246,15 +253,16 @@ async function main() {
         }
       } catch { /* ignore */ }
     });
-    addSchedule('Daily speed test', '0 12 * * *', 'speed_test');
+    addSchedule('Daily speed test', '12:00', 'speed_test');
 
     // Custom schedule executor (runs every minute to check if any custom schedules are due)
     registerHandler('custom_schedule_check', async () => {
       try {
         const { getSchedulesDueNow } = await import('./capabilities/scheduler/custom-schedules.js');
         const due = getSchedulesDueNow();
+        const { isMuted } = await import('./capabilities/notifications/quiet-hours.js');
         for (const schedule of due) {
-          if (signalInterface.isAvailable()) {
+          if (!isMuted() && signalInterface.isAvailable()) {
             await signalInterface.send({
               recipient: getOwnerNumber(),
               content: `📋 Scheduled: ${schedule.action}`,
@@ -270,8 +278,9 @@ async function main() {
       try {
         const { isQuietHours, flushQueue } = await import('./capabilities/notifications/quiet-hours.js');
         if (!isQuietHours()) {
+          const { isMuted } = await import('./capabilities/notifications/quiet-hours.js');
           const queued = flushQueue();
-          if (queued.length > 0 && signalInterface.isAvailable()) {
+          if (queued.length > 0 && !isMuted() && signalInterface.isAvailable()) {
             const summary = queued.map(n => n.message).join('\n');
             await signalInterface.send({
               recipient: getOwnerNumber(),
@@ -303,14 +312,21 @@ async function main() {
           : '';
         const message = `${icon} Download complete: ${download.title}${size}${duration}`;
         try {
-          const { shouldSendNow, queueNotification } = await import('./capabilities/notifications/quiet-hours.js');
-          if (shouldSendNow('normal')) {
-            await signalInterface.send({ recipient: getOwnerNumber(), content: message });
-          } else {
-            queueNotification(message, 'normal', 'download-watcher');
+          const { isMuted, shouldSendNow, queueNotification } = await import('./capabilities/notifications/quiet-hours.js');
+          if (!isMuted()) {
+            if (shouldSendNow('normal')) {
+              await signalInterface.send({ recipient: getOwnerNumber(), content: message });
+            } else {
+              queueNotification(message, 'normal', 'download-watcher');
+            }
           }
         } catch {
           await signalInterface.send({ recipient: getOwnerNumber(), content: message });
+        }
+        if (config.voice?.enabled) {
+          import('./integrations/voice/voice-server.js').then(({ broadcastVoiceNotification }) => {
+            broadcastVoiceNotification({ message, priority: 'normal', title: 'Download' });
+          }).catch(() => {});
         }
         // Log to timeline
         try {
@@ -328,12 +344,25 @@ async function main() {
         const { addTimelineEvent } = await import('./capabilities/timeline/timeline.js');
         addTimelineEvent('download-watcher', 'download', `Stall: ${download.title} — ${action}`, 'warning');
       } catch { /* skip */ }
-      // Notify via Signal for restarts
+      // Notify via Signal for restarts (respects mute)
       if (download.restarted && signalInterface.isAvailable()) {
-        await signalInterface.send({
-          recipient: getOwnerNumber(),
-          content: `⚠️ ${action}`,
-        });
+        const stallMessage = `⚠️ ${action}`;
+        try {
+          const { isMuted } = await import('./capabilities/notifications/quiet-hours.js');
+          if (!isMuted()) {
+            await signalInterface.send({
+              recipient: getOwnerNumber(),
+              content: stallMessage,
+            });
+          }
+        } catch {
+          await signalInterface.send({ recipient: getOwnerNumber(), content: stallMessage });
+        }
+        if (config.voice?.enabled) {
+          import('./integrations/voice/voice-server.js').then(({ broadcastVoiceNotification }) => {
+            broadcastVoiceNotification({ message: stallMessage, priority: 'high', title: 'Download' });
+          }).catch(() => {});
+        }
       }
     });
 
@@ -354,10 +383,17 @@ async function main() {
     const { initReminders, setReminderCallback } = await import('./capabilities/reminders/reminders.js');
     setReminderCallback(async (message: string) => {
       if (signalInterface.isAvailable()) {
-        await signalInterface.send({
-          recipient: getOwnerNumber(),
-          content: message,
-        });
+        try {
+          const { isMuted } = await import('./capabilities/notifications/quiet-hours.js');
+          if (!isMuted()) {
+            await signalInterface.send({
+              recipient: getOwnerNumber(),
+              content: message,
+            });
+          }
+        } catch {
+          await signalInterface.send({ recipient: getOwnerNumber(), content: message });
+        }
       }
     });
     initReminders();

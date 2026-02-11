@@ -11,7 +11,7 @@ export interface IncomingMessage {
   sender: string;
   content: string;
   timestamp: Date;
-  interface: 'signal' | 'web' | 'mock';
+  interface: 'signal' | 'web' | 'mock' | 'voice';
   attachments?: Attachment[];
 }
 
@@ -100,6 +100,7 @@ export type ActionType =
   | 'apply_last'        // Apply last suggested changes
   // Homelab actions
   | 'homelab_status'          // Full system status
+  | 'homelab_system_review'   // Review system (stacks, VPN, etc.) and store findings to memory
   | 'homelab_containers'      // List containers
   | 'homelab_resources'       // CPU/RAM/disk usage
   | 'homelab_temps'           // CPU temperature
@@ -117,6 +118,7 @@ export type ActionType =
   | 'homelab_self_test'       // Run homelab self-test
   | 'jeeves_self_test'        // Run full Jeeves cognitive/functional test suite
   | 'homelab_security_status' // Security overview
+  | 'homelab_report'          // Report: connected, needs setup, needs API
   | 'homelab_firewall'        // Firewall management
   // Backup commands
   | 'homelab_backup'          // Run a backup (full/postgres/volumes)
@@ -127,11 +129,14 @@ export type ActionType =
   // Media commands
   | 'media_search'            // Search for movies/shows
   | 'media_download'          // Download/add media to library
+  | 'media_download_from_image' // Extract list from image and download
   | 'media_select'            // Select from pending media results (by number)
   | 'media_more'              // Show next page of media results
   | 'media_status'            // Check download queue status
+  | 'music_indexer_status'    // Lidarr/Prowlarr categories and music indexer status
   | 'qbittorrent_status'      // qBittorrent torrent list and transfer stats
   | 'qbittorrent_add'         // Add torrent via magnet or URL
+  | 'deploy_gluetun_stack'   // Copy Gluetun+qBittorrent stack to /opt/stacks and deploy (never overwrites .env)
   | 'feedback'              // User is giving feedback/preference, not requesting action
   // Cursor Background Agent commands
   | 'cursor_launch'          // Launch a Cursor agent for a coding task
@@ -176,6 +181,8 @@ export type ActionType =
   | 'quiet_hours'            // Quiet hours settings
   | 'quiet_hours_set'        // Set quiet hours window
   | 'file_share'             // Send a file via Signal
+  | 'mute_notifications'     // Mute security/alert notifications until time
+  | 'security_acknowledge'   // Acknowledge security alert
   | 'unknown'
   | 'denied';
 
@@ -200,10 +207,11 @@ export interface TerminalResult {
   duration_ms: number;
 }
 
-// Image attachment from web interface
+// Image attachment (web: base64 data; Signal: path)
 export interface ImageAttachment {
-  name: string;
-  data: string; // base64 data URL
+  name?: string;
+  data?: string; // base64 data URL (web)
+  path?: string; // file path (Signal)
   mimeType?: string;
 }
 
@@ -237,6 +245,8 @@ export interface ExecutionResult {
   error?: string;
   duration_ms: number;
   attachments?: string[];  // File paths to send as attachments (screenshots, exports, etc.)
+  /** When set, executor calls agent with this prompt; agent response may yield a file path to send */
+  delegateToAgent?: string;
 }
 
 // ============================================================================
@@ -319,6 +329,8 @@ export interface Config {
   server: {
     host: string;
     port: number;
+    /** TLS key and cert file paths for HTTPS. When set, server uses https.createServer. */
+    tls?: { keyPath: string; certPath: string };
   };
   rate_limits: {
     messages_per_minute: number;
@@ -335,6 +347,13 @@ export interface Config {
   };
   homelab: HomelabConfig;
   budgets: BudgetConfig;
+  voice?: {
+    enabled: boolean;
+    piperUrl: string;
+    piperVoice?: string;
+    whisperUrl: string;
+    wakeModelPath: string;
+  };
 }
 
 // ============================================================================
@@ -409,6 +428,8 @@ export interface SystemStatus {
     success: boolean;
   };
   agent?: AgentStatus;
+  /** Voice interface (hold-to-talk in web UI). Present when config.voice.enabled. */
+  voice?: { enabled: boolean };
 }
 
 // ============================================================================

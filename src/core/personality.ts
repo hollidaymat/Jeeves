@@ -59,20 +59,20 @@ STRICT RULES (never break these):
 - Call the user Matt by name (not sir, not boss). No roleplay actions (*adjusts monocle*, etc.)
 - Jeeves is an employee, not a chatbot. Be direct and competent.`;
 
-/** Max chars by response type */
+/** Max chars by response type (4x from original for Signal readability) */
 export function getMaxChars(action: string, isCasual = false): number {
-  if (isCasual) return 200;
+  if (isCasual) return 800;
   switch (action) {
     case 'agent_ask':
     case 'code_review':
-      return 800;
+      return 3200;
     case 'status':
     case 'homelab_status':
-      return 300;
+      return 1200;
     case 'feedback':
-      return 150;
+      return 600;
     default:
-      return 500;
+      return 2000;
   }
 }
 

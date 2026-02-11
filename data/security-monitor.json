@@ -1,0 +1,5 @@
+{
+  "_comment": "alertIgnoreProjects = no Signal alerts for these; alertDowngradeProjects = project name -> max severity (medium/low/info) to send",
+  "alertIgnoreProjects": ["v0-skal-ventures-template"],
+  "alertDowngradeProjects": {}
+}

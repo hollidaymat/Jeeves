@@ -87,7 +87,13 @@ const defaultConfig: Config = {
   },
   server: {
     host: process.env.HOST || '127.0.0.1',
-    port: parseInt(process.env.PORT || '3847', 10)
+    port: parseInt(process.env.PORT || '3847', 10),
+    tls: (() => {
+      const keyPath = process.env.TLS_KEY_PATH;
+      const certPath = process.env.TLS_CERT_PATH;
+      if (!keyPath || !certPath || !existsSync(keyPath) || !existsSync(certPath)) return undefined;
+      return { keyPath, certPath };
+    })()
   },
   rate_limits: {
     messages_per_minute: 10,
@@ -122,6 +128,13 @@ const defaultConfig: Config = {
       changelog:          { maxTokens: 200, maxCallsPerPeriod: 10, periodMs: 604800000, dailyCap: 0.05 },
       cost_advisor:       { maxTokens: 300, maxCallsPerPeriod: 2,  periodMs: 604800000, dailyCap: 0.02 },
     }
+  },
+  voice: {
+    enabled: process.env.VOICE_ENABLED === 'true',
+    piperUrl: process.env.PIPER_URL || 'http://127.0.0.1:10200',
+    piperVoice: process.env.PIPER_VOICE || 'en_GB-alan-medium',
+    whisperUrl: process.env.WHISPER_URL || 'http://127.0.0.1:10300',
+    wakeModelPath: process.env.VOICE_WAKE_MODEL_PATH || resolve(ROOT_DIR, 'models', 'wake', 'hey_jeeves.onnx')
   },
   homelab: {
     enabled: false,  // Only enable on Linux homelab box
@@ -185,7 +198,10 @@ function loadConfig(): Config {
           ...defaultConfig.homelab.thresholds,
           ...((((fileConfig as Record<string, unknown>).homelab as Partial<Config['homelab']>)?.thresholds) || {})
         }
-      }
+      },
+      voice: fileConfig.voice !== undefined
+        ? { ...defaultConfig.voice!, ...(fileConfig as Record<string, unknown>).voice as Partial<Config['voice']> }
+        : defaultConfig.voice
     };
 
     return merged;

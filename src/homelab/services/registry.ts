@@ -224,6 +224,17 @@ function initRegistry(): void {
       dependencies: ['jellyfin'],
     },
     {
+      name: 'gluetun',
+      tier: 'media',
+      image: 'qmcgaw/gluetun:latest',
+      ports: [8085, 6881],
+      ramMB: parseRAM('128MB'),
+      purpose: 'VPN for download clients (torrent traffic); used with qBittorrent in gluetun-qbittorrent stack',
+      priority: 'medium',
+      dependencies: [],
+      volumes: ['gluetun_config:/gluetun', '/data/downloads:/data/downloads'],
+    },
+    {
       name: 'qbittorrent',
       tier: 'media',
       image: 'lscr.io/linuxserver/qbittorrent:latest',

@@ -151,15 +151,20 @@ export async function runMorningBriefing(): Promise<void> {
     broadcastFn('morning_briefing', { text: briefingText, generatedAt: new Date().toISOString() });
   }
 
-  // Send via Signal
+  // Send via Signal (respects mute)
   try {
-    const { signalInterface } = await import('../../interfaces/signal.js');
-    if (signalInterface.isAvailable()) {
-      await signalInterface.send({
-        recipient: getOwnerNumber(),
-        content: briefingText,
-      });
-      logger.info('Morning briefing sent via Signal');
+    const { isMuted } = await import('../notifications/quiet-hours.js');
+    if (!isMuted()) {
+      const { signalInterface } = await import('../../interfaces/signal.js');
+      if (signalInterface.isAvailable()) {
+        await signalInterface.send({
+          recipient: getOwnerNumber(),
+          content: briefingText,
+        });
+        logger.info('Morning briefing sent via Signal');
+      }
+    } else {
+      logger.debug('Skipping briefing via Signal (notifications muted)');
     }
   } catch {
     logger.debug('Could not send briefing via Signal');

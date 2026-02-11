@@ -181,15 +181,18 @@ export async function runUptimeCheck(): Promise<void> {
           logger.warn('Client site DOWN', { client: client.businessName, url, statusCode: result.statusCode });
           broadcast('uptime:site_down', alert);
 
-          // Send Signal alert
+          // Send Signal alert (respects mute)
           try {
-            const { getOwnerNumber } = await import('../../config.js');
-            const { signalInterface } = await import('../../interfaces/signal.js');
-            if (signalInterface.isAvailable()) {
-              await signalInterface.send({
-                recipient: getOwnerNumber(),
-                content: `ALERT: ${alert.message}`,
-              });
+            const { isMuted } = await import('../notifications/quiet-hours.js');
+            if (!isMuted()) {
+              const { getOwnerNumber } = await import('../../config.js');
+              const { signalInterface } = await import('../../interfaces/signal.js');
+              if (signalInterface.isAvailable()) {
+                await signalInterface.send({
+                  recipient: getOwnerNumber(),
+                  content: `ALERT: ${alert.message}`,
+                });
+              }
             }
           } catch { /* Signal not available */ }
         }

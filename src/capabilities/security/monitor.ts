@@ -40,7 +40,16 @@ import { DEFAULT_THRESHOLDS } from './types.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const EVENTS_PATH = join(__dirname, '../../../data/security-events.json');
+const MONITOR_CONFIG_PATH = join(__dirname, '../../../data/security-monitor.json');
 const MAX_PERSISTED_EVENTS = 500;
+
+/** Per-project alert overrides: ignore (no Signal) or cap severity (e.g. high -> medium). */
+interface SecurityMonitorConfig {
+  /** Project names to never send Signal alerts for (dashboard/events still updated). */
+  alertIgnoreProjects?: string[];
+  /** Project name -> max severity to send. E.g. "medium" = high is sent as medium; "low"/"info" = no Signal. */
+  alertDowngradeProjects?: Record<string, EventSeverity>;
+}
 
 // ============================================================================
 // State
@@ -71,6 +80,82 @@ function isOnCooldown(projectId: string, eventType: string): boolean {
 
 function setCooldown(projectId: string, eventType: string): void {
   alertCooldowns.set(`${projectId}:${eventType}`, Date.now());
+}
+
+// Content dedup: don't send identical messages within 5 min
+const recentSentContent = new Map<string, number>();
+const DEDUP_WINDOW_MS = 5 * 60 * 1000;
+
+const SEVERITY_ORDER: EventSeverity[] = ['info', 'low', 'medium', 'high'];
+
+function loadMonitorConfig(): SecurityMonitorConfig {
+  try {
+    if (existsSync(MONITOR_CONFIG_PATH)) {
+      return JSON.parse(readFileSync(MONITOR_CONFIG_PATH, 'utf-8')) as SecurityMonitorConfig;
+    }
+  } catch { /* ignore */ }
+  return {};
+}
+
+/** Apply ignore/downgrade from data/security-monitor.json. Returns null if alert should not be sent. */
+function applyAlertOverrides(projectName: string, severity: EventSeverity): EventSeverity | null {
+  const cfg = loadMonitorConfig();
+  const ignore = cfg.alertIgnoreProjects ?? [];
+  if (ignore.some((p) => p === projectName || projectName.toLowerCase() === p.toLowerCase())) {
+    logger.debug('[security-monitor] Skipping Signal alert (project in alertIgnoreProjects)', { project: projectName });
+    return null;
+  }
+  const downgrade = cfg.alertDowngradeProjects ?? {};
+  const maxSev = downgrade[projectName] ?? downgrade[projectName.toLowerCase()];
+  if (maxSev) {
+    const maxIdx = SEVERITY_ORDER.indexOf(maxSev);
+    const curIdx = SEVERITY_ORDER.indexOf(severity);
+    if (curIdx > maxIdx) {
+      const newSev = SEVERITY_ORDER[maxIdx];
+      logger.debug('[security-monitor] Downgrading alert severity', { project: projectName, from: severity, to: newSev });
+      severity = newSev;
+    }
+  }
+  return severity;
+}
+
+/** Send security alert to owner via Signal (proactive messaging) */
+async function sendSecurityAlertToSignal(
+  projectName: string,
+  message: string,
+  summary: string,
+  severity: EventSeverity
+): Promise<void> {
+  const effective = applyAlertOverrides(projectName, severity);
+  if (effective === null) return;
+  severity = effective;
+  if (severity !== 'high' && severity !== 'medium') return;
+  try {
+    const { isMuted } = await import('../notifications/quiet-hours.js');
+    if (isMuted()) {
+      logger.debug('[security-monitor] Skipping Signal alert (notifications muted)');
+      return;
+    }
+    const content = `🚨 ${projectName}: ${message}\n\n${summary}`;
+    const contentKey = content.slice(0, 200);
+    const lastSent = recentSentContent.get(contentKey);
+    if (lastSent && Date.now() - lastSent < DEDUP_WINDOW_MS) {
+      logger.debug('[security-monitor] Skipping duplicate alert (same content recently sent)');
+      return;
+    }
+    const { getOwnerNumber } = await import('../../config.js');
+    const { signalInterface } = await import('../../interfaces/signal.js');
+    if (signalInterface.isAvailable()) {
+      await signalInterface.send({
+        recipient: getOwnerNumber(),
+        content,
+      });
+      recentSentContent.set(contentKey, Date.now());
+      logger.info('[security-monitor] Sent Signal alert', { project: projectName, severity });
+    }
+  } catch (err) {
+    logger.debug('[security-monitor] Could not send Signal alert', { error: String(err) });
+  }
 }
 
 export function setSecurityBroadcast(fn: (type: string, payload: unknown) => void): void {
@@ -222,8 +307,8 @@ async function checkProject(projectId: string, projectName: string): Promise<voi
     status = errorRate >= thresholds.errorRate * 2 ? 'critical' : 'warning';
     threats.push(`error_rate:${errorRate.toFixed(1)}%`);
 
-    // Only create event + fire playbook if not on cooldown
-    if (!isOnCooldown(projectId, 'error_spike')) {
+    // Only create event + fire playbook if not on cooldown and user hasn't acknowledged
+    if (!isOnCooldown(projectId, 'error_spike') && !hasResolvedEventFor(projectId, 'error_spike')) {
       const severity: EventSeverity = errorRate >= thresholds.errorRate * 2 ? 'high' : 'medium';
       const event = createEvent(
         projectId,
@@ -232,9 +317,9 @@ async function checkProject(projectId: string, projectName: string): Promise<voi
         severity,
         `Error rate at ${errorRate.toFixed(1)}% (threshold: ${thresholds.errorRate}%)`,
       );
-      executePlaybook(event).catch(err =>
-        logger.error('[security-monitor] Playbook failed', { error: String(err) }),
-      );
+      executePlaybook(event)
+        .then((summary) => sendSecurityAlertToSignal(projectName, event.message, summary, severity))
+        .catch(err => logger.error('[security-monitor] Playbook failed', { error: String(err) }));
       setCooldown(projectId, 'error_spike');
       newEventsCreated = true;
     }
@@ -245,7 +330,7 @@ async function checkProject(projectId: string, projectName: string): Promise<voi
     status = 'critical';
     threats.push(`consecutive_failures:${consecutiveFailures}`);
 
-    if (!isOnCooldown(projectId, 'deploy_failed')) {
+    if (!isOnCooldown(projectId, 'deploy_failed') && !hasResolvedEventFor(projectId, 'deploy_failed')) {
       const event = createEvent(
         projectId,
         projectName,
@@ -253,9 +338,9 @@ async function checkProject(projectId: string, projectName: string): Promise<voi
         'high',
         `${consecutiveFailures} consecutive deploy failures (threshold: ${thresholds.failedDeploys})`,
       );
-      executePlaybook(event).catch(err =>
-        logger.error('[security-monitor] Playbook failed', { error: String(err) }),
-      );
+      executePlaybook(event)
+        .then((summary) => sendSecurityAlertToSignal(projectName, event.message, summary, 'high'))
+        .catch(err => logger.error('[security-monitor] Playbook failed', { error: String(err) }));
       setCooldown(projectId, 'deploy_failed');
       newEventsCreated = true;
     }
@@ -266,7 +351,7 @@ async function checkProject(projectId: string, projectName: string): Promise<voi
     if (status === 'secure') status = 'warning';
     threats.push(`p95_response:${responseTime}ms`);
 
-    if (!isOnCooldown(projectId, 'traffic_spike')) {
+    if (!isOnCooldown(projectId, 'traffic_spike') && !hasResolvedEventFor(projectId, 'traffic_spike')) {
       const event = createEvent(
         projectId,
         projectName,
@@ -274,9 +359,9 @@ async function checkProject(projectId: string, projectName: string): Promise<voi
         'medium',
         `p95 response time ${responseTime}ms exceeds threshold ${thresholds.responseTime}ms`,
       );
-      executePlaybook(event).catch(err =>
-        logger.error('[security-monitor] Playbook failed', { error: String(err) }),
-      );
+      executePlaybook(event)
+        .then((summary) => sendSecurityAlertToSignal(projectName, event.message, summary, 'medium'))
+        .catch(err => logger.error('[security-monitor] Playbook failed', { error: String(err) }));
       setCooldown(projectId, 'traffic_spike');
       newEventsCreated = true;
     }
@@ -414,6 +499,46 @@ export function getSecurityDashboard(): SecurityDashboardData {
  */
 export function getSecurityEvents(limit: number = 50): SecurityEvent[] {
   return events.slice(-limit).reverse();
+}
+
+/**
+ * Return current alert overrides (ignore/downgrade) from data/security-monitor.json.
+ * Used by dashboard to show which projects have Signal alerts suppressed or downgraded.
+ */
+export function getSecurityMonitorConfig(): SecurityMonitorConfig {
+  return loadMonitorConfig();
+}
+
+/**
+ * Mark the most recent unresolved security events as resolved (user acknowledged).
+ * Prevents re-alerting for the same ongoing condition.
+ */
+export function resolveLatestSecurityEvents(): number {
+  const oneDayAgo = Date.now() - 86_400_000;
+  let count = 0;
+  for (let i = events.length - 1; i >= 0 && count < 10; i--) {
+    const e = events[i];
+    if (!e.resolved && new Date(e.timestamp).getTime() >= oneDayAgo) {
+      e.resolved = true;
+      count++;
+    }
+  }
+  if (count > 0) {
+    persistEvents();
+    logger.info('[security-monitor] Marked security events as resolved', { count });
+  }
+  return count;
+}
+
+function hasResolvedEventFor(projectId: string, eventType: string): boolean {
+  const oneDayAgo = Date.now() - 86_400_000;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.projectId !== projectId || e.type !== eventType) continue;
+    if (new Date(e.timestamp).getTime() < oneDayAgo) break;
+    return e.resolved;
+  }
+  return false;
 }
 
 /**

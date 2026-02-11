@@ -93,6 +93,9 @@ function isAuthorized(sender: string): boolean {
   // Web interface is always authorized (localhost only)
   if (sender === 'web') return true;
   
+  // Voice/tablet interface (hold-to-talk, Hey Jeeves from web UI)
+  if (sender === 'tablet') return true;
+  
   // Mock interface authorized for testing
   if (sender === 'mock') return true;
   
@@ -115,7 +118,8 @@ export function getSystemStatus(): SystemStatus {
     projects_loaded: getProjectIndex().projects.size,
     messages_today: stats.messagesToday,
     last_command: stats.lastCommand || undefined,
-    agent: getAgentStatus()
+    agent: getAgentStatus(),
+    voice: config.voice?.enabled ? { enabled: true } : undefined
   };
 }
 
@@ -191,7 +195,42 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
         replyTo: message.id
       };
     }
+
+    // Homelab report — run real report (getDashboardStatus + collectors), not LLM
+    const homelabReportPhrase = new RegExp('^(?:(?:give\\s+me\\s+(?:a\\s+)?|run\\s+(?:a\\s+)?)?)?(?:homelab|home\\s+lab)\\s+report|report\\s+(?:on\\s+)?(?:the\\s+)?(?:homelab|home\\s+lab)|what[\\x27]?s\\s+connected|what\\s+needs\\s+setup|what\\s+needs\\s+api\\s+added|(?:homelab|home\\s+lab)\\s+overview$', 'i').test(primaryCommand.trim());
+    if (homelabReportPhrase) {
+      logger.info('Homelab report fast path');
+      const intent: ParsedIntent = { action: 'homelab_report', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+      const result = await executeCommand(intent as ParsedIntent);
+      recordTrace({ routingPath: 'registry', rawInput: content, action: 'homelab_report', success: result.success });
+      stats.lastCommand = { action: 'homelab_report', timestamp: new Date().toISOString(), success: result.success };
+      return { recipient: sender, content: formatResponse(intent as ParsedIntent, result), replyTo: message.id, attachments: result.attachments };
+    }
     
+    // ==========================================
+    // MEDIA DOWNLOAD FROM IMAGE (screenshot/list photo)
+    // ==========================================
+    const hasImageAttachment = message.attachments?.some(a => a.type === 'image' && (a.path || a.data));
+    const downloadFromImageText = /^(?:download|get|grab|add)\s*(these|this|from\s*(?:this|the)\s*(?:list|screenshot|image|photo)?|the\s*list)?\.?$/i.test(primaryCommand.trim())
+      || /^(?:download|get|grab|add)\s*$/i.test(primaryCommand.trim())
+      || primaryCommand.trim().length === 0;
+    if (hasImageAttachment && downloadFromImageText) {
+      logger.info('Media download from image — extracting list and downloading');
+      const intent: ParsedIntent = {
+        action: 'media_download_from_image',
+        confidence: 1.0,
+        resolutionMethod: 'pattern',
+        estimatedCost: 0,
+        message: content,
+      };
+      (intent as ParsedIntent & { attachments?: Array<{ path?: string; data?: string; name?: string; mimeType?: string }> }).attachments = message.attachments!
+        .filter(a => a.type === 'image')
+        .map(a => ({ path: a.path, data: a.data, name: a.name, mimeType: a.mimeType }));
+      const result = await executeCommand(intent as ParsedIntent);
+      stats.lastCommand = { action: 'media_download_from_image', timestamp: new Date().toISOString(), success: result.success };
+      return { recipient: sender, content: formatResponse(intent as ParsedIntent, result), replyTo: message.id, attachments: result.attachments };
+    }
+
     // ==========================================
     // CURSOR AGENT FAST PATH (skip cognitive layer)
     // ==========================================
@@ -711,6 +750,30 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
     if (registryMatch && registryMatch.confidence >= 0.9 && !LLM_ROUTED_ACTIONS.includes(registryMatch.action as (typeof LLM_ROUTED_ACTIONS)[number])) {
       logger.info('Registry match — executing', { commandId: registryMatch.commandId, action: registryMatch.action });
       const intent = matchResultToParsedIntent(registryMatch);
+      // Redirect: "download these" / "download this" + image → use list from image, not search for "these"
+      const downloadTarget = String((intent as ParsedIntent).target || (registryMatch as { params?: { target?: string } }).params?.target || '').trim();
+      const isDemonstrative = /^(these|this|that|them)$/i.test(downloadTarget);
+      const hasImage = message.attachments?.some(a => a.type === 'image' && (a.path || a.data));
+      if (registryMatch.action === 'media_download' && hasImage && isDemonstrative) {
+        logger.info('Media download from image — redirecting (download these/this + image)');
+        const imageIntent: ParsedIntent = {
+          action: 'media_download_from_image',
+          confidence: 1.0,
+          resolutionMethod: 'pattern',
+          estimatedCost: 0,
+          message: content,
+        };
+        (imageIntent as ParsedIntent & { attachments?: Array<{ path?: string; data?: string; name?: string; mimeType?: string }> }).attachments = message.attachments!
+          .filter(a => a.type === 'image')
+          .map(a => ({ path: a.path, data: a.data, name: a.name, mimeType: a.mimeType }));
+        const result = await executeCommand(imageIntent as ParsedIntent);
+        stats.lastCommand = { action: 'media_download_from_image', timestamp: new Date().toISOString(), success: result.success };
+        return { recipient: sender, content: formatResponse(imageIntent as ParsedIntent, result), replyTo: message.id, attachments: result.attachments };
+      }
+      if (registryMatch.action === 'media_download' && !hasImage && isDemonstrative) {
+        const help = "Send the list as a photo in the same message as “download these” so I can read it and add the items.";
+        return { recipient: sender, content: help, replyTo: message.id };
+      }
       if (message.attachments?.length && registryMatch.action === 'cursor_launch') {
         const imgs = message.attachments.filter(a => a.type === 'image' && a.data).map(a => ({ name: a.name || 'image', data: a.data!, mimeType: a.mimeType }));
         if (imgs.length) (intent as ParsedIntent & { attachments?: unknown[] }).attachments = imgs;
@@ -780,7 +843,7 @@ Matt's actual setup (ONLY reference these, never invent others):
 - Jeeves runs as a systemd service on the same box
 - Cursor Background Agents handle coding tasks
 
-- Your entire response must be under 400 characters`,
+- Your entire response must be under 1600 characters`,
             messages: [
               // Inject recent conversation history for context
               ...getGeneralConversations(8).map(m => ({
@@ -798,7 +861,7 @@ Matt's actual setup (ONLY reference these, never invent others):
           // Save both sides to conversation history
           addGeneralMessage('user', trimmed);
           addGeneralMessage('assistant', text);
-          const out = text.length > 400 ? text.slice(0, 397) + '...' : text;
+          const out = text.length > 1600 ? text.slice(0, 1597) + '...' : text;
           return { recipient: sender, content: out, replyTo: message.id };
         } catch (err) {
           recordLLMFailure();

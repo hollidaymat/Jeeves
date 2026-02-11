@@ -1,0 +1,83 @@
+:root {
+  --bg-primary: #0a0e27;
+  --bg-secondary: #0d1117;
+  --bg-card: #161b22;
+  --border: #1a2332;
+  --cyan: #00e5ff;
+  --cyan-glow: 0 0 10px rgba(0, 229, 255, 0.3);
+  --green: #00ff88;
+  --red: #ff4444;
+  --yellow: #ffaa00;
+  --purple: #a855f7;
+  --text-primary: #e0e0e0;
+  --text-secondary: #8b949e;
+  --font-mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.status {
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.status.idle { color: var(--cyan); border: 1px solid var(--cyan); box-shadow: var(--cyan-glow); }
+.status.listening { color: var(--green); border: 1px solid var(--green); box-shadow: 0 0 10px rgba(0, 255, 136, 0.3); animation: pulse 1.5s ease-in-out infinite; }
+.status.processing { color: var(--yellow); border: 1px solid var(--yellow); box-shadow: 0 0 10px rgba(255, 170, 0, 0.3); animation: pulse 0.8s ease-in-out infinite; }
+.status.speaking { color: var(--purple); border: 1px solid var(--purple); box-shadow: 0 0 10px rgba(168, 85, 247, 0.3); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+.bubble { padding: 12px 16px; border-radius: 8px; margin: 8px 0; max-width: 85%; font-size: 15px; line-height: 1.5; }
+.bubble.user { background: var(--bg-card); border: 1px solid var(--cyan); color: var(--cyan); margin-left: auto; text-align: right; }
+.bubble.jeeves { background: var(--bg-card); border: 1px solid var(--border); color: var(--text-primary); }
+.stat-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; text-align: center; }
+.stat-card .value { font-size: 24px; font-weight: bold; color: var(--cyan); }
+.stat-card .label { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; }
+.service { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
+.service .dot { width: 8px; height: 8px; border-radius: 50%; }
+.service .dot.healthy { background: var(--green); }
+.service .dot.unhealthy { background: var(--red); }
+.service .dot.unknown { background: var(--yellow); }
+.command-input {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 15px;
+  width: 100%;
+}
+.command-input:focus { outline: none; border-color: var(--cyan); box-shadow: var(--cyan-glow); }
+button, .command-input { min-height: 48px; }
+.cmd-btn { background: var(--bg-card); border: 1px solid var(--cyan); color: var(--cyan); padding: 10px 16px; border-radius: 6px; font-family: inherit; cursor: pointer; }
+.cmd-btn:hover { background: rgba(0, 229, 255, 0.1); }
+.main-layout { display: grid; gap: 1px; height: 100vh; }
+.header { padding: 8px 16px; display: flex; justify-content: space-between; align-items: center; background: var(--bg-secondary); border-bottom: 1px solid var(--border); }
+.conversation-panel { overflow-y: auto; padding: 12px; }
+.dashboard-panel { overflow-y: auto; padding: 12px; background: var(--bg-secondary); }
+.footer { padding: 8px 16px; background: var(--bg-secondary); border-top: 1px solid var(--border); font-size: 12px; color: var(--text-secondary); }
+.wake-indicator { width: 80px; height: 80px; border-radius: 50%; border: 2px solid var(--cyan); display: flex; align-items: center; justify-content: center; margin: 12px auto; transition: all 0.3s ease; }
+[data-state="listening"] .wake-indicator { border-color: var(--green); transform: scale(1.1); }
+[data-state="processing"] .wake-indicator { border-color: var(--yellow); }
+[data-state="speaking"] .wake-indicator { border-color: var(--purple); }
+@media (orientation: landscape) {
+  .main-layout { grid-template-columns: 1fr 280px; grid-template-rows: 48px 1fr 40px; }
+  .header, .footer { grid-column: 1 / -1; }
+  .conversation-panel { grid-column: 1; grid-row: 2; }
+  .dashboard-panel { grid-column: 2; grid-row: 2; }
+}
+@media (orientation: portrait) {
+  .main-layout { grid-template-rows: 44px 1fr 44px; }
+  .dashboard-panel { display: none; }
+  .conversation-panel { grid-row: 2; }
+}

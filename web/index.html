@@ -37,6 +37,7 @@
       <button class="tab-btn" data-tab="clients">CLIENTS</button>
       <button class="tab-btn" data-tab="security">SECURITY</button>
       <button class="tab-btn" data-tab="scout">SCOUT</button>
+      <button class="tab-btn" data-tab="notes">NOTES</button>
     </nav>
 
     <!-- ============================================================ -->
@@ -127,6 +128,34 @@
               <button class="cmd-btn agent-btn" data-command="agent status">STATUS</button>
               <button class="cmd-btn agent-btn danger" id="agent-stop-btn" data-command="agent stop" disabled>STOP</button>
             </div>
+          </section>
+
+          <!-- Voice (when enabled) -->
+          <section class="panel voice-panel" id="voice-panel" style="display: none;">
+            <div class="panel-header">
+              <h2>VOICE</h2>
+              <span class="voice-status" id="voice-status">—</span>
+            </div>
+            <div class="voice-mic-row">
+              <label class="voice-mic-label">Microphone</label>
+              <select id="voice-mic-select" class="voice-mic-select" title="Choose which microphone to use for voice">
+                <option value="">Default (system)</option>
+              </select>
+            </div>
+            <div class="voice-hold-row">
+              <button type="button" class="voice-hold-btn" id="voice-hold-btn" title="Hold and speak">
+                <span class="voice-hold-icon">&#127908;</span>
+                <span class="voice-hold-label">HOLD TO TALK</span>
+              </button>
+            </div>
+            <p class="voice-hint">Hold the button at least half a second while speaking, then release. Or type in the console.</p>
+            <div class="voice-wake-row">
+              <label class="voice-wake-label">
+                <input type="checkbox" id="voice-wake-toggle" title="Stream mic to server for &quot;Hey Jeeves&quot; detection">
+                <span>Listen for &quot;Hey Jeeves&quot;</span>
+              </label>
+            </div>
+            <p class="voice-hint voice-wake-hint">If voice runs without pressing the button, uncheck above (false wake). Use Hold to Talk only to avoid this.</p>
           </section>
 
           <!-- Quick Commands -->
@@ -446,6 +475,36 @@
       </div>
     </div>
 
+    <!-- ============================================================ -->
+    <!-- TAB: NOTES -->
+    <!-- ============================================================ -->
+    <div class="tab-content" data-tab="notes">
+      <div class="notes-page" id="notes-page">
+        <div class="notes-top-bar">
+          <input type="text" class="notes-search" id="notes-search" placeholder="Search notes..." autocomplete="off">
+          <button class="cmd-btn" id="notes-refresh">&#8635;</button>
+        </div>
+        <section class="panel notes-add-panel">
+          <div class="panel-header">
+            <h2>ADD NOTE</h2>
+          </div>
+          <form class="notes-add-form" id="notes-add-form">
+            <textarea id="notes-add-input" placeholder="Note content... (use #tag for tags)" rows="2"></textarea>
+            <button type="submit" class="cmd-btn">ADD</button>
+          </form>
+        </section>
+        <section class="panel notes-list-panel">
+          <div class="panel-header">
+            <h2>NOTES</h2>
+            <span class="notes-count" id="notes-count">0</span>
+          </div>
+          <div class="notes-list" id="notes-list">
+            <div class="no-changes">No notes yet. Add one above or say "add a note that ..." in the console.</div>
+          </div>
+        </section>
+      </div>
+    </div>
+
     <!-- Footer -->
     <footer class="footer">
       <div class="footer-left">
@@ -459,6 +518,6 @@
     </footer>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=voice7"></script>
 </body>
 </html>

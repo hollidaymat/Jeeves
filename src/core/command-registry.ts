@@ -38,10 +38,12 @@ export const COMMAND_REGISTRY: Command[] = [
     id: 'system.status',
     patterns: [
       /^(status|how are you|what'?s your status|system status|health|ping)$/i,
+      /^(give me (a )?)?(status|voice) (update|report)?$/i,
+      /^(what'?s? (the )?)?(status|(our )?system status)/i,
     ],
     aliases: [],
     action: 'status',
-    examples: ['status', 'system status', 'health', 'ping'],
+    examples: ['status', 'give me a status update', 'give me a voice update', 'health', 'ping'],
     category: 'system',
   },
   {
@@ -211,28 +213,28 @@ export const COMMAND_REGISTRY: Command[] = [
   // --- NOTES ---
   {
     id: 'notes.add',
-    patterns: [/^(?:note|save|jot|write\s+down)[:\s]+(.+)$/i],
+    patterns: [/^(?:(?:note|save|jot|write\s+down)|add\s+(?:a\s+)?note(?:\s+that)?|remember\s+that|write\s+(?:a\s+)?note|take\s+(?:a\s+)?note|make\s+(?:a\s+)?note|record(?:\s+that)?|jeeves\s+note)\s*[:\s]+(.+)$/i],
     aliases: [],
     action: 'note_add',
     extract: (match) => ({ target: match[1]?.trim() || '' }),
-    examples: ['note: printer IP is 192.168.7.55', 'save: fix auth tomorrow'],
+    examples: ['note: printer IP is 192.168.7.55', 'add a note that VPN env is in .env', 'remember that the backup runs at 2am'],
     category: 'notes',
   },
   {
     id: 'notes.list',
-    patterns: [/^(?:notes?|my\s+notes?|show\s+notes?|list\s+notes?)$/i],
+    patterns: [/^(?:notes?|my\s+notes?|show\s+notes?|list\s+notes?|all\s+notes?|what\s+notes?\s+(?:do\s+I\s+have|have\s+I\s+saved))$/i],
     aliases: [],
     action: 'note_list',
-    examples: ['notes', 'my notes', 'list notes'],
+    examples: ['notes', 'my notes', 'list notes', 'what notes do I have'],
     category: 'notes',
   },
   {
     id: 'notes.search',
-    patterns: [/^(?:find\s+note|search\s+notes?|notes?\s+about|what\s+did\s+I\s+save\s+about)\s+(.+)$/i],
+    patterns: [/^(?:find\s+note|search\s+notes?|notes?\s+about|notes?\s+for|look\s+up\s+note|what(?:\'s|\s+did)\s+(?:I\s+)?(?:save|write)\s+about|what\'?s\s+my\s+note\s+on)\s+(.+)$/i],
     aliases: [],
     action: 'note_search',
     extract: (match) => ({ target: match[1]?.trim() || '' }),
-    examples: ['find note printer', 'search notes backup'],
+    examples: ['find note printer', 'search notes backup', 'notes about VPN', "what's my note on backup"],
     category: 'notes',
   },
 
@@ -290,12 +292,32 @@ export const COMMAND_REGISTRY: Command[] = [
   },
   {
     id: 'schedule.quiet_hours_off',
-    patterns: [/^(?:(?:disable|turn\s+off|stop)\s+quiet\s+hours?|notifications?\s+on|dnd\s+off)$/i],
+    patterns: [/^(?:(?:disable|turn\s+off|stop)\s+quiet\s+hours?|notifications?\s+on|dnd\s+off|resume\s+notifications?)$/i],
     aliases: [],
     action: 'quiet_hours_set',
     extract: () => ({ target: 'off' }),
-    examples: ['disable quiet hours', 'dnd off'],
+    examples: ['disable quiet hours', 'dnd off', 'notifications on'],
     category: 'schedule',
+  },
+  {
+    id: 'schedule.mute_notifications',
+    patterns: [
+      /^(?:no more notifications? (?:for today|until tomorrow|today)|mute (?:all )?notifications? (?:for today|until tomorrow|today)|stop (?:all )?notifications? (?:for today|until tomorrow|today)|that'?s enough (?:for today|notifications?|today)|no (?:more )?alerts? (?:for today|until tomorrow|today))$/i,
+    ],
+    aliases: [],
+    action: 'mute_notifications',
+    examples: ['no more notifications today', 'no more notifications for today', 'mute notifications until tomorrow'],
+    category: 'schedule',
+  },
+  {
+    id: 'security.acknowledge',
+    patterns: [
+      /^(?:acknowledge (?:security )?(?:alerts?|events?)|(?:security )?alerts? (?:acknowledged|dismissed)|dismiss (?:security )?alerts?)$/i,
+    ],
+    aliases: [],
+    action: 'security_acknowledge',
+    examples: ['acknowledge security alerts', 'security alerts acknowledged', 'dismiss alerts'],
+    category: 'monitoring',
   },
 
   // --- SCHEDULES ---
@@ -324,6 +346,25 @@ export const COMMAND_REGISTRY: Command[] = [
     aliases: [],
     action: 'homelab_status',
     examples: ['homelab status', 'daemon status', "how's the server"],
+    category: 'homelab',
+  },
+  {
+    id: 'homelab.system_review',
+    patterns: [/^(?:system\s+review|review\s+(?:your\s+)?system|do\s+a\s+system\s+review|learn\s+(?:your\s+)?system|what\s+do\s+you\s+have)(?:\s+and\s+remember)?$/i],
+    aliases: [],
+    action: 'homelab_system_review',
+    examples: ['system review', 'review your system and remember', 'what do you have'],
+    category: 'homelab',
+  },
+  {
+    id: 'homelab.report',
+    patterns: [
+      new RegExp('^(?:(?:give\\s+me\\s+(?:a\\s+)?|run\\s+(?:a\\s+)?)?)?homelab\\s+report|report\\s+(?:on\\s+)?(?:the\\s+)?homelab|what[\\x27]?s\\s+connected|what\\s+needs\\s+setup|what\\s+needs\\s+api\\s+added|homelab\\s+overview$', 'i'),
+      new RegExp('^(?:(?:give\\s+me\\s+(?:a\\s+)?|run\\s+(?:a\\s+)?)?)?home\\s+lab\\s+report|report\\s+(?:on\\s+)?(?:the\\s+)?home\\s+lab|home\\s+lab\\s+overview$', 'i'),
+    ],
+    aliases: [],
+    action: 'homelab_report',
+    examples: ['homelab report', 'give me a homelab report', 'what needs setup', 'what needs API added'],
     category: 'homelab',
   },
   {
@@ -531,6 +572,14 @@ export const COMMAND_REGISTRY: Command[] = [
     category: 'media',
   },
   {
+    id: 'media.music_indexer_status',
+    patterns: [/^(?:music\s+indexer\s+status|lidarr\s+prowlarr\s+categories|music\s+indexer\s+categories|why\s+isn'?t\s+music\s+downloading|music\s+download\s+categories)$/i],
+    aliases: [],
+    action: 'music_indexer_status',
+    examples: ['music indexer status', 'lidarr prowlarr categories', 'music indexer categories'],
+    category: 'media',
+  },
+  {
     id: 'media.search',
     patterns: [/^(?:search|find|look\s*up|search\s+for)\s+(.+)/i],
     aliases: [],
@@ -599,6 +648,14 @@ export const COMMAND_REGISTRY: Command[] = [
     category: 'integrations',
   },
   {
+    id: 'homelab.deploy_gluetun',
+    patterns: [/^(?:deploy\s+gluetun|set\s+up\s+vpn\s+for\s+downloads|gluetun\s+deploy|install\s+gluetun)$/i],
+    aliases: [],
+    action: 'deploy_gluetun_stack',
+    examples: ['deploy gluetun', 'set up vpn for downloads', 'gluetun deploy'],
+    category: 'homelab',
+  },
+  {
     id: 'integrations.home_assistant',
     patterns: [
       /^(?:(?:indoor?\s+)?temp(?:erature)?s?\s*(?:inside)?|how\s+(?:hot|cold|warm)\s+is\s+it\s+inside|what'?s\s+the\s+temp(?:erature)?\s+inside)$/i,
@@ -615,11 +672,14 @@ export const COMMAND_REGISTRY: Command[] = [
   // --- FILE SHARE ---
   {
     id: 'file.share',
-    patterns: [/^(?:send\s+(?:me\s+)?(?:the\s+)?(?:file\s+)?|share\s+(?:file\s+)?)(.+?)(?:\s+file)?$/i],
+    patterns: [
+      /^(?:send\s+(?:me\s+)?(?:the\s+)?(?:file\s+)?|share\s+(?:file\s+)?)(.+?)(?:\s+file)?$/i,
+      /^(?:attach|include)\s+(.+)$/i,
+    ],
     aliases: [],
     action: 'file_share',
     extract: (match) => ({ target: match[1]?.trim() || '' }),
-    examples: ['send me /opt/stacks/jellyfin/docker-compose.yml'],
+    examples: ['send me jellyfin docker-compose', 'share the config', 'attach the output'],
     category: 'system',
   },
 ];

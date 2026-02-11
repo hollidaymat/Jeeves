@@ -211,7 +211,21 @@ function classificationToIntent(
         'stop': 'agent_stop'
       };
       
-      const mappedAction = action ? actionMap[action.toLowerCase()] : null;
+      let mappedAction = action ? actionMap[action.toLowerCase()] : null;
+      
+      // Never route to prd_approve unless there's actually a plan — otherwise agent_ask so LLM can continue
+      if (mappedAction === 'prd_approve') {
+        const prdPlan = getActivePlan();
+        const plan = getPendingPlan();
+        if ((!prdPlan?.status || prdPlan.status !== 'awaiting_approval') && !plan) {
+          return {
+            action: 'agent_ask',
+            prompt: 'yes, please proceed',
+            confidence: 0.9,
+            message: 'Approval with no pending plan — continue conversation'
+          };
+        }
+      }
       
       if (mappedAction) {
         return {
@@ -257,6 +271,8 @@ const PATTERNS = {
   
   // Homelab patterns
   homelabStatus: /^(?:daemon\s+status|homelab\s+status|server\s+status|how is the server|how'?s the (?:server|daemon|box|homelab))$/i,
+  homelabReport: /^(?:(?:give\s+me\s+(?:a\s+)?|run\s+(?:a\s+)?)?homelab\s+report|report\s+(?:on\s+)?(?:the\s+)?homelab|what'?s\s+connected|what\s+needs\s+setup|what\s+needs\s+api\s+added|homelab\s+overview)$/i,
+  homelabSystemReview: /^(?:system\s+review|review\s+(?:your\s+)?system|do\s+a\s+system\s+review|learn\s+(?:your\s+)?system|what\s+do\s+you\s+have|review\s+system\s+and\s+remember|system\s+review\s+and\s+remember|remember\s+what\s+you\s+have)(?:\s+and\s+remember)?$/i,
   homelabContainers: /^(containers|docker ps|list containers|show containers|running containers|what'?s running)$/i,
   homelabResources: /^(resources|ram|cpu|disk|memory|system resources|resource usage|how much (?:ram|memory|disk|cpu))$/i,
   homelabTemps: /^(temps?|temperature|cpu temp|how hot|thermal)$/i,
@@ -411,11 +427,12 @@ const PATTERNS = {
   bandwidthStats: /^(?:bandwidth|network\s+usage|net\s+usage|who'?s\s+(?:using|eating)\s+bandwidth)$/i,
   qbittorrentStatus: /^(?:qbittorrent|qbit|qbit\s+status|torrent\s+status|qbit\s+torrents|qbit\s+list)$/i,
   qbittorrentAdd: /^(?:add\s+torrent|add\s+to\s+qbit|qbit\s+add)\s+(.+)$/i,
+  deployGluetun: /^(?:deploy\s+gluetun|set\s+up\s+vpn\s+for\s+downloads|gluetun\s+deploy|install\s+gluetun)$/i,
 
   // ===== PRODUCTIVITY =====
-  noteAdd: /^(?:note|save|jot|write\s+down)[:\s]+(.+)$/i,
-  noteSearch: /^(?:find\s+note|search\s+notes?|notes?\s+about|what\s+did\s+I\s+save\s+about)\s+(.+)$/i,
-  noteList: /^(?:notes?|my\s+notes?|show\s+notes?|list\s+notes?)$/i,
+  noteAdd: /^(?:(?:note|save|jot|write\s+down)|add\s+(?:a\s+)?note(?:\s+that)?|remember\s+that|write\s+(?:a\s+)?note|take\s+(?:a\s+)?note|make\s+(?:a\s+)?note|record(?:\s+that)?|jeeves\s+note)\s*[:\s]+(.+)$/i,
+  noteSearch: /^(?:find\s+note|search\s+notes?|notes?\s+about|notes?\s+for|look\s+up\s+note|what(?:\'s|\s+did)\s+(?:I\s+)?(?:save|write)\s+about|what\'?s\s+my\s+note\s+on)\s+(.+)$/i,
+  noteList: /^(?:notes?|my\s+notes?|show\s+notes?|list\s+notes?|all\s+notes?|what\s+notes?\s+(?:do\s+I\s+have|have\s+I\s+saved))$/i,
   reminderSet: /^(?:remind\s+me|reminder|set\s+(?:a\s+)?reminder)\s+(.+?)(?:\s+to\s+(.+))?$/i,
   reminderList: /^(?:reminders?|my\s+reminders?|pending\s+reminders?|show\s+reminders?|list\s+reminders?)$/i,
   scheduleCreate: /^(?:every\s+.+)$/i,
@@ -506,6 +523,14 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
   // ===== HOMELAB COMMANDS (all pattern-matched, FREE) =====
   // Only match if homelab is enabled
   if (config.homelab?.enabled || process.env.HOMELAB_DEV_MODE) {
+    // System review and store to memory (check before status)
+    if (PATTERNS.homelabSystemReview.test(lower)) {
+      return { action: 'homelab_system_review', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+    // Homelab report (connected / needs setup / needs API)
+    if (PATTERNS.homelabReport.test(lower)) {
+      return { action: 'homelab_report', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
     // Status (check before general status pattern)
     if (PATTERNS.homelabStatus.test(lower)) {
       return { action: 'homelab_status', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
@@ -778,6 +803,9 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
     }
 
     // qBittorrent
+    if (PATTERNS.deployGluetun.test(lower)) {
+      return { action: 'deploy_gluetun_stack', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
     if (PATTERNS.qbittorrentStatus.test(lower)) {
       return { action: 'qbittorrent_status', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
     }
@@ -842,6 +870,11 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
     // Timeline
     if (PATTERNS.timeline.test(lower)) {
       return { action: 'timeline', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+    }
+
+    // Mute notifications for today (accept "notifications today" or "notifications for today")
+    if (/^(?:no more notifications? (?:for today|until tomorrow|today)|mute (?:all )?notifications? (?:for today|until tomorrow|today)|stop (?:all )?notifications? (?:for today|until tomorrow|today)|that'?s enough (?:for today|notifications?|today)|no (?:more )?alerts? (?:for today|until tomorrow|today))$/i.test(lower)) {
+      return { action: 'mute_notifications', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
     }
 
     // Quiet hours off
@@ -983,9 +1016,9 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
 \`lights on/off\` → Control lights
 
 **Productivity**:
-\`note: <text>\` → Save a quick note
-\`notes\` → List all notes
-\`find note <query>\` → Search notes
+\`note: <text>\` / \`add a note that <text>\` / \`remember that <text>\` → Save a note
+\`notes\` / \`my notes\` → List all notes
+\`find note <query>\` / \`search notes <query>\` → Search notes
 \`remind me in 2h to ...\` → Set a reminder
 \`reminders\` → List pending reminders
 \`every friday at 5pm ...\` → Create scheduled task

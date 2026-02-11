@@ -151,11 +151,15 @@ export async function reviewCompletedTask(
   const review = await takeVisualReview(taskId, url);
   if (!review) return null;
 
-  // Send via Signal
+  // Send via Signal (respects mute / notification-state)
   try {
+    const { isMuted } = await import('../notifications/quiet-hours.js');
+    if (isMuted()) {
+      logger.debug('Skipping visual review via Signal (notifications muted)');
+      return review;
+    }
     const { getOwnerNumber } = await import('../../config.js');
     const { signalInterface } = await import('../../interfaces/signal.js');
-    
     if (signalInterface.isAvailable()) {
       const attachments = [
         review.screenshots.desktop,

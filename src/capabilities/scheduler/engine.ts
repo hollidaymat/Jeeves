@@ -42,6 +42,23 @@ let broadcastFn: ((type: string, payload: unknown) => void) | null = null;
 
 // --- Persistence ---
 
+/** Convert legacy "0 H * * *" cron to "HH:00" (engine expects HH:MM or HH:MM:D) */
+function migrateScheduleFormat(s: ScheduleEntry): void {
+  if (typeof s.schedule !== 'string') return;
+  const str = s.schedule;
+  if (!str.includes(' ') || !str.includes('*')) return;
+  const parts = str.trim().split(/\s+/);
+  if (parts.length < 2) return;
+  const min = parseInt(parts[0], 10);
+  const hour = parseInt(parts[1], 10);
+  if (isNaN(hour) || hour < 0 || hour > 23) return;
+  const day = parts.length >= 5 && parts[4] !== '*' ? parseInt(parts[4], 10) : null;
+  s.schedule = day != null && !isNaN(day)
+    ? `${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}:${day}`
+    : `${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+  logger.debug('Migrated schedule format', { name: s.name, to: s.schedule });
+}
+
 function loadSchedules(): void {
   if (loaded) return;
   try {
@@ -49,6 +66,7 @@ function loadSchedules(): void {
       const raw = readFileSync(DATA_PATH, 'utf-8');
       const data: ScheduleData = JSON.parse(raw);
       schedules = data.schedules ?? [];
+      schedules.forEach(migrateScheduleFormat);
     }
   } catch (err) {
     logger.warn('Failed to load schedules, starting fresh', { error: String(err) });

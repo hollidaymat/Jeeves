@@ -350,12 +350,40 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     };
   }
   
+  // ===== NOTES (always available, no homelab required) =====
+  if (intent.action === 'note_add' || intent.action === 'note_list' || intent.action === 'note_search') {
+    trackPatternMatch(intent.action);
+    try {
+      const { addNote, listNotes, searchNotes, formatNotes } = await import('../capabilities/notes/scratchpad.js');
+      if (intent.action === 'note_add') {
+        const content = (intent.target || '').trim();
+        if (!content) {
+          return { success: false, error: 'Say what to save, e.g. "note: printer IP is 192.168.7.55" or "add a note that the VPN is in signal-cursor-controller/.env"', duration_ms: Date.now() - startTime };
+        }
+        const note = addNote(content);
+        return { success: true, output: `Saved note: "${note.content.substring(0, 120)}${note.content.length > 120 ? '...' : ''}"`, duration_ms: Date.now() - startTime };
+      }
+      if (intent.action === 'note_list') {
+        const notes = listNotes();
+        return { success: true, output: formatNotes(notes), duration_ms: Date.now() - startTime };
+      }
+      if (intent.action === 'note_search') {
+        const query = (intent.target || '').trim();
+        const results = query ? searchNotes(query) : listNotes();
+        return { success: true, output: formatNotes(results), duration_ms: Date.now() - startTime };
+      }
+    } catch (err) {
+      logger.error('Notes action failed', { action: intent.action, error: err });
+      return { success: false, error: `Notes failed: ${err instanceof Error ? err.message : String(err)}`, duration_ms: Date.now() - startTime };
+    }
+  }
+
   // ===== HOMELAB ACTIONS =====
   const homelabActions = [
-    'homelab_', 'media_', 'qbittorrent_', 'disk_health', 'docker_cleanup', 'log_errors',
+    'homelab_', 'media_', 'qbittorrent_', 'deploy_gluetun_stack', 'disk_health', 'docker_cleanup', 'log_errors',
     'pihole_stats', 'speed_test', 'image_updates', 'ssl_check', 'service_deps',
     'home_assistant', 'tailscale_status', 'nextcloud_', 'grafana_', 'uptime_kuma',
-    'bandwidth', 'note_', 'reminder_', 'schedule_', 'timeline', 'quiet_hours',
+    'bandwidth', 'reminder_', 'schedule_', 'timeline', 'quiet_hours', 'mute_notifications', 'security_acknowledge', 'music_indexer_status',
     'file_share',
   ];
   if (homelabActions.some(prefix => intent.action.startsWith(prefix))) {
@@ -382,7 +410,38 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     // Get current trust level for gating
     const currentTrust = getTrustLevel();
 
-    const result = await executeHomelabAction(intent, currentTrust);
+    let result = await executeHomelabAction(intent, currentTrust);
+
+    // When file_share can't resolve target, delegate to agent for context resolution
+    if (!result.success && result.delegateToAgent) {
+      try {
+        const response = await sendToAgent(result.delegateToAgent);
+        // Try to extract a file path from the agent's response
+        const pathMatch = response.match(/(\/[\w\-./]+\.?\w*)/);
+        const candidatePath = pathMatch?.[1]?.trim();
+        if (candidatePath) {
+          const { validateFileForSharing } = await import('../capabilities/file-share/file-share.js');
+          const validated = validateFileForSharing(candidatePath);
+          if (validated.valid) {
+            completeTask({ cost: 0 });
+            recordSuccess(
+              { message: intent.message || intent.action, action: intent.action, target: intent.target },
+              [intent.action, intent.target || ''].filter(Boolean)
+            ).catch(() => {});
+            return {
+              success: true,
+              output: `Sending file: ${validated.path}`,
+              attachments: [validated.path!],
+              duration_ms: Date.now() - startTime
+            };
+          }
+        }
+        // No valid path found — use agent's explanation as response
+        result = { success: true, output: response, duration_ms: Date.now() - startTime };
+      } catch (err) {
+        result = { success: false, error: `Couldn't resolve file: ${err instanceof Error ? err.message : String(err)}`, duration_ms: Date.now() - startTime };
+      }
+    }
 
     // Complete activity tracking
     if (result.success) {
@@ -405,6 +464,7 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
       success: result.success,
       output: result.output || result.error,
       error: result.error,
+      attachments: result.attachments,
       duration_ms: Date.now() - startTime
     };
   }
@@ -945,6 +1005,18 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
   }
   
   if (intent.action === 'prd_approve') {
+    const { getActivePlan } = await import('./prd-executor.js');
+    const prdPlan = getActivePlan();
+    if (!prdPlan || prdPlan.status !== 'awaiting_approval') {
+      // No PRD plan to approve — treat as continuation so LLM can proceed with what it proposed
+      const { sendToAgent } = await import('./cursor-agent.js');
+      const response = await sendToAgent('yes, please proceed', intent.attachments, intent.assembledContext);
+      return {
+        success: true,
+        output: response,
+        duration_ms: Date.now() - startTime
+      };
+    }
     const result = await approvePlan();
     return {
       success: result.success,

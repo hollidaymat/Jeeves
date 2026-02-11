@@ -1,0 +1,44 @@
+# Voice stack for Jeeves Tablet: Piper TTS + Whisper STT
+# Deploy: copy to /opt/stacks/voice/ (or similar), then docker compose up -d
+# Set PIPER_URL and WHISPER_URL in Jeeves .env to point at these (e.g. http://host:5000, http://host:10300)
+# Piper exposes Wyoming TCP on 10200 and optional HTTP on 5000; Whisper is Wyoming TCP on 10300.
+# If your Jeeves daemon expects HTTP, use a Wyoming-to-HTTP proxy for Whisper or see README.
+
+services:
+  piper-tts:
+    image: rhasspy/wyoming-piper:latest
+    container_name: piper-tts
+    restart: unless-stopped
+    ports:
+      - "10200:10200"   # Wyoming TCP
+      - "5000:5000"     # HTTP (if image exposes it)
+    volumes:
+      - piper-models:/data
+    command: >
+      --voice en_GB-alan-medium
+      --length-scale 0.95
+    # networks not required for single-host; add if using external jeeves network
+    # networks: [jeeves]
+
+  whisper-stt:
+    image: rhasspy/wyoming-whisper:latest
+    container_name: whisper-stt
+    restart: unless-stopped
+    ports:
+      - "10300:10300"
+    volumes:
+      - whisper-models:/data
+    command: >
+      --model base.en
+      --language en
+      --beam-size 1
+    # networks: [jeeves]
+
+volumes:
+  piper-models:
+  whisper-models:
+
+# Optional: uncomment if homelab uses a shared network
+# networks:
+#   jeeves:
+#     external: true

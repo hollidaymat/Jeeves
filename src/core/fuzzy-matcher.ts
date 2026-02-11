@@ -45,13 +45,21 @@ export interface FuzzyMatch {
 
 const MIN_SIMILARITY = 0.6;
 
+/** Continuation/approval words — never suggest "containers" or other commands for these. */
+const CONTINUATION_WORDS = new Set([
+  'continue', 'resume', 'proceed', 'go', 'yes', 'y', 'yeah', 'yep', 'ok', 'okay', 'sure', 'go ahead',
+  'keep going', 'go on', 'carry on', 'next', 'confirm', 'do it', 'run it',
+]);
+
 /**
  * Find best fuzzy match against command examples.
  * Returns null if no match >= MIN_SIMILARITY.
+ * Skips fuzzy for continuation words so "continue" doesn't become "Did you mean: containers?"
  */
 export function fuzzyMatch(message: string): FuzzyMatch | null {
   const trimmed = message.trim().toLowerCase();
   if (!trimmed || trimmed.length < 2) return null;
+  if (CONTINUATION_WORDS.has(trimmed)) return null;
 
   let best: { commandId: string; confidence: number; suggestion: string; bestExample: string } | null = null;
 

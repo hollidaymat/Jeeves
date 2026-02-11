@@ -159,10 +159,12 @@ export async function analyzePRImpact(
         affected: report.impacts.map(i => i.affectedProject),
       });
 
-      // Send Signal alert for high-severity impacts
+      // Send Signal alert for high-severity impacts (respects mute / notification-state)
       const highImpacts = report.impacts.filter(i => i.severity === 'high');
       if (highImpacts.length > 0) {
         try {
+          const { isMuted } = await import('../notifications/quiet-hours.js');
+          if (isMuted()) return report;
           const { getOwnerNumber } = await import('../../config.js');
           const { signalInterface } = await import('../../interfaces/signal.js');
           if (signalInterface.isAvailable()) {

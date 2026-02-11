@@ -28,5 +28,35 @@
     "commandId": "system.trust",
     "useCount": 2,
     "lastUsed": "2026-02-08T19:19:37.204Z"
+  },
+  {
+    "phrase": "No more notifications today",
+    "commandId": "schedule.mute_notifications",
+    "useCount": 2,
+    "lastUsed": "2026-02-10T12:20:11.600Z"
+  },
+  {
+    "phrase": "give me homelab status",
+    "commandId": "homelab.report",
+    "useCount": 1,
+    "lastUsed": "2026-02-11T01:50:49.575Z"
+  },
+  {
+    "phrase": "give me home lab report",
+    "commandId": "homelab.report",
+    "useCount": 1,
+    "lastUsed": "2026-02-11T01:56:24.677Z"
+  },
+  {
+    "phrase": "yes give me home lab report",
+    "commandId": "homelab.report",
+    "useCount": 1,
+    "lastUsed": "2026-02-11T01:59:33.891Z"
+  },
+  {
+    "phrase": "give me a Homelite",
+    "commandId": "homelab.report",
+    "useCount": 1,
+    "lastUsed": "2026-02-11T02:37:13.909Z"
   }
 ]

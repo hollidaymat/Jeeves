@@ -22,6 +22,7 @@ import type { ParsedIntent, ExecutionResult } from '../types/index.js';
 const TRUST_REQUIREMENTS: Record<string, number> = {
   // Read-only operations: trust level 2+ (semi-autonomous)
   homelab_status: 2,
+  homelab_system_review: 2,
   homelab_containers: 2,
   homelab_resources: 2,
   homelab_temps: 2,
@@ -30,6 +31,7 @@ const TRUST_REQUIREMENTS: Record<string, number> = {
   homelab_health: 2,
   homelab_self_test: 2,
   homelab_security_status: 2,
+  homelab_report: 2,
 
   // Service control: trust level 3+ (trusted)
   homelab_service_start: 3,
@@ -57,6 +59,7 @@ const TRUST_REQUIREMENTS: Record<string, number> = {
   media_select: 2,
   media_more: 2,
   media_status: 2,
+  music_indexer_status: 2,
 
   // System monitoring: trust level 2+ (read-only)
   disk_health: 2,
@@ -79,6 +82,7 @@ const TRUST_REQUIREMENTS: Record<string, number> = {
   bandwidth: 2,
   qbittorrent_status: 2,
   qbittorrent_add: 2,
+  deploy_gluetun_stack: 3,
 
   // Productivity: trust level 2+
   note_add: 2,
@@ -204,6 +208,9 @@ export async function executeHomelabAction(
       case 'homelab_status':
         return await handleStatus();
 
+      case 'homelab_system_review':
+        return await handleSystemReview();
+
       case 'homelab_containers':
         return await handleContainers();
 
@@ -252,6 +259,9 @@ export async function executeHomelabAction(
       case 'homelab_security_status':
         return await handleSecurityStatus();
 
+      case 'homelab_report':
+        return await handleHomelabReport();
+
       case 'homelab_firewall':
         return await handleFirewall(intent.data?.subcommand as string, intent.data?.port as number, intent.data?.proto as string);
 
@@ -275,6 +285,9 @@ export async function executeHomelabAction(
 
       case 'media_download':
         return await handleMediaDownload(serviceName);
+
+      case 'media_download_from_image':
+        return await handleMediaDownloadFromImage(intent);
 
       case 'media_select':
         return await handleMediaSelect(serviceName);
@@ -410,6 +423,18 @@ export async function executeHomelabAction(
         return { success: result.success, output: result.message, duration_ms: Date.now() - startTime };
       }
 
+      case 'deploy_gluetun_stack': {
+        const { deployGluetunStack } = await import('./gluetun-deploy.js');
+        const result = await deployGluetunStack();
+        return { success: result.success, output: result.message, duration_ms: Date.now() - startTime };
+      }
+
+      case 'music_indexer_status': {
+        const { getMusicIndexerCategoryStatus } = await import('./media/search.js');
+        const report = await getMusicIndexerCategoryStatus();
+        return { success: true, output: report, duration_ms: Date.now() - startTime };
+      }
+
       // ===== PRODUCTIVITY =====
 
       case 'note_add': {
@@ -481,12 +506,27 @@ export async function executeHomelabAction(
         return { success: true, output: formatNotificationPrefs(), duration_ms: Date.now() - startTime };
       }
 
+      case 'mute_notifications': {
+        const { setMuteUntil, getEndOfTodayISO } = await import('../capabilities/notifications/quiet-hours.js');
+        const until = getEndOfTodayISO();
+        setMuteUntil(until);
+        const untilStr = new Date(until).toLocaleString();
+        return { success: true, output: `Notifications muted until ${untilStr}. Say "notifications on" or "resume notifications" to re-enable.`, duration_ms: Date.now() - startTime };
+      }
+
+      case 'security_acknowledge': {
+        const { resolveLatestSecurityEvents } = await import('../capabilities/security/monitor.js');
+        const count = resolveLatestSecurityEvents();
+        return { success: true, output: count > 0 ? `Acknowledged ${count} security event(s). No more re-alerts for those conditions until they clear.` : 'No recent security events to acknowledge.', duration_ms: Date.now() - startTime };
+      }
+
       case 'quiet_hours_set': {
         const target = intent.target || '';
         if (target === 'off') {
-          const { disableQuietHours } = await import('../capabilities/notifications/quiet-hours.js');
+          const { disableQuietHours, setMuteUntil } = await import('../capabilities/notifications/quiet-hours.js');
           disableQuietHours();
-          return { success: true, output: 'Quiet hours disabled. Notifications will come through anytime.', duration_ms: Date.now() - startTime };
+          setMuteUntil(null);
+          return { success: true, output: 'Quiet hours disabled and notification mute cleared. Notifications will come through anytime.', duration_ms: Date.now() - startTime };
         }
         const parts = target.split('-');
         if (parts.length === 2) {
@@ -500,7 +540,14 @@ export async function executeHomelabAction(
       case 'file_share': {
         const { validateFileForSharing } = await import('../capabilities/file-share/file-share.js');
         const result = validateFileForSharing(intent.target || '');
-        if (!result.valid) return { success: false, error: result.error, duration_ms: Date.now() - startTime };
+        if (!result.valid) {
+          // Delegate to agent to resolve from context (e.g. "the config", "that file")
+          return {
+            success: false,
+            delegateToAgent: `The user wants to receive a file. They said: "${intent.message || intent.target}". I couldn't resolve "${intent.target || ''}" to a file path. From our conversation context, which file do they mean? Reply with ONLY the absolute file path (e.g. /opt/stacks/jellyfin/docker-compose.yml) if you can determine it. Otherwise briefly explain what you need.`,
+            duration_ms: Date.now() - startTime
+          };
+        }
         return { success: true, output: `Sending file: ${result.path}`, duration_ms: Date.now() - startTime, attachments: [result.path!] };
       }
 
@@ -568,6 +615,126 @@ async function handleStatus(): Promise<ExecutionResult> {
   }
 
   return { success: true, output, duration_ms: Date.now() - startTime };
+}
+
+/**
+ * Build a text report: what's connected, what needs setup, what needs API added.
+ * Uses same data as the web dashboard (registry + getDashboardStatus).
+ */
+async function handleHomelabReport(): Promise<ExecutionResult> {
+  const startTime = Date.now();
+  const { getCollectorConfigStatus, getRequiredEnvVars } = await import('./services/collectors.js');
+  const status = await getDashboardStatus();
+  if (!status.enabled) {
+    return { success: false, output: 'Homelab is not enabled (config or platform).', duration_ms: Date.now() - startTime };
+  }
+  if (!status.services || !Array.isArray(status.services)) {
+    return { success: false, output: 'Could not load service list. Check homelab config and registry.', duration_ms: Date.now() - startTime };
+  }
+
+  const services = status.services as Array<{ name: string; state: string; memUsage?: string; tier?: string }>;
+  const connected: string[] = [];
+  const needsSetup: string[] = [];
+  const needsApi: Array<{ name: string; hint: string }> = [];
+  const noIntegration: string[] = [];
+
+  for (const svc of services) {
+    const configStatus = getCollectorConfigStatus(svc.name);
+    if (svc.state !== 'running') {
+      needsSetup.push(svc.name);
+      continue;
+    }
+    connected.push(svc.memUsage ? `${svc.name} (${svc.memUsage})` : svc.name);
+    if (configStatus === 'missing_api') {
+      const hints = getRequiredEnvVars(svc.name);
+      needsApi.push({ name: svc.name, hint: hints[0] || 'Set API key in .env' });
+    } else if (configStatus === 'no_collector') {
+      noIntegration.push(svc.name);
+    }
+  }
+
+  const lines: string[] = ['## Homelab Report', ''];
+  lines.push(`**Connected (${connected.length} running):**`);
+  if (connected.length > 0) {
+    lines.push(connected.join(', '));
+  } else if (services.length > 0) {
+    lines.push('None — all services stopped.');
+  } else {
+    lines.push('No services in registry (registry may be empty).');
+  }
+  lines.push('');
+  if (needsSetup.length > 0) {
+    lines.push(`**Needs setup (${needsSetup.length} stopped/not running):**`);
+    lines.push(needsSetup.join(', '));
+    lines.push('');
+  }
+  if (needsApi.length > 0) {
+    lines.push(`**Needs API added (${needsApi.length}):**`);
+    for (const { name, hint } of needsApi) {
+      lines.push(`- ${name}: ${hint}`);
+    }
+    lines.push('');
+  }
+  if (noIntegration.length > 0) {
+    lines.push(`**Running, no Jeeves collector (${noIntegration.length}):**`);
+    lines.push(noIntegration.join(', '));
+  }
+
+  const resources = status.resources as Record<string, unknown> | null;
+  if (resources) {
+    const cpu = resources.cpu as { usagePercent?: number } | undefined;
+    const ram = resources.ram as { usedMB?: number; totalMB?: number; usagePercent?: number } | undefined;
+    if (cpu || ram) {
+      lines.push('');
+      lines.push('**System:**');
+      if (cpu?.usagePercent != null) lines.push(`CPU ${cpu.usagePercent.toFixed(0)}%`);
+      if (ram != null) lines.push(`RAM ${ram.usagePercent?.toFixed(0) ?? 0}% (${ram.usedMB ?? 0}MB / ${ram.totalMB ?? 0}MB)`);
+    }
+  }
+
+  return { success: true, output: lines.join('\n'), duration_ms: Date.now() - startTime };
+}
+
+async function handleSystemReview(): Promise<ExecutionResult> {
+  const startTime = Date.now();
+  const containerMon = await getContainerMonitor();
+  const composeMgr = await getComposeManager();
+
+  const [containers, stacks] = await Promise.all([
+    containerMon.listContainers(),
+    composeMgr.listStacks()
+  ]);
+
+  const running = containers.filter((c: { state: string }) => c.state === 'running');
+  const date = new Date().toISOString().slice(0, 10);
+  const parts: string[] = [
+    `System (as of ${date}): This host runs Docker. ${running.length}/${containers.length} containers running.`
+  ];
+  const names = running.map((c: { name: string }) => c.name);
+  if (names.length > 0 && names.length <= 15) {
+    parts.push(`Containers: ${names.join(', ')}.`);
+  } else if (names.length > 15) {
+    parts.push(`Containers (sample): ${names.slice(0, 10).join(', ')}... and ${names.length - 10} more.`);
+  }
+  if (stacks.length > 0) {
+    const stackDesc = stacks.map((s: { stackName: string; running: boolean }) =>
+      `${s.stackName} (${s.running ? 'running' : 'stopped'})`
+    );
+    parts.push(`Stacks: ${stackDesc.join('; ')}.`);
+    const hasGluetun = stacks.some((s: { stackName: string }) => s.stackName === 'gluetun-qbittorrent');
+    if (hasGluetun) {
+      parts.push('VPN stack gluetun-qbittorrent uses env from signal-cursor-controller/.env.');
+    }
+  }
+  const systemContext = parts.join(' ');
+  const { rememberPersonality } = await import('../core/trust.js');
+  const rememberResult = rememberPersonality(systemContext);
+
+  return {
+    success: true,
+    output: `System review done. ${rememberResult}\n\nStored: "${systemContext.substring(0, 200)}${systemContext.length > 200 ? '...' : ''}"`,
+    duration_ms: Date.now() - startTime
+  };
 }
 
 async function handleContainers(): Promise<ExecutionResult> {
@@ -917,14 +1084,14 @@ async function handleMediaSearch(query: string): Promise<ExecutionResult> {
   }
 
   const media = await getMediaSearch();
-  const { query: cleanQuery, season, type } = media.parseMediaQuery(query);
-  const result = await media.searchMedia(cleanQuery);
+  const parsed = media.parseMediaQuery(query);
+  const result = await media.searchMedia(parsed.query, parsed.context);
 
   if (!result.success || result.results.length === 0) {
     return { success: true, output: result.message, duration_ms: Date.now() - startTime };
   }
 
-  let output = `## Media Search: "${cleanQuery}"\n\n`;
+  let output = `## Media Search: "${parsed.query}"\n\n`;
   for (const r of result.results) {
     const icon = r.type === 'movie' ? '🎬' : '📺';
     const inLib = r.inLibrary ? ' ✅ (in library)' : '';
@@ -934,7 +1101,7 @@ async function handleMediaSearch(query: string): Promise<ExecutionResult> {
     output += `   ${r.overview}\n\n`;
   }
 
-  output += `\nSay \`download ${cleanQuery}${season !== undefined ? ` season ${season}` : ''}\` to add to library and start downloading.`;
+  output += `\nSay \`download ${parsed.query}${parsed.season !== undefined ? ` season ${parsed.season}` : ''}\` to add to library and start downloading.`;
 
   return { success: true, output, duration_ms: Date.now() - startTime };
 }
@@ -942,28 +1109,62 @@ async function handleMediaSearch(query: string): Promise<ExecutionResult> {
 async function handleMediaDownload(query: string): Promise<ExecutionResult> {
   const startTime = Date.now();
   if (!query) {
-    return { success: false, output: 'Please specify what to download. Usage: `download Breaking Bad season 3`', duration_ms: Date.now() - startTime };
+    return { success: false, output: 'Please specify what to download. Usage: `download Breaking Bad season 3` or `download Inception 2010, Dune 2021`', duration_ms: Date.now() - startTime };
   }
 
   const media = await getMediaSearch();
-  const parsed = media.parseMediaQuery(query);
-  const result = await media.addMedia(parsed.query, { season: parsed.season, type: parsed.type });
+  const { parseMediaQuery, addMedia, parseBatchDownloadInput } = media;
 
-  // Start watching this download if it was successfully added
-  if (result.success && result.title) {
-    try {
-      const { trackDownload } = await import('./media/download-watcher.js');
-      const source = parsed.type === 'movie' ? 'radarr' : 'sonarr';
-      trackDownload(result.title, parsed.type === 'movie' ? 'movie' : 'episode', source as 'sonarr' | 'radarr');
-    } catch {
-      // Watcher is optional
+  const items = parseBatchDownloadInput(query);
+  const singleItem = items.length <= 1;
+  const toAdd = singleItem ? [query.trim()] : items;
+
+  const added: string[] = [];
+  const failed: string[] = [];
+  let lastMessage = '';
+
+  for (const raw of toAdd) {
+    const parsed = parseMediaQuery(raw);
+    const result = await addMedia(parsed.query, {
+      season: parsed.season,
+      type: parsed.type,
+      context: parsed.context ? { ...parsed.context } : undefined,
+      autoSelectBest: true,
+    });
+
+    lastMessage = result.message;
+    if (result.success && result.title) {
+      added.push(result.title);
+      if (parsed.type === 'movie' || parsed.type === 'series') {
+        try {
+          const { trackDownload } = await import('./media/download-watcher.js');
+          const source = parsed.type === 'movie' ? 'radarr' : 'sonarr';
+          trackDownload(result.title, parsed.type === 'movie' ? 'movie' : 'episode', source as 'sonarr' | 'radarr');
+        } catch {
+          // Watcher is optional
+        }
+      }
+    } else {
+      failed.push(`${raw}: ${result.message}`);
     }
   }
 
-  const icon = result.success ? '✅' : '❌';
+  if (singleItem) {
+    const success = added.length > 0;
+    const icon = success ? '✅' : '❌';
+    return { success, output: `${icon} ${lastMessage}`, duration_ms: Date.now() - startTime };
+  }
+
+  const icon = added.length > 0 ? '✅' : '❌';
+  let output = added.length > 0
+    ? `Added ${added.length}: ${added.join(', ')}`
+    : 'No items added.';
+  if (failed.length > 0) {
+    output += '\n\nFailed: ' + failed.join('; ');
+  }
   return {
-    success: result.success,
-    output: `${icon} ${result.message}`,
+    success: added.length > 0,
+    output: `${icon} ${output}`,
     duration_ms: Date.now() - startTime,
   };
 }
@@ -1007,6 +1208,37 @@ async function handleMediaMore(): Promise<ExecutionResult> {
     output: result.success ? `✅ ${result.message}` : `${result.message}`,
     duration_ms: Date.now() - startTime,
   };
+}
+
+async function handleMediaDownloadFromImage(intent: { attachments?: Array<{ path?: string; data?: string }> }): Promise<ExecutionResult> {
+  const startTime = Date.now();
+  const attachments = intent.attachments;
+  if (!attachments?.length) {
+    return { success: false, output: 'No image attached. Send a screenshot or photo of a list and say "download these".', duration_ms: Date.now() - startTime };
+  }
+  const first = attachments[0];
+  // 1. Try music playlist flow (vision → JSON tracks → Lidarr)
+  const { handlePlaylistImage } = await import('../capabilities/music/playlist-image.js');
+  const playlistResult = await handlePlaylistImage({ path: first.path, data: first.data });
+  const total = playlistResult.added.length + playlistResult.notFound.length + playlistResult.existing.length;
+  if (total > 0) {
+    return {
+      success: true,
+      output: playlistResult.summary,
+      duration_ms: Date.now() - startTime,
+    };
+  }
+  // 2. Fall back to generic list (movies/TV)
+  const { extractMediaListFromImage } = await import('./media/extract-list-from-image.js');
+  const extracted = await extractMediaListFromImage({ path: first.path, data: first.data });
+  if (!extracted.success) {
+    return { success: false, output: `Could not read the image: ${extracted.message}`, duration_ms: Date.now() - startTime };
+  }
+  if (!extracted.list.trim()) {
+    return { success: true, output: extracted.message, duration_ms: Date.now() - startTime };
+  }
+  const listForBatch = extracted.list.replace(/\n+/g, '\n').trim();
+  return handleMediaDownload(listForBatch);
 }
 
 async function handleMediaStatus(): Promise<ExecutionResult> {

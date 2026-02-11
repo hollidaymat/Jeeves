@@ -43,6 +43,178 @@ class TabController {
 }
 
 // ============================================================================
+// VoiceRecorder - hold-to-talk: start() then stop() returns Promise<ArrayBuffer> (WAV)
+// Uses MediaRecorder + decodeAudioData (reliable on Chrome/Windows vs ScriptProcessor).
+// ============================================================================
+class VoiceRecorder {
+  constructor() {
+    this.sampleRate = 16000;
+    this.stream = null;
+    this.mediaRecorder = null;
+    this.recordedChunks = [];
+  }
+
+  static encodeWAV(samples, sampleRate) {
+    const buffer = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(buffer);
+    const writeStr = (offset, str) => { for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i)); };
+    writeStr(0, 'RIFF');
+    view.setUint32(4, 36 + samples.length * 2, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeStr(36, 'data');
+    view.setUint32(40, samples.length * 2, true);
+    for (let i = 0; i < samples.length; i++) {
+      const s = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    }
+    return buffer;
+  }
+
+  /** Resample to 16 kHz for server/STT (linear interpolation). */
+  static resampleTo16k(samples, fromRate) {
+    if (fromRate === 16000) return samples;
+    const outLen = Math.floor(samples.length * 16000 / fromRate);
+    const out = new Float32Array(outLen);
+    for (let i = 0; i < outLen; i++) {
+      const src = (i * fromRate) / 16000;
+      const j = Math.floor(src);
+      const t = src - j;
+      out[i] = j + 1 < samples.length
+        ? samples[j] * (1 - t) + samples[j + 1] * t
+        : samples[Math.min(j, samples.length - 1)];
+    }
+    return out;
+  }
+
+  start(deviceId) {
+    this.recordedChunks = [];
+    const constraints = { audio: { channelCount: 1 } };
+    if (deviceId && deviceId.length) constraints.audio.deviceId = { exact: deviceId };
+    return new Promise((resolve, reject) => {
+      navigator.mediaDevices.getUserMedia(constraints)
+        .then((stream) => {
+          this.stream = stream;
+          const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+          this.mediaRecorder = new MediaRecorder(stream);
+          this.mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) this.recordedChunks.push(e.data); };
+          this.mediaRecorder.start(100); // 100ms chunks so we get data even if final flush is empty (Chrome/Windows)
+          if (this.mediaRecorder.state === 'recording') resolve();
+          else this.mediaRecorder.onstart = () => resolve();
+        })
+        .catch(reject);
+    });
+  }
+
+  stop() {
+    return new Promise((resolve) => {
+      if (!this.stream || !this.mediaRecorder || this.mediaRecorder.state === 'inactive') {
+        if (this.stream) this.stream.getTracks().forEach(t => t.stop());
+        this.stream = null;
+        this.mediaRecorder = null;
+        resolve(null);
+        return;
+      }
+      const stream = this.stream;
+      this.stream = null;
+      const mime = this.mediaRecorder.mimeType || 'audio/webm';
+      this.mediaRecorder.onstop = () => {
+        stream.getTracks().forEach(t => t.stop());
+        const chunks = this.recordedChunks;
+        this.mediaRecorder = null;
+        if (chunks.length === 0) {
+          resolve(null);
+          return;
+        }
+        const blob = new Blob(chunks, { type: mime });
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        blob.arrayBuffer()
+          .then((buf) => ctx.decodeAudioData(buf))
+          .then((audioBuffer) => {
+            ctx.close();
+            const ch = audioBuffer.getChannelData(0);
+            const samples = new Float32Array(ch.length);
+            samples.set(ch);
+            const resampled = VoiceRecorder.resampleTo16k(samples, audioBuffer.sampleRate);
+            resolve(resampled.length ? VoiceRecorder.encodeWAV(resampled, this.sampleRate) : null);
+          })
+          .catch(() => { ctx.close(); resolve(null); });
+      };
+      this.mediaRecorder.stop();
+    });
+  }
+}
+
+// ============================================================================
+// VoiceWakeStream - streams 16kHz PCM 1280-sample chunks for server-side wake word
+// ScriptProcessor requires power-of-two buffer (256–16384); use 2048 then slice to 1280.
+// ============================================================================
+class VoiceWakeStream {
+  constructor(sendChunk) {
+    this.sampleRate = 16000;
+    this.sendChunk = sendChunk;
+    this.ctx = null;
+    this.stream = null;
+    this.processor = null;
+    this.source = null;
+    this.buffer = []; // int16 samples, drain in 1280-sample chunks
+  }
+
+  start(deviceId) {
+    return new Promise((resolve, reject) => {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: this.sampleRate });
+      const constraints = { audio: { channelCount: 1, sampleRate: this.sampleRate } };
+      if (deviceId && deviceId.length) constraints.audio.deviceId = { exact: deviceId };
+      navigator.mediaDevices.getUserMedia(constraints)
+        .then((stream) => {
+          this.stream = stream;
+          this.buffer = [];
+          const source = this.ctx.createMediaStreamSource(stream);
+          const processor = this.ctx.createScriptProcessor(2048, 1, 1); // must be power of two
+          processor.onaudioprocess = (e) => {
+            const float32 = e.inputBuffer.getChannelData(0);
+            for (let i = 0; i < float32.length; i++) {
+              const s = Math.max(-1, Math.min(1, float32[i]));
+              this.buffer.push(s < 0 ? s * 0x8000 : s * 0x7FFF);
+            }
+            while (this.buffer.length >= 1280) {
+              const chunk = this.buffer.splice(0, 1280);
+              const int16 = new Int16Array(chunk);
+              const b64 = btoa(String.fromCharCode.apply(null, new Uint8Array(int16.buffer)));
+              this.sendChunk(b64);
+            }
+          };
+          source.connect(processor);
+          processor.connect(this.ctx.destination);
+          this.processor = processor;
+          this.source = source;
+          resolve();
+        })
+        .catch(reject);
+    });
+  }
+
+  stop() {
+    if (!this.stream || !this.ctx) return;
+    this.stream.getTracks().forEach(t => t.stop());
+    this.processor?.disconnect();
+    this.source?.disconnect();
+    this.ctx.close();
+    this.stream = null;
+    this.ctx = null;
+    this.processor = null;
+    this.source = null;
+  }
+}
+
+// ============================================================================
 // CommandCenter
 // ============================================================================
 class CommandCenter {
@@ -85,10 +257,21 @@ class CommandCenter {
       rejectBtn: document.getElementById('reject-btn'),
       fileInput: document.getElementById('file-input'),
       attachBtn: document.getElementById('attach-btn'),
-      attachmentsPreview: document.getElementById('attachments-preview')
+      attachmentsPreview: document.getElementById('attachments-preview'),
+      voicePanel: document.getElementById('voice-panel'),
+      voiceStatus: document.getElementById('voice-status'),
+      voiceHoldBtn: document.getElementById('voice-hold-btn'),
+      voiceMicSelect: document.getElementById('voice-mic-select'),
+      voiceWakeToggle: document.getElementById('voice-wake-toggle')
     };
     
     this.pendingChanges = [];
+    this.voiceInitialized = false;
+    this.voiceWs = null;
+    this.voiceRecorder = null;
+    this.voiceWakeStream = null;
+    this.voiceWakeStreamPending = false;
+    this.recordingAfterWake = false;
     this.attachedFiles = [];
     this.homelabDashboard = null;
     this.activityPanel = null;
@@ -313,6 +496,10 @@ class CommandCenter {
     if (status.agent) {
       this.updateAgentStatus(status.agent);
     }
+    if (status.voice?.enabled && this.elements.voicePanel) {
+      this.elements.voicePanel.style.display = '';
+      this.initVoice();
+    }
   }
   
   updateAgentStatus(agent) {
@@ -331,6 +518,259 @@ class CommandCenter {
       this.elements.agentIndicator.classList.remove('active');
       this.elements.agentStopBtn.disabled = true;
       this.elements.agentInfo.textContent = 'No active session';
+    }
+  }
+
+  getPreferredVoiceDeviceId() {
+    const sel = this.elements.voiceMicSelect;
+    if (sel && sel.value) return sel.value;
+    try {
+      const saved = localStorage.getItem('jeeves_voice_device_id');
+      return saved || '';
+    } catch { return ''; }
+  }
+
+  populateVoiceMicSelect() {
+    const sel = this.elements.voiceMicSelect;
+    if (!sel) return;
+    const saved = (function () { try { return localStorage.getItem('jeeves_voice_device_id') || ''; } catch { return ''; } })();
+    navigator.mediaDevices.enumerateDevices().then((devices) => {
+      const inputs = devices.filter(d => d.kind === 'audioinput');
+      sel.innerHTML = '';
+      const opt0 = document.createElement('option');
+      opt0.value = '';
+      opt0.textContent = 'Default (system)';
+      sel.appendChild(opt0);
+      inputs.forEach((d) => {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = d.label || 'Microphone ' + (sel.options.length);
+        sel.appendChild(opt);
+      });
+      if (saved && inputs.some(d => d.deviceId === saved)) sel.value = saved;
+      else if (saved) sel.value = '';
+    }).catch(() => {});
+  }
+
+  initVoice() {
+    if (this.voiceInitialized || !this.elements.voicePanel || !this.elements.voiceHoldBtn) return;
+    this.voiceInitialized = true;
+    this.populateVoiceMicSelect();
+    if (this.elements.voiceMicSelect) {
+      this.elements.voiceMicSelect.addEventListener('change', () => {
+        try {
+          if (this.elements.voiceMicSelect.value) localStorage.setItem('jeeves_voice_device_id', this.elements.voiceMicSelect.value);
+          else localStorage.removeItem('jeeves_voice_device_id');
+        } catch (_) {}
+      });
+      this.elements.voiceMicSelect.addEventListener('focus', () => this.populateVoiceMicSelect());
+    }
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = protocol + '//' + window.location.host + '/voice';
+    const setVoiceStatus = (text, state) => {
+      if (this.elements.voiceStatus) {
+        this.elements.voiceStatus.textContent = text;
+        this.elements.voiceStatus.className = 'voice-status ' + (state || 'ready');
+      }
+    };
+    setVoiceStatus('CONNECTING…', '');
+    this.voiceWs = new WebSocket(wsUrl);
+    this.voiceWs.onopen = () => setVoiceStatus('READY', 'ready');
+    this.voiceWs.onclose = () => setVoiceStatus('DISCONNECTED', 'error');
+    this.voiceWs.onerror = () => {
+      setVoiceStatus('CONNECTION FAILED', 'error');
+      this.log('error', 'Voice: could not connect to /voice. Check that voice is enabled (VOICE_ENABLED=true) and refresh.');
+      if (this.voiceWs) this.voiceWs.close();
+    };
+    this.voiceWs.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'transcript' && msg.text) {
+          this.log('user', msg.text);
+        }
+        if (msg.type === 'status') setVoiceStatus('THINKING…', 'processing');
+        if (msg.type === 'voice_response') {
+          if (msg.text) this.log('response', msg.text);
+          if (msg.audio) {
+            const bytes = new Uint8Array(atob(msg.audio).split('').map(c => c.charCodeAt(0)));
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            ctx.decodeAudioData(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)).then(decoded => {
+              const src = ctx.createBufferSource();
+              src.buffer = decoded;
+              src.connect(ctx.destination);
+              src.start(0);
+              src.onended = () => setVoiceStatus('READY', 'ready');
+            }).catch(() => setVoiceStatus('READY', 'ready'));
+          } else setVoiceStatus('READY', 'ready');
+        }
+        if (msg.type === 'voice_audio' && msg.audio) {
+          setVoiceStatus('SPEAKING…', 'processing');
+          const bytes = new Uint8Array(atob(msg.audio).split('').map(c => c.charCodeAt(0)));
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          ctx.decodeAudioData(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)).then(decoded => {
+            const src = ctx.createBufferSource();
+            src.buffer = decoded;
+            src.connect(ctx.destination);
+            src.start(0);
+            src.onended = () => setVoiceStatus('READY', 'ready');
+          }).catch(() => setVoiceStatus('READY', 'ready'));
+        }
+        if (msg.type === 'error') {
+          this.log('error', msg.message || 'Voice error');
+          setVoiceStatus('READY', 'ready');
+        }
+        if (msg.type === 'wake_stream_ready') {
+          if (this.voiceWakeStream && this.voiceWakeStreamPending) {
+            this.voiceWakeStream.start(this.getPreferredVoiceDeviceId()).catch((err) => {
+              this.voiceWakeStreamPending = false;
+              this.log('error', 'Hey Jeeves: mic failed – ' + (err && err.message ? err.message : 'allow microphone'));
+            });
+            this.voiceWakeStreamPending = false;
+          }
+        }
+        if (msg.type === 'wake_detected') {
+          if (!this.voiceWakeStream || this.recordingAfterWake) return;
+          this.recordingAfterWake = true;
+          setVoiceStatus('LISTENING…', 'listening');
+          this.elements.voiceHoldBtn?.classList.add('recording');
+          this.voiceRecorder.start(this.getPreferredVoiceDeviceId()).catch(() => {
+            this.recordingAfterWake = false;
+            this.elements.voiceHoldBtn?.classList.remove('recording');
+            setVoiceStatus('READY', 'ready');
+          });
+          setTimeout(() => {
+            this.elements.voiceHoldBtn?.classList.remove('recording');
+            this.voiceRecorder.stop().then((wavBuffer) => {
+              const minBytes = 44 + 16000 * 0.5 * 2; // 0.5s 16kHz mono
+              if (wavBuffer && wavBuffer.byteLength >= minBytes && this.voiceWs && this.voiceWs.readyState === 1) {
+                const bytes = new Uint8Array(wavBuffer);
+                let binary = '';
+                for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+                this.voiceWs.send(JSON.stringify({ type: 'audio_command', audio: btoa(binary), format: 'wav', timestamp: Date.now() }));
+                setVoiceStatus('THINKING…', 'processing');
+              } else {
+                if (wavBuffer && wavBuffer.byteLength > 0 && wavBuffer.byteLength < minBytes)
+                  this.log('system', 'Voice: recording too short (try saying "Hey Jeeves" again).');
+                setVoiceStatus('READY', 'ready');
+              }
+              setTimeout(() => { this.recordingAfterWake = false; }, 500);
+            }).catch(() => { setVoiceStatus('READY', 'ready'); this.recordingAfterWake = false; });
+          }, 4000);
+        }
+      } catch (e) { /* ignore */ }
+    };
+    this.voiceRecorder = new VoiceRecorder();
+    const UseBrowserSTT = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+    let browserRecognition = null;
+    if (UseBrowserSTT) {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      browserRecognition = new SR();
+      browserRecognition.continuous = false;
+      browserRecognition.interimResults = false;
+      browserRecognition.lang = 'en-US';
+      browserRecognition.onresult = (event) => {
+        const result = event.results[event.results.length - 1];
+        const transcript = (result && result[0] && result[0].transcript) ? result[0].transcript.trim() : '';
+        if (transcript && this.voiceWs && this.voiceWs.readyState === 1) {
+          this.log('user', transcript);
+          this.voiceWs.send(JSON.stringify({ type: 'text_command', text: transcript, timestamp: Date.now() }));
+          setVoiceStatus('THINKING…', 'processing');
+        } else {
+          if (!transcript) this.log('system', 'Voice: didn’t catch that. Try again.');
+          setVoiceStatus('READY', 'ready');
+        }
+      };
+      browserRecognition.onerror = (event) => {
+        if (event.error === 'no-speech') this.log('system', 'Voice: no speech heard. Hold the button while you speak.');
+        else if (event.error !== 'aborted') this.log('error', 'Voice: ' + (event.error || 'recognition error'));
+        setVoiceStatus('READY', 'ready');
+      };
+      browserRecognition.onend = () => {
+        this.elements.voiceHoldBtn?.classList.remove('recording');
+      };
+    }
+    let voiceHoldStartedAt = 0;
+    const MIN_HOLD_MS = 400;
+    const onHoldStart = () => {
+      if (!this.voiceWs || this.voiceWs.readyState !== 1) {
+        setVoiceStatus('NOT CONNECTED', 'error');
+        this.log('error', 'Voice: not connected. Refresh the page and allow the connection, or check VOICE_ENABLED on the server.');
+        return;
+      }
+      voiceHoldStartedAt = 0;
+      setVoiceStatus('LISTENING…', 'listening');
+      this.elements.voiceHoldBtn?.classList.add('recording');
+      if (UseBrowserSTT && browserRecognition) {
+        try {
+          browserRecognition.start();
+          voiceHoldStartedAt = Date.now();
+        } catch (e) {
+          this.elements.voiceHoldBtn?.classList.remove('recording');
+          this.log('error', 'Voice: ' + (e && e.message ? e.message : 'Speech recognition failed'));
+          setVoiceStatus('READY', 'ready');
+        }
+        return;
+      }
+      this.voiceRecorder.start(this.getPreferredVoiceDeviceId()).then(() => {
+        voiceHoldStartedAt = Date.now();
+      }).catch((err) => {
+        voiceHoldStartedAt = 0;
+        this.elements.voiceHoldBtn?.classList.remove('recording');
+        const msg = (err && err.name === 'NotAllowedError') ? 'Microphone access denied. Use the lock/site icon in the address bar to allow mic.' : (err && err.message) ? err.message : 'Microphone error';
+        setVoiceStatus('MIC DENIED', 'error');
+        this.log('error', 'Voice: ' + msg);
+      });
+    };
+    const MIN_WAV_BYTES = 44 + 16000 * 0.5 * 2;
+    const onHoldEnd = () => {
+      if (UseBrowserSTT && browserRecognition) {
+        try { browserRecognition.stop(); } catch (_) {}
+        return;
+      }
+      this.elements.voiceHoldBtn?.classList.remove('recording');
+      const heldLongEnough = voiceHoldStartedAt > 0 && (Date.now() - voiceHoldStartedAt) >= MIN_HOLD_MS;
+      this.voiceRecorder.stop().then((wavBuffer) => {
+        if (wavBuffer && wavBuffer.byteLength >= MIN_WAV_BYTES && this.voiceWs && this.voiceWs.readyState === 1) {
+          const bytes = new Uint8Array(wavBuffer);
+          let binary = '';
+          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+          this.voiceWs.send(JSON.stringify({ type: 'audio_command', audio: btoa(binary), format: 'wav', timestamp: Date.now() }));
+          setVoiceStatus('THINKING…', 'processing');
+        } else {
+          if (!wavBuffer) {
+            if (!heldLongEnough) this.log('system', 'Voice: hold the button at least half a second while speaking, then release.');
+            else this.log('system', 'Voice: no audio recorded (hold longer while speaking)');
+          } else if (wavBuffer.byteLength < MIN_WAV_BYTES)
+            this.log('system', 'Voice: recording too short. Hold at least a second while speaking.');
+          setVoiceStatus('READY', 'ready');
+        }
+      }).catch(() => setVoiceStatus('READY', 'ready'));
+    };
+    this.elements.voiceHoldBtn.addEventListener('mousedown', onHoldStart);
+    this.elements.voiceHoldBtn.addEventListener('mouseup', onHoldEnd);
+    this.elements.voiceHoldBtn.addEventListener('mouseleave', onHoldEnd);
+    this.elements.voiceHoldBtn.addEventListener('touchstart', (e) => { e.preventDefault(); onHoldStart(); });
+    this.elements.voiceHoldBtn.addEventListener('touchend', (e) => { e.preventDefault(); onHoldEnd(); });
+
+    if (this.elements.voiceWakeToggle) {
+      this.elements.voiceWakeToggle.addEventListener('change', () => {
+        if (!this.voiceWs || this.voiceWs.readyState !== 1) return;
+        if (this.elements.voiceWakeToggle.checked) {
+          this.voiceWakeStream = new VoiceWakeStream((b64) => {
+            if (this.voiceWs && this.voiceWs.readyState === 1)
+              this.voiceWs.send(JSON.stringify({ type: 'wake_stream_chunk', pcm: b64 }));
+          });
+          this.voiceWakeStreamPending = true;
+          this.voiceWs.send(JSON.stringify({ type: 'wake_stream_start' }));
+        } else {
+          if (this.voiceWakeStream) {
+            this.voiceWakeStream.stop();
+            this.voiceWakeStream = null;
+          }
+          this.voiceWakeStreamPending = false;
+          this.voiceWs.send(JSON.stringify({ type: 'wake_stream_stop' }));
+        }
+      });
     }
   }
   
@@ -2059,6 +2499,111 @@ class SecurityPanel {
 }
 
 // ============================================================================
+// Notes Panel
+// ============================================================================
+class NotesPanel {
+  constructor() {
+    this.listEl = document.getElementById('notes-list');
+    this.countEl = document.getElementById('notes-count');
+    this.searchEl = document.getElementById('notes-search');
+    this.formEl = document.getElementById('notes-add-form');
+    this.inputEl = document.getElementById('notes-add-input');
+    this.refreshBtn = document.getElementById('notes-refresh');
+    this.searchTimeout = null;
+  }
+
+  async init() {
+    await this.fetchNotes();
+    if (this.formEl && this.inputEl) {
+      this.formEl.addEventListener('submit', (e) => {
+        e.preventDefault();
+        this.addNote();
+      });
+    }
+    if (this.refreshBtn) {
+      this.refreshBtn.addEventListener('click', () => this.fetchNotes());
+    }
+    if (this.searchEl) {
+      this.searchEl.addEventListener('input', () => {
+        clearTimeout(this.searchTimeout);
+        this.searchTimeout = setTimeout(() => this.fetchNotes(), 200);
+      });
+    }
+  }
+
+  async fetchNotes() {
+    if (!this.listEl) return;
+    const q = this.searchEl?.value?.trim() || '';
+    const url = q ? `/api/notes?q=${encodeURIComponent(q)}` : '/api/notes';
+    try {
+      const res = await fetch(url);
+      const data = await res.ok ? res.json() : { notes: [] };
+      this.render(data.notes || []);
+    } catch {
+      this.render([]);
+    }
+  }
+
+  render(notes) {
+    if (!this.listEl) return;
+    if (this.countEl) this.countEl.textContent = notes.length;
+    if (notes.length === 0) {
+      this.listEl.innerHTML = '<div class="no-changes">No notes yet. Add one above or say "add a note that ..." in the console.</div>';
+      return;
+    }
+    const sorted = [...notes].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    this.listEl.innerHTML = sorted.map(n => {
+      const date = new Date(n.createdAt).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+      const tags = (n.tags && n.tags.length) ? n.tags.map(t => `<span class="note-tag">#${this.esc(t)}</span>`).join(' ') : '';
+      const content = this.esc(n.content).replace(/\n/g, '<br>');
+      return `<div class="note-card" data-id="${this.esc(n.id)}">
+        <div class="note-content">${content}</div>
+        <div class="note-meta">${tags} <span class="note-date">${this.esc(date)}</span></div>
+        <div class="note-actions"><button type="button" class="cmd-btn danger note-delete-btn" data-id="${this.esc(n.id)}">DELETE</button></div>
+      </div>`;
+    }).join('');
+    this.listEl.querySelectorAll('.note-delete-btn').forEach(btn => {
+      btn.addEventListener('click', () => this.deleteNote(btn.dataset.id));
+    });
+  }
+
+  async addNote() {
+    const content = this.inputEl?.value?.trim();
+    if (!content) return;
+    try {
+      const res = await fetch('/api/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content })
+      });
+      if (res.ok) {
+        this.inputEl.value = '';
+        await this.fetchNotes();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        window.commandCenter?.log('error', data.error || 'Failed to add note');
+      }
+    } catch (err) {
+      window.commandCenter?.log('error', 'Failed to add note: ' + err);
+    }
+  }
+
+  async deleteNote(id) {
+    if (!id || !confirm('Delete this note?')) return;
+    try {
+      const res = await fetch(`/api/notes/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (data.success) await this.fetchNotes();
+      else window.commandCenter?.log('error', 'Failed to delete note');
+    } catch (err) {
+      window.commandCenter?.log('error', 'Failed to delete note: ' + err);
+    }
+  }
+
+  esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+}
+
+// ============================================================================
 // Clients Panel
 // ============================================================================
 class ClientsPanel {
@@ -2140,6 +2685,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Clients panel
   window.clientsPanel = new ClientsPanel();
 
+  // Notes panel
+  window.notesPanel = new NotesPanel();
+
   // Lazy-load tab data on first activation
   const loaded = {};
   window.tabController.onActivate('activity', () => {
@@ -2166,6 +2714,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   window.tabController.onActivate('clients', () => {
     if (!loaded.clients) { loaded.clients = true; window.clientsPanel.init(); }
+  });
+  window.tabController.onActivate('notes', () => {
+    if (!loaded.notes) { loaded.notes = true; window.notesPanel.init(); }
   });
 
   // Download buttons

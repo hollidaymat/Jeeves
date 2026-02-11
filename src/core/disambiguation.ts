@@ -117,18 +117,8 @@ const DISAMBIGUATION_RULES: DisambiguationRule[] = [
     priority: 80
   },
   
-  // Approval patterns: short confirmations when awaiting plan/cursor confirmation
-  {
-    name: 'approval_yes',
-    pattern: /^(yes|yeah|yep|yup|ok|okay|sure|absolutely|do it|go ahead|let'?s go|confirm|approved?|approved)$/i,
-    transform: () => ({
-      category: 'command' as IntentCategory,
-      action: 'approve',
-      confidence: 0.9,
-      isNegation: false
-    }),
-    priority: 115
-  },
+  // REMOVED: approval_yes - was routing "yes"/"go ahead" to prd_approve even when no plan.
+  // Now "yes" falls through to handleSimpleCommand which checks getActivePlan/getPendingPlan first.
 
   // "build me X" / "create X for me" / "I need X" = PRD
   // Note: "create project" is handled by handleSimpleCommand, so exclude it

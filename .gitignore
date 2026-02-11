@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+scripts/venv/
 
 # Build output
 dist/
@@ -11,6 +12,8 @@ dist/
 
 # Configuration with secrets
 config.json
+cert.pem
+key.pem
 
 # Logs
 logs/

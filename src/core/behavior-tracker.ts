@@ -23,7 +23,7 @@ let breakerIndex = 0;
 
 /** Structure-based fingerprint - catches same structure different words loops */
 function fingerprint(response: string): string {
-  const len = response.length > 400 ? 'L' : response.length > 200 ? 'M' : 'S';
+  const len = response.length > 1600 ? 'L' : response.length > 800 ? 'M' : 'S';
   const lists = (response.match(/\n[-*\d]/g) || []).length;
   const questions = (response.match(/\?/g) || []).length;
   return `${len}-${lists}-${questions}`;

@@ -1,0 +1,7 @@
+{
+  "quietHoursEnabled": true,
+  "quietStart": "23:00",
+  "quietEnd": "07:00",
+  "criticalBypass": true,
+  "muteUntil": "2026-02-11T04:59:59.999Z"
+}

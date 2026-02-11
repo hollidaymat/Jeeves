@@ -1,0 +1,10 @@
+{
+  "name": "Jeeves",
+  "short_name": "Jeeves",
+  "description": "Voice-enabled homelab assistant",
+  "start_url": "/tablet/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0e27",
+  "theme_color": "#00e5ff"
+}

@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jeeves Voice Test (Phase 0)</title>
+  <style>
+    body {
+      background: #0a0e27;
+      color: #00e5ff;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+    }
+    #status { font-size: 18px; margin-bottom: 24px; }
+    #talk-btn {
+      width: 180px; height: 180px;
+      border-radius: 50%;
+      border: 3px solid #00e5ff;
+      background: transparent;
+      color: #00e5ff;
+      font-size: 16px;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    #talk-btn:hover { background: rgba(0, 229, 255, 0.1); }
+    #talk-btn.recording {
+      border-color: #ff3366;
+      color: #ff3366;
+      box-shadow: 0 0 30px rgba(255, 51, 102, 0.4);
+      animation: pulse 1s infinite;
+    }
+    #talk-btn.processing { border-color: #ffaa00; color: #ffaa00; }
+    @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+    #volume-meter {
+      width: 200px; height: 6px;
+      background: #1a1e3a;
+      margin-top: 20px;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    #volume-level {
+      height: 100%; background: #00e5ff;
+      border-radius: 3px; width: 0%;
+      transition: width 0.1s;
+    }
+    #transcript {
+      margin-top: 32px;
+      max-width: 560px;
+      text-align: left;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    #transcript .you { color: #00e5ff; }
+    #transcript .jeeves { color: #e0e0e0; }
+    #transcript p { margin: 8px 0; }
+    #latency { margin-top: 16px; font-size: 12px; color: #8b949e; }
+  </style>
+</head>
+<body>
+  <div id="status">Connecting...</div>
+  <button type="button" id="talk-btn">HOLD TO TALK</button>
+  <div id="volume-meter"><div id="volume-level"></div></div>
+  <div id="transcript"></div>
+  <div id="latency"></div>
+
+  <script>
+    (function() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = protocol + '//' + window.location.host + '/voice';
+      let ws;
+      let mediaStream;
+      let audioContext;
+      let isRecording = false;
+      let commandStart;
+      const SAMPLE_RATE = 16000;
+      const chunks = [];
+
+      const statusEl = document.getElementById('status');
+      const talkBtn = document.getElementById('talk-btn');
+      const transcriptEl = document.getElementById('transcript');
+      const latencyEl = document.getElementById('latency');
+      const volumeLevel = document.getElementById('volume-level');
+
+      function encodeWAV(samples) {
+        const numChannels = 1;
+        const bitsPerSample = 16;
+        const byteRate = SAMPLE_RATE * numChannels * (bitsPerSample / 8);
+        const dataSize = samples.length * (bitsPerSample / 8);
+        const buffer = new ArrayBuffer(44 + dataSize);
+        const view = new DataView(buffer);
+        const writeStr = (offset, str) => { for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i)); };
+        writeStr(0, 'RIFF');
+        view.setUint32(4, 36 + dataSize, true);
+        writeStr(8, 'WAVE');
+        writeStr(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, numChannels, true);
+        view.setUint32(24, SAMPLE_RATE, true);
+        view.setUint32(28, byteRate, true);
+        view.setUint16(32, numChannels * (bitsPerSample / 8), true);
+        view.setUint16(34, bitsPerSample, true);
+        writeStr(36, 'data');
+        view.setUint32(40, dataSize, true);
+        for (let i = 0; i < samples.length; i++) {
+          const s = Math.max(-1, Math.min(1, samples[i]));
+          view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+        }
+        return buffer;
+      }
+
+      function connect() {
+        ws = new WebSocket(wsUrl);
+        ws.onopen = function() {
+          statusEl.textContent = 'Connected – Hold button and speak';
+        };
+        ws.onmessage = async function(event) {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'transcript') {
+            transcriptEl.innerHTML += '<p class="you">You: ' + (msg.text || '').replace(/</g, '&lt;') + '</p>';
+          } else if (msg.type === 'voice_response') {
+            transcriptEl.innerHTML += '<p class="jeeves">Jeeves: ' + (msg.text || '').replace(/</g, '&lt;') + '</p>';
+            if (msg.audio) {
+              try {
+                const bytes = Uint8Array.from(atob(msg.audio), function(c) { return c.charCodeAt(0); });
+                const ab = bytes.buffer;
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const decoded = await ctx.decodeAudioData(ab.slice(0));
+                const src = ctx.createBufferSource();
+                src.buffer = decoded;
+                src.connect(ctx.destination);
+                src.start(0);
+              } catch (e) {
+                console.warn('TTS playback failed', e);
+              }
+            }
+            if (commandStart) latencyEl.textContent = 'Round-trip: ' + (Date.now() - commandStart) + 'ms';
+            talkBtn.className = '';
+            talkBtn.textContent = 'HOLD TO TALK';
+            statusEl.textContent = 'Ready';
+          } else if (msg.type === 'error') {
+            statusEl.textContent = 'Error: ' + (msg.message || 'Unknown');
+            talkBtn.className = '';
+            talkBtn.textContent = 'HOLD TO TALK';
+          }
+        };
+        ws.onclose = function() {
+          statusEl.textContent = 'Disconnected. Reconnecting…';
+          setTimeout(connect, 3000);
+        };
+      }
+
+      async function initAudio() {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: { channelCount: 1, sampleRate: SAMPLE_RATE, echoCancellation: true, noiseSuppression: true }
+        });
+        audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: SAMPLE_RATE });
+        const source = audioContext.createMediaStreamSource(mediaStream);
+        const analyser = audioContext.createAnalyser();
+        source.connect(analyser);
+        analyser.fftSize = 256;
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        function updateMeter() {
+          analyser.getByteFrequencyData(dataArray);
+          const avg = dataArray.reduce(function(a, b) { return a + b; }, 0) / dataArray.length;
+          volumeLevel.style.width = Math.min(100, avg * 2) + '%';
+          requestAnimationFrame(updateMeter);
+        }
+        updateMeter();
+      }
+
+      function startRecording() {
+        if (isRecording) return;
+        isRecording = true;
+        commandStart = Date.now();
+        chunks.length = 0;
+        talkBtn.className = 'recording';
+        talkBtn.textContent = 'LISTENING...';
+        statusEl.textContent = 'Recording...';
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+        const src = audioContext.createMediaStreamSource(mediaStream);
+        src.connect(processor);
+        processor.connect(audioContext.destination);
+        processor.onaudioprocess = function(e) {
+          if (!isRecording) return;
+          const input = e.inputBuffer.getChannelData(0);
+          chunks.push(new Float32Array(input));
+        };
+        window._voiceProcessor = processor;
+        window._voiceSource = src;
+      }
+
+      function stopRecording() {
+        if (!isRecording) return;
+        isRecording = false;
+        if (window._voiceProcessor) {
+          window._voiceProcessor.disconnect();
+          window._voiceSource.disconnect();
+        }
+        const totalLen = chunks.reduce(function(s, c) { return s + c.length; }, 0);
+        const merged = new Float32Array(totalLen);
+        let off = 0;
+        for (let i = 0; i < chunks.length; i++) {
+          merged.set(chunks[i], off);
+          off += chunks[i].length;
+        }
+        const wav = encodeWAV(merged);
+        const base64 = btoa(String.fromCharCode.apply(null, new Uint8Array(wav)));
+        talkBtn.className = 'processing';
+        talkBtn.textContent = 'PROCESSING...';
+        statusEl.textContent = 'Sending to Jeeves...';
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'audio_command', audio: base64, format: 'wav', timestamp: Date.now() }));
+        }
+      }
+
+      talkBtn.addEventListener('mousedown', startRecording);
+      talkBtn.addEventListener('mouseup', stopRecording);
+      talkBtn.addEventListener('mouseleave', stopRecording);
+      talkBtn.addEventListener('touchstart', function(e) { e.preventDefault(); startRecording(); });
+      talkBtn.addEventListener('touchend', function(e) { e.preventDefault(); stopRecording(); });
+
+      initAudio().then(connect).catch(function(err) {
+        statusEl.textContent = 'Mic access denied: ' + err.message;
+      });
+    })();
+  </script>
+</body>
+</html>

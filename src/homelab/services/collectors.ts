@@ -505,6 +505,186 @@ const collectors: Record<string, () => Promise<Record<string, unknown> | null>> 
       return null;
     }
   },
+
+  // ---------- qBittorrent ----------
+  async qbittorrent() {
+    try {
+      const { getQbittorrentStatus } = await import('../integrations/qbittorrent.js');
+      const status = await getQbittorrentStatus();
+      if (!status.success || !status.torrents) return null;
+      const transfer = status.transfer;
+      return {
+        torrents: status.torrents.length,
+        downloading: status.torrents.filter((t: { state: string }) => t.state === 'downloading').length,
+        dlSpeed: transfer ? Math.round(transfer.dl_info_speed / 1024) : 0,
+        upSpeed: transfer ? Math.round(transfer.up_info_speed / 1024) : 0,
+        dlTotal: transfer ? Math.round(transfer.dl_info_data / 1e9) : 0,
+        upTotal: transfer ? Math.round(transfer.up_info_data / 1e9) : 0,
+        queue: status.torrents.slice(0, 5).map((t: { name: string; progress: number; state: string }) => ({
+          name: t.name,
+          progress: Math.round((t.progress || 0) * 100),
+          state: t.state,
+        })),
+      };
+    } catch (e) {
+      logger.debug('qBittorrent collector failed', { error: String(e) });
+      return null;
+    }
+  },
+
+  // ---------- Home Assistant ----------
+  async homeassistant() {
+    const token = process.env.HA_TOKEN || process.env.HOME_ASSISTANT_TOKEN;
+    if (!token) return null;
+    const base = serviceUrl('homeassistant', 8123).replace(/^http/, 'http');
+    const url = process.env.HA_URL || `http://localhost:8123`;
+    try {
+      const res = await fetch(`${url}/api/states`, {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) return null;
+      const states = (await res.json()) as Array<Record<string, unknown>>;
+      const lights = (states || []).filter((s: Record<string, unknown>) => String(s.entity_id).startsWith('light.'));
+      const sensors = (states || []).filter((s: Record<string, unknown>) => String(s.entity_id).startsWith('sensor.'));
+      return {
+        entities: (states || []).length,
+        lights: lights.length,
+        sensors: sensors.length,
+        onLights: lights.filter((s: Record<string, unknown>) => s.state === 'on').length,
+      };
+    } catch (e) {
+      logger.debug('Home Assistant collector failed', { error: String(e) });
+      return null;
+    }
+  },
+
+  // ---------- Gluetun (VPN) — no API, minimal status ----------
+  async gluetun() {
+    return { status: 'running', note: 'VPN tunnel; use dashboard or docker exec for exit IP' };
+  },
+
+  // ---------- Traefik ----------
+  async traefik() {
+    const base = process.env.TRAEFIK_URL || serviceUrl('traefik', 8080);
+    try {
+      const [routers, services] = await Promise.all([
+        fetchJson(`${base}/api/http/routers`) as Promise<Record<string, unknown>>,
+        fetchJson(`${base}/api/http/services`) as Promise<Record<string, unknown>>,
+      ]);
+      const routerList = (routers && typeof routers === 'object' && !Array.isArray(routers)) ? Object.keys(routers) : [];
+      const serviceList = (services && typeof services === 'object' && !Array.isArray(services)) ? Object.keys(services) : [];
+      return { routers: routerList.length, services: serviceList.length, routerNames: routerList.slice(0, 10) };
+    } catch (e) {
+      logger.debug('Traefik collector failed', { error: String(e) });
+      return null;
+    }
+  },
+
+  // ---------- Portainer ----------
+  async portainer() {
+    const apiKey = process.env.PORTAINER_API_KEY;
+    if (!apiKey) return null;
+    const base = (process.env.PORTAINER_URL || serviceUrl('portainer', 9000)).replace(/\/$/, '');
+    try {
+      const [endpoints, stacks] = await Promise.all([
+        fetchJson(`${base}/api/endpoints`, { 'X-API-Key': apiKey }) as Promise<Array<Record<string, unknown>>>,
+        fetchJson(`${base}/api/stacks`, { 'X-API-Key': apiKey }) as Promise<Array<Record<string, unknown>>>,
+      ]);
+      return {
+        endpoints: (endpoints || []).length,
+        stacks: (stacks || []).length,
+        stackNames: (stacks || []).slice(0, 10).map((s: Record<string, unknown>) => s.Name),
+      };
+    } catch (e) {
+      logger.debug('Portainer collector failed', { error: String(e) });
+      return null;
+    }
+  },
+
+  // ---------- NZBGet ----------
+  async nzbget() {
+    const user = process.env.NZBGET_USER || 'nzbget';
+    const pass = process.env.NZBGET_PASS || 'tegbzn6789';
+    const base = (process.env.NZBGET_URL || serviceUrl('nzbget', 6789)).replace(/\/$/, '');
+    try {
+      const body = JSON.stringify({ method: 'status', params: [] });
+      const res = await fetch(`${base}/jsonrpc`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as Record<string, unknown>;
+      const result = data?.result as Record<string, unknown> | undefined;
+      if (!result) return null;
+      return {
+        downloadRate: result.DownloadRate,
+        downloadLimit: result.DownloadLimit,
+        queue: result.QueueFiles ?? 0,
+        postQueue: result.PostQueueBytes ?? 0,
+      };
+    } catch (e) {
+      logger.debug('NZBGet collector failed', { error: String(e) });
+      return null;
+    }
+  },
+
+  // ---------- Vaultwarden ----------
+  async vaultwarden() {
+    const token = process.env.VAULTWARDEN_ADMIN_TOKEN;
+    if (!token) return null;
+    const base = (process.env.VAULTWARDEN_URL || serviceUrl('vaultwarden', 80)).replace(/\/$/, '');
+    try {
+      const res = await fetch(`${base}/admin/stats`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as Record<string, unknown>;
+      return {
+        users: data?.users,
+        activeUsers: data?.active_users,
+        items: data?.items,
+      };
+    } catch (e) {
+      logger.debug('Vaultwarden collector failed', { error: String(e) });
+      return null;
+    }
+  },
+
+  // ---------- Prometheus ----------
+  async prometheus() {
+    const base = (process.env.PROMETHEUS_URL || serviceUrl('prometheus', 9090)).replace(/\/$/, '');
+    try {
+      const res = await fetch(`${base}/api/v1/query?query=up`, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { data?: { result?: Array<{ value?: [string, string] }> } };
+      const result = data?.data?.result ?? [];
+      const targets = result.length;
+      const up = result.filter((r) => r.value?.[1] === '1').length;
+      return { targets, up, status: targets > 0 && up === targets ? 'ok' : 'degraded' };
+    } catch (e) {
+      logger.debug('Prometheus collector failed', { error: String(e) });
+      return null;
+    }
+  },
+
+  // ---------- Node Exporter ----------
+  async nodeexporter() {
+    const base = process.env.NODE_EXPORTER_URL || serviceUrl('nodeexporter', 9100);
+    try {
+      const res = await fetch(`${base}/metrics`, { signal: AbortSignal.timeout(3000) });
+      if (!res.ok) return null;
+      const text = await res.text();
+      const nodeBootTime = text.match(/node_boot_time_seconds (\d+)/);
+      return { up: true, metrics: 'available', nodeBootTime: nodeBootTime ? Number(nodeBootTime[1]) : undefined };
+    } catch (e) {
+      logger.debug('Node exporter collector failed', { error: String(e) });
+      return null;
+    }
+  },
 };
 
 // ============================================================================
@@ -524,6 +704,9 @@ const nameAliases: Record<string, string> = {
   'paperless_ngx': 'paperless',
   jellyseerr: 'overseerr',
   'node_exporter': 'nodeexporter',
+  'qbittorrent': 'qbittorrent',
+  'home-assistant': 'homeassistant',
+  homeassistant: 'homeassistant',
 };
 
 function normalizeServiceName(name: string): string {
@@ -546,6 +729,15 @@ const requiredEnvVars: Record<string, string[]> = {
   uptimekuma: [],  // no key needed
   nextcloud: ['NEXTCLOUD_USER', 'NEXTCLOUD_PASS'],
   paperless: ['PAPERLESS_API_KEY'],
+  qbittorrent: ['QBITTORRENT_USER + QBITTORRENT_PASS'],  // URL has default
+  homeassistant: ['HA_TOKEN or HOME_ASSISTANT_TOKEN'],
+  gluetun: [],  // no API, minimal status only
+  traefik: [],  // dashboard API often unauthenticated
+  portainer: ['PORTAINER_API_KEY'],
+  nzbget: [],   // defaults for user/pass/url
+  vaultwarden: ['VAULTWARDEN_ADMIN_TOKEN'],
+  prometheus: [],  // query API no auth
+  nodeexporter: [],  // metrics endpoint
 };
 
 /**
@@ -589,4 +781,42 @@ export function getRequiredEnvVars(serviceName: string): string[] {
  */
 export function getAvailableCollectors(): string[] {
   return Object.keys(collectors);
+}
+
+/** Whether a service has a collector and if so, whether API/env is configured */
+export type CollectorConfigStatus = 'no_collector' | 'missing_api' | 'configured';
+
+/** Check if env vars for a collector are set (for report: "needs API added"). */
+export function getCollectorConfigStatus(serviceName: string): CollectorConfigStatus {
+  const normalized = normalizeServiceName(serviceName);
+  if (!collectors[normalized]) return 'no_collector';
+
+  const hints = requiredEnvVars[normalized];
+  if (!hints || hints.length === 0) return 'configured'; // pihole, uptimekuma
+
+  // Single key e.g. RADARR_API_KEY
+  for (const hint of hints) {
+    if (hint.includes(' or ')) {
+      const parts = hint.split(' or ');
+      const ok = parts.some(p => {
+        if (p.includes(' + ')) {
+          const keys = p.split('+').map(k => k.trim());
+          return keys.every(k => process.env[k]?.trim());
+        }
+        const key = p.trim();
+        return !!process.env[key]?.trim();
+      });
+      if (ok) return 'configured';
+    } else if (hint.includes(' + ')) {
+      const keys = hint.split('+').map(k => k.trim());
+      if (keys.every(k => process.env[k]?.trim())) return 'configured';
+    } else if (process.env[hint]?.trim()) {
+      return 'configured';
+    }
+  }
+  return 'missing_api';
+}
+
+export function normalizeServiceNameForCollector(name: string): string {
+  return normalizeServiceName(name);
 }

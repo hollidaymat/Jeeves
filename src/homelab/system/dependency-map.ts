@@ -19,6 +19,7 @@ const DEPENDENCIES: Record<string, string[]> = {
   overseerr: ['sonarr', 'radarr'],
   tautulli: ['jellyfin'],
   prowlarr: [],
+  gluetun: [],
   qbittorrent: [],
   nzbget: [],
   jellyfin: [],

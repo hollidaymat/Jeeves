@@ -2199,14 +2199,15 @@ export async function askGeneral(prompt: string, attachments?: ImageAttachment[]
     await extractAndStorePlan(text);
 
     // Store globally for "apply that" command
-    // CRITICAL: Only use a valid project path, never process.cwd() which would be the Jeeves folder
-    const workingDir = activeSession?.workingDir || null;
+    // When no active Cursor project: use Jeeves' own root so he can modify himself (signal-cursor-controller)
+    const { ROOT } = await import('../config.js');
+    const workingDir = activeSession?.workingDir || ROOT;
     globalLastResponse = {
       text,
       workingDir,
       timestamp: new Date()
     };
-    logger.debug('Stored response for apply-that', { length: text.length, hasWorkingDir: !!workingDir });
+    logger.debug('Stored response for apply-that', { length: text.length, hasWorkingDir: !!workingDir, fallbackToSelf: !activeSession?.workingDir });
 
     // Auto-detect and apply code if this looks like a build/edit request
     const isBuildRequest = /\b(build|continue|finish|implement|create|write)\b/i.test(prompt);
@@ -2215,11 +2216,7 @@ export async function askGeneral(prompt: string, attachments?: ImageAttachment[]
     const hasRawCode = /import\s+React|from\s+['"]react|^\s*\.[A-Z][a-zA-Z-]*\s*\{|export\s+default/m.test(text);
     
     if (isBuildRequest && (hasCodeBlocks || hasRawCode || text.length > 500)) {
-      // Require a valid project path for build commands
-      if (!workingDir) {
-        logger.warn('Build request without active project - cannot apply changes');
-        return text + '\n\n---\n⚠️ No project is currently open. Please open a project first with `open <project-name>` before building.';
-      }
+      // workingDir is always set now (ROOT fallback when no active project)
       
       logger.info('Build request detected, auto-parsing response');
       const parseResult = await reParseLastResponse();

@@ -2,7 +2,7 @@
  * Format content for Signal — no markdown rendering, cap length.
  */
 
-const SIGNAL_MAX_CHARS = 500;
+const SIGNAL_MAX_CHARS = 2000;
 
 /** Strip markdown for plain-text display (bullets, lists, bold, etc.) — exported for API responses */
 export function stripMarkdown(text: string): string {

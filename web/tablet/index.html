@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jeeves</title>
+  <link rel="manifest" href="/tablet/manifest.json">
+  <link rel="stylesheet" href="/tablet/css/tablet.css">
+</head>
+<body>
+  <div class="main-layout">
+    <header class="header">
+      <span class="logo">JEEVES</span>
+      <span id="connection-status">○ CONNECTING</span>
+      <span id="status-indicator" class="status idle">Ready</span>
+    </header>
+    <main class="conversation-panel">
+      <div id="conversation"></div>
+      <div class="wake-indicator"></div>
+      <p style="text-align:center;color:var(--text-secondary);font-size:12px;">Hold the button and speak, or type below.</p>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <input type="text" id="text-input" class="command-input" placeholder="Type a command..." autocomplete="off">
+        <button type="button" id="send-btn" class="cmd-btn" style="min-width:80px;">SEND</button>
+      </div>
+      <div style="margin-top:12px;text-align:center;">
+        <button type="button" id="talk-btn" class="status idle" style="padding:16px 32px;border-radius:8px;cursor:pointer;">🎤 HOLD TO TALK</button>
+      </div>
+    </main>
+    <aside class="dashboard-panel">
+      <h3 style="margin-bottom:8px;">HOMELAB</h3>
+      <div class="stat-card"><span class="label">Services</span><div class="value" id="service-count">--/--</div></div>
+      <div class="stat-card"><span class="label">CPU</span><div class="value" id="cpu-usage">--%</div></div>
+      <div class="stat-card"><span class="label">RAM</span><div class="value" id="ram-usage">--%</div></div>
+      <div class="stat-card"><span class="label">Temp</span><div class="value" id="temp">--°C</div></div>
+    </aside>
+    <footer class="footer">
+      <span>Voice tablet</span>
+    </footer>
+  </div>
+  <script src="/tablet/js/keep-alive.js"></script>
+  <script src="/tablet/js/dashboard.js"></script>
+  <script src="/tablet/js/websocket.js"></script>
+  <script src="/tablet/js/audio-capture.js"></script>
+  <script src="/tablet/js/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/tablet/service-worker.js').catch(function() {});
+    }
+  </script>
+</body>
+</html>

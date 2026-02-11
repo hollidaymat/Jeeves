@@ -7,6 +7,8 @@
 
 import { createConnection, Socket } from 'net';
 import { randomUUID } from 'crypto';
+import { existsSync } from 'fs';
+import { join } from 'path';
 import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
 import type { IncomingMessage, OutgoingMessage, MessageInterface } from '../types/index.js';
@@ -39,6 +41,7 @@ interface SignalMessage {
       attachments?: Array<{
         contentType: string;
         filename?: string;
+        storedFilename?: string;
         id?: string;
         size: number;
       }>;
@@ -50,6 +53,20 @@ interface SignalMessage {
       };
     };
   };
+}
+
+/** signal-cli stores received attachments by id (override base with SIGNAL_ATTACHMENT_DIR) */
+function resolveAttachmentPath(attachmentId: string): string | undefined {
+  const base = process.env.SIGNAL_ATTACHMENT_DIR
+    || join(process.env.HOME || '/home/jeeves', '.local', 'share', 'signal-cli');
+  const candidates = [
+    join(base, 'attachments', attachmentId),
+    join(base, 'data', 'attachments', attachmentId),
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  return candidates[0];
 }
 
 /**
@@ -207,20 +224,22 @@ export class SignalInterface implements MessageInterface {
     // If no dataMessage at all, skip
     if (!dataMessage) return;
 
-    // If no text but has audio attachment, try to transcribe
-    if (!dataMessage.message) {
+    const dataMsg = dataMessage as { message?: string; body?: string; attachments?: Array<{ contentType: string; filename?: string; storedFilename?: string; id?: string; size: number }> };
+    const textContent = dataMsg.message ?? dataMsg.body ?? '';
+    if (!textContent) {
       const audioAttachment = dataMessage.attachments?.find(
         (a) => a.contentType?.startsWith('audio/')
       );
-      if (audioAttachment?.filename || audioAttachment?.id) {
-        const audioPath = audioAttachment.filename || `/tmp/signal-attachment-${audioAttachment.id}`;
+      if (!audioAttachment) return;
+      if (audioAttachment.filename || (audioAttachment as { storedFilename?: string }).storedFilename || audioAttachment.id) {
+        const audioPath = (audioAttachment as { storedFilename?: string }).storedFilename || audioAttachment.filename || `/tmp/signal-attachment-${audioAttachment.id}`;
         try {
           const { transcribeAudio } = await import('../capabilities/voice/transcriber.js');
           const result = await transcribeAudio(audioPath);
           if (result.success && result.text) {
             logger.info('Voice note transcribed', { method: result.method, length: result.text.length });
             // Continue processing with transcribed text
-            dataMessage.message = result.text;
+            (dataMessage as { message?: string }).message = result.text;
           } else {
             logger.debug('Voice transcription failed or empty', { text: result.text });
             return;
@@ -234,6 +253,8 @@ export class SignalInterface implements MessageInterface {
       }
     }
     
+    const content = (dataMessage as { message?: string }).message ?? (dataMessage as { body?: string }).body ?? '';
+    
     // Skip group messages (only handle direct messages)
     if (dataMessage.groupInfo) {
       logger.debug('Skipping group message');
@@ -241,12 +262,21 @@ export class SignalInterface implements MessageInterface {
     }
     
     const sender = envelope.source;
-    const content = dataMessage.message;
-    
-    logger.info('Received Signal message', { 
-      from: sender.substring(0, 4) + '***',
-      length: content.length 
-    });
+    const attCount = dataMessage.attachments?.length ?? 0;
+    if (attCount > 0) {
+      const first = dataMessage.attachments![0] as Record<string, unknown>;
+      logger.info('Received Signal message', { 
+        from: sender.substring(0, 4) + '***',
+        length: content.length,
+        attachmentCount: attCount,
+        firstAttachmentKeys: Object.keys(first || {}),
+      });
+    } else {
+      logger.info('Received Signal message', { 
+        from: sender.substring(0, 4) + '***',
+        length: content.length 
+      });
+    }
     
     // Check authorization
     if (!config.security.allowed_numbers.includes(sender)) {
@@ -269,14 +299,27 @@ export class SignalInterface implements MessageInterface {
       interface: 'signal'
     };
     
-    // Handle attachments if present
-    if (dataMessage.attachments && dataMessage.attachments.length > 0) {
-      incoming.attachments = dataMessage.attachments.map(att => ({
-        type: att.contentType.startsWith('image/') ? 'image' : 
-              att.contentType.startsWith('audio/') ? 'audio' : 'file',
-        path: att.filename,
-        mimeType: att.contentType
-      }));
+    // Handle attachments: signal-cli stores files by id; map to path
+    if (dataMsg.attachments && dataMsg.attachments.length > 0) {
+      const cType = (s: string) => (s || '').toLowerCase();
+      incoming.attachments = dataMsg.attachments.map(att => {
+        const raw = att as Record<string, unknown>;
+        let path = (raw.storedFilename ?? raw.filename ?? raw.path ?? raw.uri) as string | undefined;
+        if (!path && raw.id) {
+          path = resolveAttachmentPath(String(raw.id));
+        }
+        const type = cType(att.contentType as string).startsWith('image/') ? 'image' as const
+          : cType(att.contentType as string).startsWith('audio/') ? 'audio' as const
+          : 'file' as const;
+        return { type, path: path || undefined, mimeType: att.contentType as string };
+      });
+      const first = incoming.attachments[0];
+      const pathInfo = first ? { firstPath: (first as { path?: string }).path, firstPathExists: (first as { path?: string }).path ? existsSync((first as { path?: string }).path!) : false } : {};
+      logger.info('Signal message has attachments', {
+        count: incoming.attachments.length,
+        firstType: first?.type,
+        ...pathInfo,
+      });
     }
     
     // Pass to message handler

@@ -22,6 +22,8 @@ export interface CursorAgentLaunchRequest {
     repository: string;  // GitHub repo URL
     ref?: string;        // branch, defaults to main
   };
+  /** Model to use. "auto" = let Cursor pick best for task. Omit = use dashboard default. */
+  model?: string;
 }
 
 export interface CursorAgentResponse {
@@ -153,6 +155,7 @@ export class CursorClient {
   ): Promise<CursorAgentResponse> {
     logger.info('Launching Cursor agent', { repository, branch, promptLength: prompt.length });
 
+    const model = process.env.CURSOR_CLOUD_MODEL ?? 'auto';
     const payload: CursorAgentLaunchRequest = {
       prompt: {
         text: prompt,
@@ -162,6 +165,7 @@ export class CursorClient {
         repository,
         ref: branch,
       },
+      ...(model !== 'default' ? { model } : {}),  // "default" = omit, use dashboard default
     };
 
     const result = await this.request<CursorAgentResponse>('POST', '/v0/agents', payload, 60000);

@@ -4,13 +4,16 @@
  */
 
 import express, { Request, Response } from 'express';
-import { createServer } from 'http';
+import { createServer as createHttpServer } from 'http';
+import { createServer as createHttpsServer } from 'https';
+import { readFileSync } from 'fs';
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomUUID } from 'crypto';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { config } from '../config.js';
 import { logger, registerWSClient, unregisterWSClient } from '../utils/logger.js';
+import { setupVoiceWebSocket } from '../integrations/voice/voice-server.js';
 import { getSystemStatus, handleMessage } from '../core/handler.js';
 import { getProjectIndex, listProjects } from '../core/project-scanner.js';
 import { getPendingChanges, setStreamCallback } from '../core/cursor-agent.js';
@@ -40,15 +43,41 @@ type MessageHandler = (message: IncomingMessage) => Promise<void>;
 export class WebInterface implements MessageInterface {
   name = 'web';
   private app = express();
-  private server = createServer(this.app);
-  private wss = new WebSocketServer({ server: this.server });
+  private server = config.server.tls
+    ? createHttpsServer(
+        {
+          key: readFileSync(config.server.tls.keyPath),
+          cert: readFileSync(config.server.tls.certPath)
+        },
+        this.app
+      )
+    : createHttpServer(this.app);
+  private wss = new WebSocketServer({ noServer: true });
+  private voiceWss: WebSocketServer | null = null;
   private messageHandler: MessageHandler | null = null;
   private clients = new Set<WebSocket>();
   private homelabBroadcastTimer: ReturnType<typeof setInterval> | null = null;
-  
+
   constructor() {
     this.setupRoutes();
     this.setupWebSocket();
+    if (config.voice?.enabled) {
+      this.voiceWss = new WebSocketServer({ noServer: true });
+      setupVoiceWebSocket(this.voiceWss, this.app);
+      logger.info('Voice interface enabled', { path: '/voice', testPage: '/voice/test' });
+    }
+    this.server.on('upgrade', (request, socket, head) => {
+      const path = (request.url || '').split('?')[0];
+      if (path === '/voice' && this.voiceWss) {
+        this.voiceWss.handleUpgrade(request, socket, head, (ws) => {
+          this.voiceWss!.emit('connection', ws, request);
+        });
+      } else {
+        this.wss.handleUpgrade(request, socket, head, (ws) => {
+          this.wss.emit('connection', ws, request);
+        });
+      }
+    });
     this.setupPrdCallbacks();
     this.setupCursorBroadcast();
   }
@@ -87,6 +116,7 @@ export class WebInterface implements MessageInterface {
     // Serve static files from web directory (no caching so updates take effect immediately)
     const webDir = resolve(__dirname, '../../web');
     this.app.use(express.static(webDir, { etag: false, maxAge: 0 }));
+    this.app.use('/tablet', express.static(resolve(webDir, 'tablet'), { index: 'index.html', etag: false, maxAge: 0 }));
     this.app.use((_req, res, next) => {
       res.setHeader('Cache-Control', 'no-store');
       next();
@@ -176,12 +206,37 @@ export class WebInterface implements MessageInterface {
     });
 
     // API: Notes
-    this.app.get('/api/notes', async (_req: Request, res: Response) => {
+    this.app.get('/api/notes', async (req: Request, res: Response) => {
       try {
-        const { listNotes } = await import('../capabilities/notes/scratchpad.js');
-        res.json({ notes: listNotes() });
+        const { listNotes, searchNotes } = await import('../capabilities/notes/scratchpad.js');
+        const q = (req.query.q as string)?.trim();
+        const notes = q ? searchNotes(q) : listNotes();
+        res.json({ notes });
       } catch (error) {
         res.json({ notes: [] });
+      }
+    });
+    this.app.post('/api/notes', async (req: Request, res: Response) => {
+      try {
+        const { addNote } = await import('../capabilities/notes/scratchpad.js');
+        const content = (req.body?.content as string)?.trim();
+        if (!content) {
+          res.status(400).json({ error: 'content required' });
+          return;
+        }
+        const note = addNote(content);
+        res.status(201).json(note);
+      } catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to add note' });
+      }
+    });
+    this.app.delete('/api/notes/:id', async (req: Request, res: Response) => {
+      try {
+        const { deleteNote } = await import('../capabilities/notes/scratchpad.js');
+        const deleted = deleteNote(req.params.id);
+        res.json({ success: deleted });
+      } catch (error) {
+        res.status(500).json({ success: false, error: String(error) });
       }
     });
 
@@ -1022,8 +1077,9 @@ export class WebInterface implements MessageInterface {
         }
       });
       
+      const scheme = config.server.tls ? 'https' : 'http';
       this.server.listen(config.server.port, config.server.host, () => {
-        logger.info(`Web interface started at http://${config.server.host}:${config.server.port}`);
+        logger.info(`Web interface started at ${scheme}://${config.server.host}:${config.server.port}`);
         this.startHomelabBroadcast();
         resolve();
       });
@@ -1080,9 +1136,14 @@ export class WebInterface implements MessageInterface {
       }
       this.clients.clear();
       
-      // Close WebSocket server
+      // Close WebSocket servers
       try {
         this.wss.close();
+      } catch {
+        // Ignore
+      }
+      try {
+        if (this.voiceWss) this.voiceWss.close();
       } catch {
         // Ignore
       }

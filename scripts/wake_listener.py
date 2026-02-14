@@ -48,7 +48,7 @@ def main():
         break
 
     chunk_bytes = 2560  # 1280 samples * 2 bytes
-    threshold = 0.7   # higher = fewer false triggers (was 0.5)
+    threshold = 0.5  # Must retrain model at openwakeword.com for "Hey Jeeves" to trigger; lower = false triggers
     debounce_seconds = 2.5
     last_wake = 0.0
 

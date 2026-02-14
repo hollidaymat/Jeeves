@@ -75,19 +75,36 @@ async function ensureLogin(): Promise<boolean> {
       signal: AbortSignal.timeout(10_000),
     });
 
+    const body = await res.text();
+
     if (res.status === 403) {
       logger.warn('[qbittorrent] Login failed: IP may be banned');
       return false;
     }
 
-    const setCookie = res.headers.get('set-cookie');
-    if (setCookie && setCookie.includes('SID=')) {
-      const match = setCookie.match(/SID=([^;]+)/);
-      authCookie = match ? match[1] : null;
+    if (body.trim() === 'Fails.') {
+      logger.warn(
+        '[qbittorrent] Invalid username or password. Set QBITTORRENT_USER/QBITTORRENT_PASS in .env to match Web UI (Tools → Options → Web UI). After a container restart, use the temp password from container logs and set a permanent password in the UI.'
+      );
+      return false;
+    }
+
+    // getSetCookie() returns all Set-Cookie headers; get('set-cookie') only the first
+    const setCookies = typeof res.headers.getSetCookie === 'function'
+      ? res.headers.getSetCookie()
+      : [res.headers.get('set-cookie')].filter(Boolean) as string[];
+    for (const setCookie of setCookies) {
+      if (setCookie && setCookie.includes('SID=')) {
+        const match = setCookie.match(/SID=([^;]+)/);
+        if (match) {
+          authCookie = match[1];
+          break;
+        }
+      }
     }
 
     if (!authCookie) {
-      logger.warn('[qbittorrent] Login response had no SID cookie');
+      logger.warn('[qbittorrent] Login response had no SID cookie (body: %s)', body.trim() || res.status);
       return false;
     }
 

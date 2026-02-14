@@ -153,9 +153,13 @@
               <label class="voice-wake-label">
                 <input type="checkbox" id="voice-wake-toggle" title="Stream mic to server for &quot;Hey Jeeves&quot; detection">
                 <span>Listen for &quot;Hey Jeeves&quot;</span>
+                <span id="voice-wake-wait-hint" class="voice-wake-wait-hint" style="display:none"> (wait for READY)</span>
               </label>
             </div>
-            <p class="voice-hint voice-wake-hint">If voice runs without pressing the button, uncheck above (false wake). Use Hold to Talk only to avoid this.</p>
+            <p class="voice-hint voice-wake-hint">Stream stays on until you uncheck. If voice runs without pressing the button, uncheck above (false wake). Use Hold to Talk only to avoid this.</p>
+            <div class="voice-wake-row">
+              <button type="button" class="voice-test-pcm-btn" id="voice-record-test-pcm" title="Record 2s from mic, download raw 16kHz PCM to test with: node scripts/test-wake-with-pcm.mjs file.pcm">Record test PCM (2s)</button>
+            </div>
           </section>
 
           <!-- Quick Commands -->
@@ -518,6 +522,6 @@
     </footer>
   </div>
 
-  <script src="app.js?v=voice7"></script>
+  <script src="app.js?v=wakefix2"></script>
 </body>
 </html>

@@ -155,38 +155,54 @@ class VoiceRecorder {
 // ============================================================================
 // VoiceWakeStream - streams 16kHz PCM 1280-sample chunks for server-side wake word
 // ScriptProcessor requires power-of-two buffer (256–16384); use 2048 then slice to 1280.
+// Resamples to 16kHz if the browser uses a different rate (e.g. 48kHz).
 // ============================================================================
 class VoiceWakeStream {
   constructor(sendChunk) {
-    this.sampleRate = 16000;
+    this.targetRate = 16000;
     this.sendChunk = sendChunk;
     this.ctx = null;
     this.stream = null;
     this.processor = null;
     this.source = null;
-    this.buffer = []; // int16 samples, drain in 1280-sample chunks
+    this.buffer = []; // float32 [-1,1], drained and resampled to 16kHz 1280-sample chunks
   }
 
   start(deviceId) {
     return new Promise((resolve, reject) => {
-      this.ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: this.sampleRate });
-      const constraints = { audio: { channelCount: 1, sampleRate: this.sampleRate } };
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: this.targetRate });
+      const constraints = { audio: { channelCount: 1, sampleRate: this.targetRate } };
       if (deviceId && deviceId.length) constraints.audio.deviceId = { exact: deviceId };
       navigator.mediaDevices.getUserMedia(constraints)
         .then((stream) => {
           this.stream = stream;
           this.buffer = [];
+          const inputRate = this.ctx.sampleRate;
+          const ratio = inputRate / this.targetRate; // e.g. 48000/16000 = 3
+          const needInput = Math.ceil(1280 * ratio);
           const source = this.ctx.createMediaStreamSource(stream);
           const processor = this.ctx.createScriptProcessor(2048, 1, 1); // must be power of two
           processor.onaudioprocess = (e) => {
             const float32 = e.inputBuffer.getChannelData(0);
             for (let i = 0; i < float32.length; i++) {
-              const s = Math.max(-1, Math.min(1, float32[i]));
-              this.buffer.push(s < 0 ? s * 0x8000 : s * 0x7FFF);
+              this.buffer.push(Math.max(-1, Math.min(1, float32[i])));
             }
-            while (this.buffer.length >= 1280) {
-              const chunk = this.buffer.splice(0, 1280);
-              const int16 = new Int16Array(chunk);
+            while (this.buffer.length >= needInput) {
+              const input = this.buffer.splice(0, needInput);
+              const out = new Float32Array(1280);
+              for (let i = 0; i < 1280; i++) {
+                const srcIdx = i * ratio;
+                const j = Math.floor(srcIdx);
+                const frac = srcIdx - j;
+                const a = input[j];
+                const b = j + 1 < input.length ? input[j + 1] : a;
+                out[i] = a + frac * (b - a);
+              }
+              const int16 = new Int16Array(1280);
+              for (let i = 0; i < 1280; i++) {
+                const s = out[i];
+                int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+              }
               const b64 = btoa(String.fromCharCode.apply(null, new Uint8Array(int16.buffer)));
               this.sendChunk(b64);
             }
@@ -212,6 +228,73 @@ class VoiceWakeStream {
     this.processor = null;
     this.source = null;
   }
+}
+
+// Record N ms from mic at 16kHz mono, resample if needed, return Int16Array PCM.
+function recordTestPCM(durationMs) {
+  const targetRate = 16000;
+  const targetSamples = Math.floor((durationMs / 1000) * targetRate);
+  return new Promise((resolve, reject) => {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: targetRate });
+    const constraints = { audio: { channelCount: 1, sampleRate: targetRate } };
+    navigator.mediaDevices.getUserMedia(constraints)
+      .then((stream) => {
+        const inputRate = ctx.sampleRate;
+        const ratio = inputRate / targetRate;
+        const needInput = Math.ceil(1280 * ratio);
+        const source = ctx.createMediaStreamSource(stream);
+        const processor = ctx.createScriptProcessor(2048, 1, 1);
+        const buffer = [];
+        const outSamples = [];
+        let done = false;
+        const finish = (int16) => {
+          if (done) return;
+          done = true;
+          processor.disconnect();
+          source.disconnect();
+          stream.getTracks().forEach((t) => t.stop());
+          ctx.close();
+          resolve(int16);
+        };
+        processor.onaudioprocess = (e) => {
+          const float32 = e.inputBuffer.getChannelData(0);
+          for (let i = 0; i < float32.length; i++) buffer.push(Math.max(-1, Math.min(1, float32[i])));
+          while (buffer.length >= needInput && outSamples.length < targetSamples) {
+            const input = buffer.splice(0, needInput);
+            const out = new Float32Array(1280);
+            for (let i = 0; i < 1280; i++) {
+              const srcIdx = i * ratio;
+              const j = Math.floor(srcIdx);
+              const frac = srcIdx - j;
+              const a = input[j];
+              const b = j + 1 < input.length ? input[j + 1] : a;
+              out[i] = a + frac * (b - a);
+            }
+            for (let i = 0; i < 1280 && outSamples.length < targetSamples; i++) outSamples.push(out[i]);
+          }
+          if (outSamples.length >= targetSamples) {
+            const int16 = new Int16Array(outSamples.length);
+            for (let i = 0; i < outSamples.length; i++) {
+              const s = outSamples[i];
+              int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+            finish(int16);
+          }
+        };
+        source.connect(processor);
+        processor.connect(ctx.destination);
+        setTimeout(() => {
+          if (done) return;
+          const int16 = new Int16Array(outSamples.length);
+          for (let i = 0; i < outSamples.length; i++) {
+            const s = outSamples[i];
+            int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+          }
+          finish(int16);
+        }, durationMs + 500);
+      })
+      .catch(reject);
+  });
 }
 
 // ============================================================================
@@ -271,6 +354,7 @@ class CommandCenter {
     this.voiceRecorder = null;
     this.voiceWakeStream = null;
     this.voiceWakeStreamPending = false;
+    this.wakeStreamRequestedWhenReady = false;
     this.recordingAfterWake = false;
     this.attachedFiles = [];
     this.homelabDashboard = null;
@@ -573,13 +657,56 @@ class CommandCenter {
         this.elements.voiceStatus.className = 'voice-status ' + (state || 'ready');
       }
     };
+    const setVoiceStatusReady = () => {
+      if (this.elements.voiceWakeToggle?.checked && this.voiceWakeStream)
+        setVoiceStatus('Listening for Hey Jeeves…', 'listening');
+      else
+        setVoiceStatus('READY', 'ready');
+    };
+    const wakeWaitHint = document.getElementById('voice-wake-wait-hint');
+    if (this.elements.voiceWakeToggle) {
+      this.elements.voiceWakeToggle.disabled = true;
+      if (wakeWaitHint) wakeWaitHint.style.display = 'inline';
+      console.log('[Voice] Hey Jeeves checkbox disabled until voice READY');
+    }
     setVoiceStatus('CONNECTING…', '');
     this.voiceWs = new WebSocket(wsUrl);
-    this.voiceWs.onopen = () => setVoiceStatus('READY', 'ready');
-    this.voiceWs.onclose = () => setVoiceStatus('DISCONNECTED', 'error');
+    this.voiceWs.onopen = () => {
+      setVoiceStatus('READY', 'ready');
+      if (this.elements.voiceWakeToggle) {
+        this.elements.voiceWakeToggle.disabled = false;
+        if (wakeWaitHint) wakeWaitHint.style.display = 'none';
+        console.log('[Voice] READY – Hey Jeeves checkbox enabled');
+      }
+      if (this.wakeStreamRequestedWhenReady) {
+        this.wakeStreamRequestedWhenReady = false;
+        this.voiceWakeStream = new VoiceWakeStream((b64) => {
+          if (this.voiceWs && this.voiceWs.readyState === 1)
+            this.voiceWs.send(JSON.stringify({ type: 'wake_stream_chunk', pcm: b64 }));
+        });
+        this.voiceWakeStreamPending = true;
+        this.voiceWs.send(JSON.stringify({ type: 'wake_stream_start' }));
+        console.log('[Voice] Sending wake_stream_start (deferred from before READY)');
+      }
+    };
+    this.voiceWs.onclose = () => {
+      setVoiceStatus('DISCONNECTED', 'error');
+      if (this.elements.voiceWakeToggle) {
+        this.elements.voiceWakeToggle.disabled = true;
+        this.elements.voiceWakeToggle.checked = false;
+        if (wakeWaitHint) wakeWaitHint.style.display = 'inline';
+      }
+      this.wakeStreamRequestedWhenReady = false;
+    };
     this.voiceWs.onerror = () => {
       setVoiceStatus('CONNECTION FAILED', 'error');
       this.log('error', 'Voice: could not connect to /voice. Check that voice is enabled (VOICE_ENABLED=true) and refresh.');
+      if (this.elements.voiceWakeToggle) {
+        this.elements.voiceWakeToggle.disabled = true;
+        this.elements.voiceWakeToggle.checked = false;
+        if (wakeWaitHint) wakeWaitHint.style.display = 'inline';
+      }
+      this.wakeStreamRequestedWhenReady = false;
       if (this.voiceWs) this.voiceWs.close();
     };
     this.voiceWs.onmessage = (event) => {
@@ -599,9 +726,9 @@ class CommandCenter {
               src.buffer = decoded;
               src.connect(ctx.destination);
               src.start(0);
-              src.onended = () => setVoiceStatus('READY', 'ready');
-            }).catch(() => setVoiceStatus('READY', 'ready'));
-          } else setVoiceStatus('READY', 'ready');
+              src.onended = () => setVoiceStatusReady();
+            }).catch(() => setVoiceStatusReady());
+          } else setVoiceStatusReady();
         }
         if (msg.type === 'voice_audio' && msg.audio) {
           setVoiceStatus('SPEAKING…', 'processing');
@@ -612,16 +739,28 @@ class CommandCenter {
             src.buffer = decoded;
             src.connect(ctx.destination);
             src.start(0);
-            src.onended = () => setVoiceStatus('READY', 'ready');
-          }).catch(() => setVoiceStatus('READY', 'ready'));
+            src.onended = () => setVoiceStatusReady();
+          }).catch(() => setVoiceStatusReady());
         }
         if (msg.type === 'error') {
           this.log('error', msg.message || 'Voice error');
-          setVoiceStatus('READY', 'ready');
+          setVoiceStatusReady();
+          const wakeErr = msg.message && (msg.message.includes('Wake') || msg.message.includes('wake'));
+          if (wakeErr && this.elements.voiceWakeToggle?.checked) {
+            this.elements.voiceWakeToggle.checked = false;
+            if (this.voiceWakeStream) {
+              this.voiceWakeStream.stop();
+              this.voiceWakeStream = null;
+            }
+            this.voiceWakeStreamPending = false;
+            this.voiceWs.send(JSON.stringify({ type: 'wake_stream_stop' }));
+          }
         }
         if (msg.type === 'wake_stream_ready') {
           if (this.voiceWakeStream && this.voiceWakeStreamPending) {
-            this.voiceWakeStream.start(this.getPreferredVoiceDeviceId()).catch((err) => {
+            this.voiceWakeStream.start(this.getPreferredVoiceDeviceId()).then(() => {
+              setVoiceStatus('Listening for Hey Jeeves…', 'listening');
+            }).catch((err) => {
               this.voiceWakeStreamPending = false;
               this.log('error', 'Hey Jeeves: mic failed – ' + (err && err.message ? err.message : 'allow microphone'));
             });
@@ -636,7 +775,7 @@ class CommandCenter {
           this.voiceRecorder.start(this.getPreferredVoiceDeviceId()).catch(() => {
             this.recordingAfterWake = false;
             this.elements.voiceHoldBtn?.classList.remove('recording');
-            setVoiceStatus('READY', 'ready');
+            setVoiceStatusReady();
           });
           setTimeout(() => {
             this.elements.voiceHoldBtn?.classList.remove('recording');
@@ -651,10 +790,10 @@ class CommandCenter {
               } else {
                 if (wavBuffer && wavBuffer.byteLength > 0 && wavBuffer.byteLength < minBytes)
                   this.log('system', 'Voice: recording too short (try saying "Hey Jeeves" again).');
-                setVoiceStatus('READY', 'ready');
+                setVoiceStatusReady();
               }
               setTimeout(() => { this.recordingAfterWake = false; }, 500);
-            }).catch(() => { setVoiceStatus('READY', 'ready'); this.recordingAfterWake = false; });
+            }).catch(() => { setVoiceStatusReady(); this.recordingAfterWake = false; });
           }, 4000);
         }
       } catch (e) { /* ignore */ }
@@ -683,7 +822,7 @@ class CommandCenter {
       browserRecognition.onerror = (event) => {
         if (event.error === 'no-speech') this.log('system', 'Voice: no speech heard. Hold the button while you speak.');
         else if (event.error !== 'aborted') this.log('error', 'Voice: ' + (event.error || 'recognition error'));
-        setVoiceStatus('READY', 'ready');
+        setVoiceStatusReady();
       };
       browserRecognition.onend = () => {
         this.elements.voiceHoldBtn?.classList.remove('recording');
@@ -707,7 +846,7 @@ class CommandCenter {
         } catch (e) {
           this.elements.voiceHoldBtn?.classList.remove('recording');
           this.log('error', 'Voice: ' + (e && e.message ? e.message : 'Speech recognition failed'));
-          setVoiceStatus('READY', 'ready');
+          setVoiceStatusReady();
         }
         return;
       }
@@ -742,9 +881,9 @@ class CommandCenter {
             else this.log('system', 'Voice: no audio recorded (hold longer while speaking)');
           } else if (wavBuffer.byteLength < MIN_WAV_BYTES)
             this.log('system', 'Voice: recording too short. Hold at least a second while speaking.');
-          setVoiceStatus('READY', 'ready');
+          setVoiceStatusReady();
         }
-      }).catch(() => setVoiceStatus('READY', 'ready'));
+      }).catch(() => setVoiceStatusReady());
     };
     this.elements.voiceHoldBtn.addEventListener('mousedown', onHoldStart);
     this.elements.voiceHoldBtn.addEventListener('mouseup', onHoldEnd);
@@ -754,22 +893,77 @@ class CommandCenter {
 
     if (this.elements.voiceWakeToggle) {
       this.elements.voiceWakeToggle.addEventListener('change', () => {
-        if (!this.voiceWs || this.voiceWs.readyState !== 1) return;
         if (this.elements.voiceWakeToggle.checked) {
+          if (!this.voiceWs || this.voiceWs.readyState !== 1) {
+            this.wakeStreamRequestedWhenReady = true;
+            console.log('[Voice] Hey Jeeves checked before READY – will send when connected');
+            return;
+          }
           this.voiceWakeStream = new VoiceWakeStream((b64) => {
             if (this.voiceWs && this.voiceWs.readyState === 1)
               this.voiceWs.send(JSON.stringify({ type: 'wake_stream_chunk', pcm: b64 }));
           });
           this.voiceWakeStreamPending = true;
           this.voiceWs.send(JSON.stringify({ type: 'wake_stream_start' }));
+          console.log('[Voice] Sending wake_stream_start');
         } else {
+          this.wakeStreamRequestedWhenReady = false;
           if (this.voiceWakeStream) {
             this.voiceWakeStream.stop();
             this.voiceWakeStream = null;
           }
           this.voiceWakeStreamPending = false;
-          this.voiceWs.send(JSON.stringify({ type: 'wake_stream_stop' }));
+          if (this.voiceWs && this.voiceWs.readyState === 1)
+            this.voiceWs.send(JSON.stringify({ type: 'wake_stream_stop' }));
+          setVoiceStatus('READY', 'ready');
         }
+      });
+    }
+    const recordTestPcmBtn = document.getElementById('voice-record-test-pcm');
+    if (recordTestPcmBtn) {
+      recordTestPcmBtn.addEventListener('click', () => {
+        recordTestPcmBtn.disabled = true;
+        recordTestPcmBtn.textContent = 'Recording 2s…';
+        recordTestPCM(2000)
+          .then((pcm) => {
+            const bytes = new Uint8Array(pcm.buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+            const pcmBase64 = btoa(binary);
+            const apiUrl = window.location.origin + '/api/voice/test-wake';
+            return fetch(apiUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ pcm: pcmBase64 })
+            }).then((r) => r.json()).then((result) => ({ result, pcm }));
+          })
+          .then(({ result, pcm }) => {
+            if (result.error) {
+              this.log('error', 'Wake test: ' + result.error);
+              return;
+            }
+            const maxScore = result.maxScore != null ? result.maxScore : 0;
+            const detected = result.wakeDetected === true;
+            if (detected) {
+              this.log('system', 'Hey Jeeves detected! (score ' + maxScore.toFixed(3) + ')');
+            } else {
+              this.log('system', 'Not detected (max score ' + maxScore.toFixed(3) + ', need ' + (result.threshold || 0.5) + '). Say "Hey Jeeves" clearly and try again.');
+            }
+            const now = new Date();
+            const stamp = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') + '-' + String(now.getMinutes()).padStart(2, '0') + '-' + String(now.getSeconds()).padStart(2, '0');
+            const filename = 'hey_jeeves_test_' + stamp + '.pcm';
+            const blob = new Blob([pcm.buffer], { type: 'application/octet-stream' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(a.href);
+          })
+          .catch((err) => this.log('error', 'Record/test failed: ' + (err && err.message ? err.message : 'allow microphone')))
+          .finally(() => {
+            recordTestPcmBtn.disabled = false;
+            recordTestPcmBtn.textContent = 'Record test PCM (2s)';
+          });
       });
     }
   }
@@ -1452,16 +1646,29 @@ class HomelabDashboard {
       return (priorityOrder[a.priority] || 9) - (priorityOrder[b.priority] || 9);
     });
 
+    // Homelab services serve HTTP on their port; use http so we don't force HTTPS (ERR_SSL_PROTOCOL_ERROR)
+    const host = window.location.hostname;
+    const getServiceUrl = (svc) => {
+      if (!svc.ports || svc.ports.length === 0) return null;
+      const first = svc.ports[0];
+      const hostPort = typeof first === 'number' ? first : parseInt(String(first).split(':')[0], 10);
+      return isNaN(hostPort) ? null : `http://${host}:${hostPort}`;
+    };
+
     this.serviceGrid.innerHTML = sorted.map(svc => {
       const stateClass = svc.state || 'unknown';
       const detail = svc.state === 'running' 
         ? (svc.memUsage || svc.ramMB + 'MB') 
         : svc.state;
       const isExpanded = this.expandedService === svc.name;
+      const serviceUrl = getServiceUrl(svc);
+      const nameEl = serviceUrl
+        ? `<a href="${serviceUrl}" target="_blank" rel="noopener" class="service-name service-name-link" title="${svc.purpose || svc.name} (open in browser)">${svc.name}</a>`
+        : `<span class="service-name" title="${svc.purpose || svc.name}">${svc.name}</span>`;
       return `<div class="service-card ${isExpanded ? 'expanded' : ''}" data-service="${svc.name}">
         <div class="service-card-header">
           <span class="service-status-dot ${stateClass}"></span>
-          <span class="service-name" title="${svc.purpose || svc.name}">${svc.name}</span>
+          ${nameEl}
           ${isExpanded ? '<button class="service-collapse-btn" data-collapse="true">&#9660;</button>' : ''}
         </div>
         <div class="service-detail">${detail}</div>
@@ -1481,7 +1688,7 @@ class HomelabDashboard {
     // Add click handlers for expansion
     this.serviceGrid.querySelectorAll('.service-card').forEach(card => {
       card.addEventListener('click', (e) => {
-        if (e.target.closest('.svc-action-btn')) return;
+        if (e.target.closest('.svc-action-btn') || e.target.closest('.service-name-link')) return;
         const name = card.dataset.service;
         if (e.target.dataset.collapse) {
           this.collapseService();

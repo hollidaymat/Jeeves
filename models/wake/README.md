@@ -42,6 +42,54 @@ The server can run wake word detection in Python so the browser doesn’t need t
 
 No browser-side ONNX or mel preprocessing is required.
 
+**If Hey Jeeves never triggers (or triggers constantly):** The bundled model may not match your voice. Use **Record test PCM (2s)** and check the max score; if it's well below 0.5, retrain a custom model at [openwakeword.com](https://openwakeword.com) with the phrase "Hey Jeeves", then replace `hey_jeeves.onnx` here. Do not lower the threshold in `wake_listener.py` or you get constant false triggers.
+
+### Test the model with a PCM file
+
+To verify the model and script without the browser, pipe a raw PCM file (16 kHz, 16-bit LE, mono) into the listener.
+
+**In the web UI:** Open the voice panel and click **Record test PCM (2s)**. Say "Hey Jeeves" during the 2 seconds. The app sends the recording to the server, runs the wake model, and shows **Hey Jeeves detected!** or **Not detected (max score 0.xx)** in the console. A timestamped file also downloads so you can re-test from the CLI if you want.
+
+**List test files and run tests (CLI):**
+
+```bash
+# List recorded PCM files (newest first)
+npm run list:wake-pcm
+
+# List files and show max wake score for each
+npm run list:wake-pcm-scores
+
+# Test one file (triggers WAKE if phrase detected)
+node scripts/test-wake-with-pcm.mjs hey_jeeves_test_2026-02-11_08-30-00.pcm
+
+# See per-chunk scores for one file
+node scripts/wake_scores.mjs hey_jeeves_test_2026-02-11_08-30-00.pcm
+```
+
+**From the command line:**
+
+```bash
+# From a WAV (e.g. you saying "Hey Jeeves"):
+ffmpeg -i recording.wav -ar 16000 -ac 1 -f s16le -acodec pcm_s16le hey_test.raw
+node scripts/test-wake-with-pcm.mjs hey_test.raw
+
+# Or record from mic with sox (install sox):
+sox -d -t raw -r 16000 -e signed-integer -b 16 -c 1 test.pcm trim 0 5
+node scripts/test-wake-with-pcm.mjs test.pcm
+
+# Or with Python sounddevice:
+python3 -c "
+import sounddevice as sd
+import numpy as np
+audio = sd.rec(int(2 * 16000), samplerate=16000, channels=1, dtype='int16')
+sd.wait()
+audio.tofile('audio.pcm')
+"
+node scripts/test-wake-with-pcm.mjs audio.pcm
+```
+
+If the phrase is detected, the script prints `WAKE` to stdout.
+
 ## Without a wake model
 
 If you leave this folder empty, the tablet and /voice/test still work with push-to-talk only.

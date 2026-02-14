@@ -54,23 +54,30 @@ let voiceClients: Set<WebSocket> = new Set();
 
 const WAKE_CHUNK_BYTES = 2560; // 1280 samples * 2 (16-bit PCM for openWakeWord)
 
-type WakeStreamState = { proc: ChildProcess; buffer: Buffer };
+const WAKE_LOG_CHUNK_INTERVAL = 25; // log every ~2s of PCM (25 * 80ms)
+type WakeStreamState = { proc: ChildProcess; buffer: Buffer; chunksFed: number };
 const wakeStreamByWs = new Map<WebSocket, WakeStreamState>();
 
 function startWakeListener(ws: WebSocket): boolean {
-  if (wakeStreamByWs.has(ws)) return true;
+  if (wakeStreamByWs.has(ws)) {
+    logger.info('Wake listener already running for this client');
+    return true;
+  }
   const modelPath = config.voice?.wakeModelPath ?? '';
   if (!modelPath || !existsSync(modelPath)) {
+    logger.warn('Wake model not found', { path: modelPath || '(empty)' });
     send(ws, { type: 'error', message: 'Wake model not found (VOICE_WAKE_MODEL_PATH)' });
     return false;
   }
   const scriptPath = resolve(ROOT, 'scripts', 'wake_listener.py');
   if (!existsSync(scriptPath)) {
+    logger.warn('Wake listener script not found', { path: scriptPath });
     send(ws, { type: 'error', message: 'scripts/wake_listener.py not found' });
     return false;
   }
   const venvPython = resolve(ROOT, 'scripts', 'venv', 'bin', 'python3');
   const pythonBin = existsSync(venvPython) ? venvPython : 'python3';
+  logger.info('Starting wake listener', { modelPath, scriptPath, pythonBin });
   try {
     const proc = spawn(pythonBin, [scriptPath, modelPath], {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -91,10 +98,11 @@ function startWakeListener(ws: WebSocket): boolean {
       const idx = stdoutBuf.indexOf('WAKE');
       if (idx !== -1) {
         stdoutBuf = stdoutBuf.slice(idx + 4);
+        logger.info('Wake word detected');
         send(ws, { type: 'wake_detected', timestamp: Date.now() });
       }
     });
-    wakeStreamByWs.set(ws, { proc, buffer: Buffer.alloc(0) });
+    wakeStreamByWs.set(ws, { proc, buffer: Buffer.alloc(0), chunksFed: 0 });
     return true;
   } catch (err) {
     send(ws, { type: 'error', message: err instanceof Error ? err.message : 'Wake listener failed' });
@@ -112,6 +120,9 @@ function feedWakePcm(ws: WebSocket, pcmBase64: string): void {
       const slice = state.buffer.subarray(0, WAKE_CHUNK_BYTES);
       state.buffer = state.buffer.subarray(WAKE_CHUNK_BYTES);
       state.proc.stdin.write(slice);
+      state.chunksFed++;
+      if (state.chunksFed === 1) logger.info('Wake PCM: first chunk received');
+      else if (state.chunksFed % WAKE_LOG_CHUNK_INTERVAL === 0) logger.info('Wake PCM: chunks fed', { n: state.chunksFed });
     }
   } catch {
     // ignore bad base64
@@ -145,13 +156,18 @@ export function setupVoiceWebSocket(wss: WebSocketServer, app: ReturnType<typeof
             send(ws, { type: 'pong' });
             return;
           case 'wake_stream_start':
-            if (startWakeListener(ws)) send(ws, { type: 'wake_stream_ready' });
+            logger.info('Wake stream start requested');
+            if (startWakeListener(ws)) {
+              logger.info('Wake listener started, sending wake_stream_ready');
+              send(ws, { type: 'wake_stream_ready' });
+            }
             return;
           case 'wake_stream_chunk':
             if (message.pcm) feedWakePcm(ws, message.pcm);
             return;
           case 'wake_stream_stop':
             stopWakeListener(ws);
+            logger.info('Wake stream stop');
             return;
           case 'text_command': {
             const text = (message.text ?? '').trim();
@@ -234,6 +250,53 @@ export function setupVoiceWebSocket(wss: WebSocketServer, app: ReturnType<typeof
     }
     res.setHeader('Content-Type', 'application/octet-stream');
     createReadStream(path).pipe(res);
+  });
+
+  const WAKE_TEST_THRESHOLD = 0.5; // match wake_listener.py
+  app.post('/api/voice/test-wake', (req: Request, res: Response) => {
+    const modelPath = config.voice?.wakeModelPath ?? '';
+    if (!modelPath || !existsSync(modelPath)) {
+      res.status(400).json({ error: 'Wake model not found' });
+      return;
+    }
+    const pcmBase64 = typeof req.body?.pcm === 'string' ? req.body.pcm : '';
+    if (!pcmBase64) {
+      res.status(400).json({ error: 'Body must include { pcm: "<base64>" }' });
+      return;
+    }
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(pcmBase64, 'base64');
+    } catch {
+      res.status(400).json({ error: 'Invalid base64 pcm' });
+      return;
+    }
+    const scriptPath = resolve(ROOT, 'scripts', 'wake_score_stdin.py');
+    if (!existsSync(scriptPath)) {
+      res.status(500).json({ error: 'wake_score_stdin.py not found' });
+      return;
+    }
+    const venvPython = resolve(ROOT, 'scripts', 'venv', 'bin', 'python3');
+    const pythonBin = existsSync(venvPython) ? venvPython : 'python3';
+    const proc = spawn(pythonBin, [scriptPath, modelPath], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: ROOT,
+      env: { ...process.env, ORT_EXECUTION_PROVIDERS: 'CPUExecutionProvider' }
+    });
+    let stdout = '';
+    proc.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
+    proc.stderr?.on('data', () => {});
+    proc.stdin?.end(buffer);
+    proc.on('close', (code) => {
+      const m = stdout.match(/MAX\s+([\d.]+)/);
+      const maxScore = m ? parseFloat(m[1]) : 0;
+      const wakeDetected = maxScore >= WAKE_TEST_THRESHOLD;
+      res.json({ wakeDetected, maxScore, threshold: WAKE_TEST_THRESHOLD });
+    });
+    proc.on('error', (err) => {
+      logger.warn('test-wake spawn error', { error: String(err) });
+      res.status(500).json({ error: 'Wake test failed' });
+    });
   });
 
   app.get('/api/voice/dashboard', async (_req: Request, res: Response) => {

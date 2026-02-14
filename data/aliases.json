@@ -58,5 +58,29 @@
     "commandId": "homelab.report",
     "useCount": 1,
     "lastUsed": "2026-02-11T02:37:13.909Z"
+  },
+  {
+    "phrase": "Pause notifications for today",
+    "commandId": "schedule.mute_notifications",
+    "useCount": 1,
+    "lastUsed": "2026-02-12T12:56:44.438Z"
+  },
+  {
+    "phrase": "hey Jeeves give me a home lab report",
+    "commandId": "homelab.report",
+    "useCount": 1,
+    "lastUsed": "2026-02-12T13:15:27.163Z"
+  },
+  {
+    "phrase": "yes, homelab report",
+    "commandId": "homelab.report",
+    "useCount": 1,
+    "lastUsed": "2026-02-13T01:34:10.642Z"
+  },
+  {
+    "phrase": "Pause notifications for the day",
+    "commandId": "schedule.mute_notifications",
+    "useCount": 2,
+    "lastUsed": "2026-02-14T05:21:53.821Z"
   }
 ]

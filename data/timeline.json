@@ -750,5 +750,221 @@
     "category": "system",
     "message": "Jeeves started",
     "severity": "info"
+  },
+  {
+    "id": "evt-1770777816034-yr4w",
+    "timestamp": "2026-02-11T02:43:36.034Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1770779392761-8ptx",
+    "timestamp": "2026-02-11T03:09:52.761Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1770779699077-9xwh",
+    "timestamp": "2026-02-11T03:14:59.077Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1770780174579-zc9w",
+    "timestamp": "2026-02-11T03:22:54.579Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1770780526224-mvof",
+    "timestamp": "2026-02-11T03:28:46.224Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1770807655088-9n8q",
+    "timestamp": "2026-02-11T11:00:55.088Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Disk health check: 0 warning(s) across 2 disk(s)",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1770811257079-voeu",
+    "timestamp": "2026-02-11T12:00:57.079Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Log scan: 286 errors across 27 containers",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1770814829888-6usr",
+    "timestamp": "2026-02-11T13:00:29.888Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1770816998309-rr75",
+    "timestamp": "2026-02-11T13:36:38.309Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1770817867122-a3w4",
+    "timestamp": "2026-02-11T13:51:07.122Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1770818500507-k8iy",
+    "timestamp": "2026-02-11T14:01:40.507Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Image update check: 27 of 27 containers have updates available",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1770894023419-jai3",
+    "timestamp": "2026-02-12T11:00:23.419Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Disk health check: 0 warning(s) across 2 disk(s)",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1770897624933-54kh",
+    "timestamp": "2026-02-12T12:00:24.933Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Log scan: 303 errors across 27 containers",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1770904895247-9vk7",
+    "timestamp": "2026-02-12T14:01:35.247Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Image update check: 26 of 27 containers have updates available",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1770912452361-2xgq",
+    "timestamp": "2026-02-12T16:07:32.361Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1770947252686-wc8y",
+    "timestamp": "2026-02-13T01:47:32.686Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1770947336669-fwaj",
+    "timestamp": "2026-02-13T01:48:56.669Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1770947668079-vr1s",
+    "timestamp": "2026-02-13T01:54:28.079Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1770947847631-7tdl",
+    "timestamp": "2026-02-13T01:57:27.631Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1770948240283-nj3y",
+    "timestamp": "2026-02-13T02:04:00.283Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1770980406821-2p2h",
+    "timestamp": "2026-02-13T11:00:06.821Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Disk health check: 0 warning(s) across 2 disk(s)",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1770984008271-60zd",
+    "timestamp": "2026-02-13T12:00:08.271Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Log scan: 286 errors across 27 containers",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1770991225768-trlt",
+    "timestamp": "2026-02-13T14:00:25.768Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Image update check: 27 of 27 containers have updates available",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771066823189-24a4",
+    "timestamp": "2026-02-14T11:00:23.189Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Disk health check: 0 warning(s) across 2 disk(s)",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771070424677-fzoa",
+    "timestamp": "2026-02-14T12:00:24.677Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Log scan: 300 errors across 27 containers",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771077639076-n0k4",
+    "timestamp": "2026-02-14T14:00:39.076Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Image update check: 27 of 27 containers have updates available",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771080294685-nvla",
+    "timestamp": "2026-02-14T14:44:54.685Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
   }
 ]

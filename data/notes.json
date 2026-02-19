@@ -33,5 +33,12 @@
     "tags": [],
     "createdAt": "2026-02-17T20:22:02.953Z",
     "updatedAt": "2026-02-17T20:22:02.953Z"
+  },
+  {
+    "id": "note-1771512414058",
+    "content": "Matt prefers TypeScript over JavaScript",
+    "tags": [],
+    "createdAt": "2026-02-19T14:46:54.058Z",
+    "updatedAt": "2026-02-19T14:46:54.058Z"
   }
 ]

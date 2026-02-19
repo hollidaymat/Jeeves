@@ -158,6 +158,13 @@ export async function writeProjectFile(
     linesChanged,
   });
 
+  try {
+    const { invalidateSessionsForFile } = await import('../core/context/session-cache.js');
+    invalidateSessionsForFile(fullPath);
+  } catch {
+    /* optional */
+  }
+
   return { success: true, path: fullPath, backupPath, linesChanged };
 }
 

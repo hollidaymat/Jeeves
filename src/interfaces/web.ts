@@ -19,7 +19,7 @@ import { getProjectIndex, listProjects } from '../core/project-scanner.js';
 import { getPendingChanges, setStreamCallback } from '../core/cursor-agent.js';
 import { exportConversations, clearGeneralConversations, addGeneralMessage } from '../core/memory.js';
 import { onCheckpoint, getExecutionStatus } from '../core/prd-executor.js';
-import { getLastTrace, getTraceById, getTraceStats } from '../core/ooda-logger.js';
+import { getLastTrace, getTraceById, getTraceStats, getRecentReasoningTraces, getReasoningTraceById, getCurrentReasoningTrace } from '../core/ooda-logger.js';
 import { recordScenarioRun, getGrowthStats, getRecentOodaJournal, recordRunSummary, getGrowthTrend } from '../core/growth-tracker.js';
 import { applyScenarioFailure, applyScenarioSuccess } from '../core/context/layers/learnings.js';
 import { getLastExecutionOutcome, getExecutionLog } from '../core/execution-logger.js';
@@ -534,6 +534,22 @@ export class WebInterface implements MessageInterface {
         res.json([]);
       }
     });
+    this.app.get('/api/reasoning/traces', (req: Request, res: Response) => {
+      const limit = Math.min(parseInt(String(req.query.limit), 10) || 20, 50);
+      res.json(getRecentReasoningTraces(limit));
+    });
+    this.app.get('/api/reasoning/traces/:taskId', (req: Request, res: Response) => {
+      const trace = getReasoningTraceById(req.params.taskId);
+      if (!trace) {
+        res.status(404).json({ error: 'Trace not found' });
+        return;
+      }
+      res.json(trace);
+    });
+    this.app.get('/api/reasoning/current', (_req: Request, res: Response) => {
+      const current = getCurrentReasoningTrace();
+      res.json(current ?? { status: 'idle' });
+    });
 
     // API: Performance profiler
     this.app.get('/api/performance/summary', async (req: Request, res: Response) => {
@@ -990,7 +1006,13 @@ export class WebInterface implements MessageInterface {
         typeof failureDetail.check === 'string' &&
         typeof failureDetail.detail === 'string'
       ) {
-        applyScenarioFailure(scenarioId, failureDetail);
+        // Don't create/weaken learnings for timeout-only failures — learnings can't fix timing
+        const isTimeoutFailure =
+          /too\s+slow|max\s+\d+\s*ms|response\s+time\s+limit/i.test(failureDetail.detail) ||
+          /too\s+slow|max\s+\d+\s*ms|response\s+time\s+limit/i.test(failureDetail.check);
+        if (!isTimeoutFailure) {
+          applyScenarioFailure(scenarioId, failureDetail);
+        }
       }
       res.json({ ok: true });
     });

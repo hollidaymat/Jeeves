@@ -131,6 +131,55 @@ Compare runs to see the effect of scenario learnings (create on failure, reinfor
 
 ---
 
+## Run 4
+
+- **When:** (latest)
+- **Score:** 132/143 (92%)
+- **Duration:** 539.9s
+- **Cognitive:** 0/2 systems online
+
+| Suite | Result | Passed | Δ vs Run 3 |
+|-------|--------|--------|------------|
+| api-endpoints | PASS | 19/19 | — |
+| backup | PASS | 3/3 | — |
+| browser | PASS | 2/2 | — |
+| cognitive-context-layers | FAIL | 2/3 | — |
+| cognitive-ooda | FAIL | 4/5 | -1 |
+| commands | PASS | 10/10 | — |
+| context-memory | FAIL | 2/3 | -1 |
+| cursor-commands | PASS | 5/5 | — |
+| dev-server | PASS | 2/2 | — |
+| edge-cases | FAIL | 9/10 | -1 |
+| homelab | PASS | 14/14 | — |
+| media | PASS | 4/4 | — |
+| memory-trust | FAIL | 8/10 | -1 |
+| model-switching | FAIL | 2/3 | — |
+| personality | PASS | 15/15 | — |
+| regressions | PASS | 5/5 | — |
+| routing-accuracy | PASS | 10/10 | — |
+| self-assessment | PASS | 5/5 | — |
+| signal-experience | FAIL | 4/8 | — |
+| terminal | PASS | 2/2 | — |
+| vercel | PASS | 5/5 | — |
+
+**Failures (11):**
+- `complexrequestloadscontext` — Too slow: 46838ms (max 40000ms)
+- `complexrequestviacognitiveornormal` — Unwanted term found: "Error"
+- `remembername` — None found from: "Rust", "rust", "remember", "noted", "got it", "solid", "good", "nice"
+- `edgemixedgreetingcommand` — None found from: "uptime", "site", "status", "monitoring"
+- `remember_preference` — None found from: "remember", "noted", "Noted", "Got it", "got it", "stored", "Remembered", "preference", "already know", "I'll remember"
+- 1× cognitive-context-layers
+- 1× cognitive-ooda
+- 1× context-memory
+- 1× edge-cases (edgemixedgreetingcommand)
+- 2× memory-trust (remembername, remember_preference)
+- 1× model-switching
+- 4× signal-experience
+
+**vs Run 3:** -4 pass (136→132). New/returning failures: cognitive-ooda 4/5, context-memory 2/3, edge-cases 9/10; complexrequestviacognitiveornormal (unwanted "Error"), remembername, remember_preference, edgemixedgreetingcommand.
+
+---
+
 ## Is it working?
 
 **Yes, in essence.** The loop is wired end-to-end:

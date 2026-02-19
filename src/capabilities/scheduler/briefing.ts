@@ -78,7 +78,8 @@ async function gatherData(): Promise<BriefingData> {
   } catch { /* unavailable */ }
 
   try {
-    const { getProposalStatus } = await import('../self/proposals.js');
+    const { getProposalStatus, generateProposals } = await import('../self/proposals.js');
+    await generateProposals(); // ensure fresh batch for today before showing in briefing
     const ps = getProposalStatus();
     data.proposals.canApprove = ps.canApprove;
     data.proposals.items = ps.currentBatch

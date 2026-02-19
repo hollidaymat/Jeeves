@@ -126,6 +126,87 @@ export function getTraceById(requestId: string): OODATrace | null {
   return traces.find((t) => t.requestId === requestId) ?? null;
 }
 
+// --- Dev reasoning trace (observe / orient / decide / act per dev task) ---
+
+export interface ReasoningStep {
+  phase: 'observe' | 'orient' | 'decide' | 'act';
+  timestamp: number;
+  thought: string;
+  data?: unknown;
+  confidence?: number;
+  alternatives?: string[];
+  duration: number;
+}
+
+export interface ReasoningTrace {
+  taskId: string;
+  taskDescription: string;
+  startedAt: number;
+  completedAt?: number;
+  steps: ReasoningStep[];
+  outcome: 'success' | 'failed' | 'escalated' | 'in_progress';
+  totalTokensUsed: number;
+  totalCost: number;
+  modelUsed: string;
+}
+
+const reasoningTraceBuffer: ReasoningTrace[] = [];
+const MAX_REASONING_TRACES = 50;
+let currentReasoningTrace: ReasoningTrace | null = null;
+
+export function startReasoningTrace(taskId: string, description: string): void {
+  currentReasoningTrace = {
+    taskId,
+    taskDescription: description,
+    startedAt: Date.now(),
+    steps: [],
+    outcome: 'in_progress',
+    totalTokensUsed: 0,
+    totalCost: 0,
+    modelUsed: '',
+  };
+}
+
+export function addReasoningStep(step: Omit<ReasoningStep, 'timestamp'>): void {
+  if (!currentReasoningTrace) return;
+  currentReasoningTrace.steps.push({
+    ...step,
+    timestamp: Date.now(),
+  });
+}
+
+export function completeReasoningTrace(
+  outcome: ReasoningTrace['outcome'],
+  tokensUsed: number,
+  cost: number,
+  model: string
+): void {
+  if (!currentReasoningTrace) return;
+  currentReasoningTrace.completedAt = Date.now();
+  currentReasoningTrace.outcome = outcome;
+  currentReasoningTrace.totalTokensUsed = tokensUsed;
+  currentReasoningTrace.totalCost = cost;
+  currentReasoningTrace.modelUsed = model;
+
+  reasoningTraceBuffer.push(currentReasoningTrace);
+  if (reasoningTraceBuffer.length > MAX_REASONING_TRACES) {
+    reasoningTraceBuffer.shift();
+  }
+  currentReasoningTrace = null;
+}
+
+export function getRecentReasoningTraces(limit: number = 20): ReasoningTrace[] {
+  return reasoningTraceBuffer.slice(-limit).reverse();
+}
+
+export function getReasoningTraceById(taskId: string): ReasoningTrace | undefined {
+  return reasoningTraceBuffer.find((t) => t.taskId === taskId);
+}
+
+export function getCurrentReasoningTrace(): ReasoningTrace | null {
+  return currentReasoningTrace;
+}
+
 /**
  * Get aggregate stats from recent traces.
  */

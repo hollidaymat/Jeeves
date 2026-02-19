@@ -94,5 +94,11 @@
     "commandId": "homelab.status",
     "useCount": 3,
     "lastUsed": "2026-02-17T20:21:09.506Z"
+  },
+  {
+    "phrase": "backup schedule",
+    "commandId": "homelab.status",
+    "useCount": 1,
+    "lastUsed": "2026-02-19T14:45:52.322Z"
   }
 ]

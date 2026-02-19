@@ -179,13 +179,15 @@ export function getReasoningErrors(days: number | null): ReasoningErrorRow[] {
     if (r.learning_id != null) byType[r.error_type].withLearning++;
   }
 
-  return Object.entries(byType).map(([errorType, data]) => ({
-    errorType,
-    firstSeen: new Date(data.first * 1000).toISOString().slice(0, 10),
-    occurrences: data.count,
-    fixedByLearning: data.withLearning > 0,
-    lastSeen: new Date(data.last * 1000).toISOString().slice(0, 10),
-  }));
+  return Object.entries(byType)
+    .filter(([errorType]) => errorType !== 'handler_failure') // only show handler_failure:action breakdown
+    .map(([errorType, data]) => ({
+      errorType,
+      firstSeen: new Date(data.first * 1000).toISOString().slice(0, 10),
+      occurrences: data.count,
+      fixedByLearning: data.withLearning > 0,
+      lastSeen: new Date(data.last * 1000).toISOString().slice(0, 10),
+    }));
 }
 
 export interface ReasoningTimelineRow {

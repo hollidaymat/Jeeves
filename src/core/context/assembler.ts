@@ -55,6 +55,8 @@ export interface ContextResult {
   tokensUsed: number;
   tokenBudget: number;
   layersIncluded: string[];
+  /** Set when result came from session cache; use this instead of formatContextForPrompt. */
+  cachedFormatted?: string;
 }
 
 // ==========================================
@@ -186,8 +188,22 @@ function touchesSystem(task: TaskContext): boolean {
 /**
  * Assemble context from all 6 layers for a given task.
  * Respects token budget and only includes relevant context.
+ * Uses session cache when the message topic matches a recent assembly (5 min TTL).
  */
 export async function assembleContext(task: TaskContext): Promise<ContextResult> {
+  const { getCachedSession, cacheSession } = await import('./session-cache.js');
+  const cached = getCachedSession(task.message);
+  if (cached) {
+    logger.debug('Context session cache hit', { hitCount: cached.hitCount, topic: cached.topic.slice(0, 40) });
+    return {
+      layers: {},
+      tokensUsed: cached.tokensUsed,
+      tokenBudget: 0,
+      layersIncluded: cached.layersLoaded,
+      cachedFormatted: cached.assembledContext,
+    };
+  }
+
   const startTime = Date.now();
   const tier = determineTier(task);
   const tokenBudget = getTokenBudget(tier, task.model);
@@ -305,6 +321,12 @@ export async function assembleContext(task: TaskContext): Promise<ContextResult>
   }
 
   const elapsed = Date.now() - startTime;
+  const result: ContextResult = { layers: context, tokensUsed, tokenBudget, layersIncluded };
+  const formatted = formatContextForPrompt(result);
+  if (formatted.length > 0) {
+    cacheSession(task.message, formatted, layersIncluded, tokensUsed);
+  }
+
   logger.debug('Context assembled', {
     tier,
     tokensUsed,
@@ -313,7 +335,7 @@ export async function assembleContext(task: TaskContext): Promise<ContextResult>
     elapsed
   });
 
-  return { layers: context, tokensUsed, tokenBudget, layersIncluded };
+  return result;
 }
 
 // ==========================================

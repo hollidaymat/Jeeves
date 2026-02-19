@@ -553,3 +553,48 @@ export function shouldBypassScoring(message: string): boolean {
   
   return false;
 }
+
+// ==========================================
+// UNCERTAINTY QUANTIFICATION (multi-approach selection)
+// ==========================================
+
+export interface ApproachOption {
+  id: string;
+  description: string;
+  confidence: number;
+  risk: 'low' | 'medium' | 'high';
+  estimatedIterations: number;
+  estimatedTokenCost?: number;
+  pros?: string[];
+  cons?: string[];
+  relevantFiles?: string[];
+  approach?: string;
+}
+
+export function selectBestApproach(options: ApproachOption[]): {
+  selected: ApproachOption;
+  reasoning: string;
+} {
+  if (options.length === 0) throw new Error('No approaches to evaluate');
+  if (options.length === 1) {
+    return { selected: options[0], reasoning: 'Only one approach available' };
+  }
+
+  const riskPenalty = (r: string) => (r === 'low' ? 0 : r === 'medium' ? 0.2 : 0.5);
+  const scored = options.map((opt) => {
+    const penalty = riskPenalty(opt.risk);
+    const score = (opt.confidence * (1 - penalty)) / Math.max(opt.estimatedIterations, 1);
+    return { ...opt, score };
+  });
+  scored.sort((a, b) => (b as { score: number }).score - (a as { score: number }).score);
+
+  const best = scored[0] as ApproachOption & { score: number };
+  const runnerUp = scored[1] as (ApproachOption & { score: number }) | undefined;
+
+  const reasoning =
+    runnerUp != null
+      ? `Selected "${best.description}" (score: ${best.score.toFixed(2)}, confidence: ${(best.confidence * 100).toFixed(0)}%, risk: ${best.risk}) over "${runnerUp.description}" (score: ${runnerUp.score.toFixed(2)})`
+      : `Selected "${best.description}" (confidence: ${(best.confidence * 100).toFixed(0)}%, risk: ${best.risk})`;
+
+  return { selected: best, reasoning };
+}

@@ -67,6 +67,13 @@ async function main() {
   const { initAliasStore } = await import('./core/alias-store.js');
   await initAliasStore();
 
+  // Reclassify existing reasoning_tasks with current task-type logic (fix/review/refactor/develop)
+  setImmediate(() => {
+    import('./core/reasoning-recorder.js').then(({ reclassifyReasoningTasks }) => {
+      reclassifyReasoningTasks();
+    }).catch(() => {});
+  });
+
   // Set up message handling
   const messageHandler = async (message: Parameters<typeof handleMessage>[0]) => {
     const response = await handleMessage(message);

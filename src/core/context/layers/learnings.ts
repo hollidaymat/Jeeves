@@ -140,14 +140,38 @@ export function findRelevantLearnings(
     }
   }
 
-  // Second: keyword match in trigger or lesson
+  // Second: at most one self-test learning when message clearly matches a trigger (avoid flooding context)
+  const descLower = description.toLowerCase().trim();
+  if (descLower.length > 0) {
+    const scenarioRows = db.prepare(`
+      SELECT * FROM learnings
+      WHERE applies_to = 'self-test' AND confidence > 0.3 AND superseded_by IS NULL
+      ORDER BY times_applied DESC, confidence DESC
+    `).all() as any[];
+    let best: { row: any; score: number } | null = null;
+    for (const row of scenarioRows) {
+      const triggerLower = (row.trigger_text || '').toLowerCase();
+      const descWords = new Set(descLower.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((w: string) => w.length > 2));
+      const triggerWords = new Set(triggerLower.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((w: string) => w.length > 2));
+      const overlap = [...descWords].filter((w: string) => triggerWords.has(w)).length;
+      const triggerInDesc = triggerLower.length > 10 && descLower.includes(triggerLower.slice(0, 50));
+      const score = triggerInDesc ? 100 + overlap : overlap;
+      if ((overlap >= 4 || triggerInDesc) && (!best || score > best.score)) {
+        best = { row, score };
+      }
+    }
+    if (best) {
+      results.push(rowToLearning(best.row));
+    }
+  }
+
+  // Third: keyword match in trigger or lesson
   const keywords = description.toLowerCase()
     .replace(/[^a-z0-9\s]/g, '')
     .split(/\s+/)
     .filter(w => w.length > 3);
 
-  if (keywords.length > 0) {
-    // Build a simple LIKE query for the most specific keywords
+  if (keywords.length > 0 && results.length < 5) {
     const topKeywords = keywords.slice(0, 3);
     for (const keyword of topKeywords) {
       const rows = db.prepare(`

@@ -852,8 +852,8 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
                 projectPath: activeProject.workingDir,
                 model: 'sonnet',
               });
-              if (ctxResult.layersIncluded.length > 0) {
-                agentIntent.assembledContext = formatContextForPrompt(ctxResult);
+              if (ctxResult.layersIncluded.length > 0 || ctxResult.cachedFormatted) {
+                agentIntent.assembledContext = ctxResult.cachedFormatted ?? formatContextForPrompt(ctxResult);
               }
             } catch {
               /* optional */
@@ -1099,8 +1099,8 @@ Matt's actual setup (ONLY reference these, never invent others):
           projectPath: activeProject?.workingDir,
           model: 'sonnet', // agent_ask/code_review typically use Sonnet
         });
-        if (ctxResult.layersIncluded.length > 0) {
-          intent.assembledContext = formatContextForPrompt(ctxResult);
+        if (ctxResult.layersIncluded.length > 0 || ctxResult.cachedFormatted) {
+          intent.assembledContext = ctxResult.cachedFormatted ?? formatContextForPrompt(ctxResult);
           logger.debug('Brain 2 context assembled', { layers: ctxResult.layersIncluded });
         }
       } catch (err) {

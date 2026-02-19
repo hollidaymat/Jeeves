@@ -139,12 +139,15 @@ ${context.usagePatterns || 'No data yet'}
 ## Previously Approved/Built
 ${context.previouslyBuilt || 'Nothing yet'}
 
+## Do NOT suggest again (already suggested or implemented — choose new ideas)
+${context.doNotSuggestAgain}
+
 ## Rules
 - Propose things that genuinely improve YOUR functionality, not hypothetical features
 - Consider: reliability, performance, cost savings, UX improvements, missing capabilities
 - Each proposal should be self-contained and implementable in a single Cursor agent session
 - Be specific about what files to change and what the improvement does
-- Don't propose things that are already built or in progress
+- Do NOT propose any item from "Do NOT suggest again" — those were already suggested or built; propose 3 different improvements
 - Keep proposals realistic for your tech stack (TypeScript, Node.js, Express, Vercel SDK, Anthropic SDK)
 
 Respond with EXACTLY this JSON array format (3 items):
@@ -412,6 +415,7 @@ async function gatherSelfContext(): Promise<{
   recentErrors: string;
   usagePatterns: string;
   previouslyBuilt: string;
+  doNotSuggestAgain: string;
 }> {
   const s = loadStore();
 
@@ -459,5 +463,13 @@ async function gatherSelfContext(): Promise<{
     ? approved.map(p => `- ${p.title} (${p.status})`).join('\n')
     : 'Nothing yet';
 
-  return { capabilities, recentErrors, usagePatterns, previouslyBuilt };
+  // All titles ever suggested (any status) — so we can ask the LLM not to repeat them
+  const allTitles = new Set<string>();
+  for (const p of s.history) allTitles.add(p.title);
+  for (const p of s.currentBatch) allTitles.add(p.title);
+  const doNotSuggestAgain = allTitles.size > 0
+    ? Array.from(allTitles).join(', ')
+    : 'None';
+
+  return { capabilities, recentErrors, usagePatterns, previouslyBuilt, doNotSuggestAgain };
 }

@@ -94,7 +94,8 @@ export async function think(
 ): Promise<MetacognitiveDecision> {
   const startTime = Date.now();
   let tokensUsed = 0;
-  
+
+  try {
   const cfg = { ...DEFAULT_CONFIG, ...config };
   const { message, sender, context } = input;
   
@@ -346,6 +347,12 @@ export async function think(
     tokensUsed,
     bypassedScoring: false
   };
+  } finally {
+    const elapsed = Date.now() - startTime;
+    Promise.resolve().then(() => import('../profiler/performance-collector.js')).then(({ recordMetric }) => {
+      recordMetric({ category: 'response_time', source: 'llm_call', metric_name: 'response_time_ms', value: elapsed, metadata: { call: 'cognitive_think' } });
+    }).catch(() => {});
+  }
 }
 
 // ==========================================

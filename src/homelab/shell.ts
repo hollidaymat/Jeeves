@@ -343,10 +343,18 @@ export async function execHomelab(
         logger.debug('Homelab command completed', { executable, exitCode: code, duration_ms });
       }
 
+      const outTrimmed = stdout.trim();
+      const errTrimmed = stderr.trim();
+      const finalStderr = timedOut
+        ? (errTrimmed ? `Command timed out. ${errTrimmed}` : 'Command timed out')
+        : (errTrimmed || (success ? '' : `Command failed (exit ${code ?? '?'})`));
+      import('../core/profiler/performance-collector.js').then(({ recordMetric }) => {
+        recordMetric({ category: 'response_time', source: 'shell_exec', metric_name: 'execution_time_ms', value: duration_ms, metadata: { command: executable, exitCode: code ?? undefined } });
+      }).catch(() => {});
       resolve({
         success,
-        stdout: stdout.trim(),
-        stderr: stderr.trim(),
+        stdout: outTrimmed,
+        stderr: finalStderr,
         exitCode: code,
         timedOut,
         duration_ms,
@@ -370,6 +378,9 @@ export async function execHomelab(
 
       logger.error('Homelab command failed to start', { executable, error: String(error) });
 
+      import('../core/profiler/performance-collector.js').then(({ recordMetric }) => {
+        recordMetric({ category: 'response_time', source: 'shell_exec', metric_name: 'execution_time_ms', value: duration_ms, metadata: { command: executable } });
+      }).catch(() => {});
       resolve({
         success: false,
         stdout: '',

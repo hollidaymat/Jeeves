@@ -117,8 +117,13 @@ const DISAMBIGUATION_RULES: DisambiguationRule[] = [
     priority: 80
   },
   
-  // REMOVED: approval_yes - was routing "yes"/"go ahead" to prd_approve even when no plan.
-  // Now "yes" falls through to handleSimpleCommand which checks getActivePlan/getPendingPlan first.
+  // Short approval phrases: classify as approval; parser still checks getActivePlan/getPendingPlan before acting
+  {
+    name: 'approval_short',
+    pattern: /^(yes|yep|yeah|go\s+ahead|let'?s\s+go|lets\s+go|do\s+it|proceed|confirm|ok|okay|sure)$/i,
+    transform: () => ({ action: 'approve', confidence: 0.9 }),
+    priority: 75
+  },
 
   // "build me X" / "create X for me" / "I need X" = PRD
   // Note: "create project" is handled by handleSimpleCommand, so exclude it

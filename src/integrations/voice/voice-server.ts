@@ -308,6 +308,22 @@ export function setupVoiceWebSocket(wss: WebSocketServer, app: ReturnType<typeof
     }
   });
 
+  app.post('/api/voice/speak', async (req: Request, res: Response) => {
+    const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+    if (!text) {
+      res.status(400).json({ error: 'Body must include { text: "..." }' });
+      return;
+    }
+    try {
+      const speakable = speakableForVoice(text);
+      const wav = await synthesize(speakable);
+      res.json({ audio: wav.toString('base64'), audioFormat: 'wav' });
+    } catch (err) {
+      logger.warn('Voice speak API failed', { error: String(err) });
+      res.status(500).json({ error: err instanceof Error ? err.message : 'TTS failed' });
+    }
+  });
+
   app.get('/voice/test', (_req: Request, res: Response) => {
     res.sendFile(resolve(ROOT, 'web', 'voice-test.html'));
   });

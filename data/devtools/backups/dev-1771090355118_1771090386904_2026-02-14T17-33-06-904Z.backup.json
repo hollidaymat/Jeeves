@@ -1,0 +1,7 @@
+{
+  "originalPath": "/home/jeeves/signal-cursor-controller/src/utils/uuid.ts",
+  "content": "// smoke test Final\n// smoke test Final\n// Jeeves learned this\n/**\n * UUID Utility\n * Centralized UUID generation for the application\n */\n\nimport { randomUUID } from 'crypto';\n\n/**\n * Generate a new UUID v4\n * @returns A new UUID string\n */\nexport function generateUUID(): string {\n  return randomUUID();\n}\n\n/**\n * Validate if a string is a valid UUID\n * @param uuid - String to validate\n * @returns True if valid UUID format\n */\nexport function isValidUUID(uuid: string): boolean {\n  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\n  return uuidRegex.test(uuid);\n}\n\n/**\n * Generate a short UUID (first 8 characters)\n * Useful for display purposes where full UUID is too long\n * @returns Short UUID string\n */\nexport function generateShortUUID(): string {\n  return randomUUID().split('-')[0];\n}\n",
+  "timestamp": "2026-02-14T17:33:06.904Z",
+  "taskId": "dev-1771090355118",
+  "description": "Add comment '// smoke test Final' at the top of the file"
+}

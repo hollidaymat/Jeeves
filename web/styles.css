@@ -828,17 +828,18 @@ body::before {
   cursor: pointer;
 }
 .voice-wake-label input { cursor: pointer; }
-.voice-test-pcm-btn {
-  font-size: 0.85rem;
-  padding: 0.35rem 0.75rem;
-  background: rgba(34, 211, 238, 0.1);
-  border: 1px solid var(--accent-cyan);
-  color: var(--accent-cyan);
-  border-radius: 4px;
+.voice-speak-row {
+  padding: 0 1rem 0.75rem;
+}
+.voice-speak-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
   cursor: pointer;
 }
-.voice-test-pcm-btn:hover:not(:disabled) { background: rgba(34, 211, 238, 0.2); }
-.voice-test-pcm-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+.voice-speak-label input { cursor: pointer; }
 
 /* Projects Panel */
 .projects-panel {
@@ -1389,6 +1390,12 @@ body::before {
   box-shadow: 0 0 4px rgba(16, 185, 129, 0.5);
 }
 
+/* Container running but API not configured or unreachable */
+.service-status-dot.running-no-api {
+  background: var(--warning);
+  box-shadow: 0 0 4px rgba(245, 158, 11, 0.5);
+}
+
 .service-status-dot.stopped {
   background: var(--error);
 }
@@ -1554,6 +1561,13 @@ body::before {
   padding: 0.15rem 0;
   font-size: 0.7rem;
   color: var(--text-secondary);
+}
+
+.deep-dive-list-subtext {
+  font-size: 0.6rem;
+  color: var(--text-dim);
+  padding-left: 0.25rem;
+  margin-bottom: 0.2rem;
 }
 
 .deep-dive-progress {
@@ -2500,6 +2514,32 @@ body::before {
 .scout-finding-detail { color: var(--text-secondary); font-size: 0.7rem; }
 .scout-finding-actions { margin-top: 4px; display: flex; gap: 6px; }
 .scout-stats { display: flex; gap: 16px; font-size: 0.75rem; color: var(--text-secondary); padding: 10px; background: var(--bg-secondary); border-radius: 4px; }
+
+/* ============================================================================
+   Reasoning Tab
+   ============================================================================ */
+.reasoning-page { padding: 16px; }
+.reasoning-top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
+.reasoning-top-bar h2 { font-size: 1rem; color: var(--accent); letter-spacing: 2px; }
+.reasoning-period select { padding: 6px 10px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-primary); font-family: inherit; font-size: 0.85rem; }
+.reasoning-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.reasoning-stat-card { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; padding: 12px 14px; font-family: var(--font-mono), monospace; }
+.reasoning-stat-label { display: block; font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+.reasoning-stat-value { font-size: 1.25rem; color: var(--text-primary); font-weight: 600; }
+.reasoning-stat-detail { display: block; font-size: 0.75rem; color: var(--text-secondary); margin-top: 2px; }
+.reasoning-sections { display: flex; flex-direction: column; gap: 16px; }
+.reasoning-section .panel-header h3 { font-size: 0.9rem; margin: 0; color: var(--accent); letter-spacing: 1px; }
+.reasoning-table-wrap { overflow-x: auto; }
+.reasoning-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; font-family: var(--font-mono), monospace; }
+.reasoning-table th, .reasoning-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border-color); }
+.reasoning-table th { color: var(--text-secondary); font-weight: 600; }
+.reasoning-table td { color: var(--text-primary); }
+.reasoning-timeline-wrap { min-height: 120px; padding: 12px; background: var(--bg-secondary); border-radius: 4px; font-size: 0.85rem; }
+.reasoning-timeline-wrap .reasoning-timeline-day { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.reasoning-timeline-wrap .reasoning-timeline-bar { height: 8px; background: var(--border-color); border-radius: 4px; overflow: hidden; }
+.reasoning-timeline-wrap .reasoning-timeline-fill { height: 100%; background: var(--accent); }
+.reasoning-empty { padding: 12px; color: var(--text-secondary); font-size: 0.85rem; display: none; }
+.reasoning-empty.visible { display: block; }
 
 /* ============================================================================
    Notes Tab

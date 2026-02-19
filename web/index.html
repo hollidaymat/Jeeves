@@ -37,6 +37,8 @@
       <button class="tab-btn" data-tab="clients">CLIENTS</button>
       <button class="tab-btn" data-tab="security">SECURITY</button>
       <button class="tab-btn" data-tab="scout">SCOUT</button>
+      <button class="tab-btn" data-tab="reasoning">REASONING</button>
+      <button class="tab-btn" data-tab="performance">PERFORMANCE</button>
       <button class="tab-btn" data-tab="notes">NOTES</button>
     </nav>
 
@@ -137,9 +139,9 @@
               <span class="voice-status" id="voice-status">—</span>
             </div>
             <div class="voice-mic-row">
-              <label class="voice-mic-label">Microphone</label>
-              <select id="voice-mic-select" class="voice-mic-select" title="Choose which microphone to use for voice">
-                <option value="">Default (system)</option>
+              <label class="voice-mic-label">Mic</label>
+              <select id="voice-mic-select" class="voice-mic-select" title="Microphone">
+                <option value="">Default</option>
               </select>
             </div>
             <div class="voice-hold-row">
@@ -148,17 +150,19 @@
                 <span class="voice-hold-label">HOLD TO TALK</span>
               </button>
             </div>
-            <p class="voice-hint">Hold the button at least half a second while speaking, then release. Or type in the console.</p>
-            <div class="voice-wake-row">
-              <label class="voice-wake-label">
-                <input type="checkbox" id="voice-wake-toggle" title="Stream mic to server for &quot;Hey Jeeves&quot; detection">
-                <span>Listen for &quot;Hey Jeeves&quot;</span>
-                <span id="voice-wake-wait-hint" class="voice-wake-wait-hint" style="display:none"> (wait for READY)</span>
+            <div class="voice-speak-row">
+              <label class="voice-speak-label">
+                <input type="checkbox" id="voice-speak-toggle" title="Speak every reply">
+                <span>Jeeves speak</span>
               </label>
             </div>
-            <p class="voice-hint voice-wake-hint">Stream stays on until you uncheck. If voice runs without pressing the button, uncheck above (false wake). Use Hold to Talk only to avoid this.</p>
-            <div class="voice-wake-row">
-              <button type="button" class="voice-test-pcm-btn" id="voice-record-test-pcm" title="Record 2s from mic, download raw 16kHz PCM to test with: node scripts/test-wake-with-pcm.mjs file.pcm">Record test PCM (2s)</button>
+            <!-- Wake word (hidden for now; logic kept in app.js) -->
+            <div class="voice-wake-row" id="voice-wake-row" style="display: none;">
+              <label class="voice-wake-label">
+                <input type="checkbox" id="voice-wake-toggle" title="Listen for Hey Jeeves">
+                <span>Hey Jeeves</span>
+                <span id="voice-wake-wait-hint" class="voice-wake-wait-hint" style="display:none"> (wait for READY)</span>
+              </label>
             </div>
           </section>
 
@@ -476,6 +480,98 @@
           <div class="no-changes">No scout data yet. Scout loop initializing...</div>
         </div>
         <div class="scout-stats" id="scout-stats"></div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- TAB: REASONING -->
+    <!-- ============================================================ -->
+    <div class="tab-content" data-tab="reasoning">
+      <div class="reasoning-page" id="reasoning-page">
+        <div class="reasoning-top-bar">
+          <h2>REASONING EVALUATION</h2>
+          <div class="reasoning-period">
+            <select id="reasoning-days">
+              <option value="7">7 days</option>
+              <option value="30">30 days</option>
+              <option value="">All time</option>
+            </select>
+          </div>
+          <button class="cmd-btn" id="reasoning-refresh-btn">REFRESH</button>
+        </div>
+        <div class="reasoning-stats" id="reasoning-stats">
+          <div class="reasoning-stat-card"><span class="reasoning-stat-label">Success Rate</span><span class="reasoning-stat-value" id="reasoning-success-rate">--</span><span class="reasoning-stat-detail" id="reasoning-success-detail">--</span></div>
+          <div class="reasoning-stat-card"><span class="reasoning-stat-label">Test Pass Rate</span><span class="reasoning-stat-value" id="reasoning-test-rate">--</span><span class="reasoning-stat-detail" id="reasoning-test-detail">--</span></div>
+          <div class="reasoning-stat-card"><span class="reasoning-stat-label">Avg Confidence</span><span class="reasoning-stat-value" id="reasoning-avg-conf">--</span><span class="reasoning-stat-detail" id="reasoning-conf-detail">--</span></div>
+          <div class="reasoning-stat-card"><span class="reasoning-stat-label">Learning Applied</span><span class="reasoning-stat-value" id="reasoning-learning">--</span><span class="reasoning-stat-detail" id="reasoning-learning-detail">--</span></div>
+        </div>
+        <div class="reasoning-sections">
+          <section class="panel reasoning-section">
+            <div class="panel-header"><h3>Performance by Task Type</h3></div>
+            <div class="reasoning-table-wrap"><table class="reasoning-table" id="reasoning-tasks-table"><thead><tr><th>Task Type</th><th>Total</th><th>Success Rate</th><th>Avg Iterations</th><th>Test Pass Rate</th><th>Avg Confidence</th></tr></thead><tbody></tbody></table></div>
+            <div class="reasoning-empty" id="reasoning-tasks-empty">Not yet run</div>
+          </section>
+          <section class="panel reasoning-section">
+            <div class="panel-header"><h3>Confidence Calibration</h3></div>
+            <div class="reasoning-table-wrap"><table class="reasoning-table" id="reasoning-confidence-table"><thead><tr><th>Confidence Level</th><th>Tasks</th><th>Actual Success</th><th>Deviation</th><th>Status</th></tr></thead><tbody></tbody></table></div>
+            <div class="reasoning-empty" id="reasoning-confidence-empty">Not yet run</div>
+          </section>
+          <section class="panel reasoning-section">
+            <div class="panel-header"><h3>Common Errors & Recurrence</h3></div>
+            <div class="reasoning-table-wrap"><table class="reasoning-table" id="reasoning-errors-table"><thead><tr><th>Error Type</th><th>First Seen</th><th>Occurrences</th><th>Fixed by Learning?</th><th>Last Seen</th></tr></thead><tbody></tbody></table></div>
+            <div class="reasoning-empty" id="reasoning-errors-empty">Not yet run</div>
+          </section>
+          <section class="panel reasoning-section">
+            <div class="panel-header"><h3>Success Timeline</h3></div>
+            <div class="reasoning-timeline-wrap" id="reasoning-timeline"><div class="reasoning-empty" id="reasoning-timeline-empty">Not yet run</div></div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- TAB: PERFORMANCE -->
+    <!-- ============================================================ -->
+    <div class="tab-content" data-tab="performance">
+      <div class="performance-page" id="performance-page">
+        <div class="reasoning-top-bar">
+          <h2>ADAPTIVE PERFORMANCE PROFILER</h2>
+          <div class="reasoning-period">
+            <select id="performance-days">
+              <option value="7">7 days</option>
+              <option value="30">30 days</option>
+              <option value="90">All time</option>
+            </select>
+          </div>
+          <button class="cmd-btn" id="performance-refresh-btn">REFRESH</button>
+        </div>
+        <div class="reasoning-stats" id="performance-stats">
+          <div class="reasoning-stat-card"><span class="reasoning-stat-label">Avg Response</span><span class="reasoning-stat-value" id="perf-avg-response">--</span><span class="reasoning-stat-detail" id="perf-avg-detail">--</span></div>
+          <div class="reasoning-stat-card"><span class="reasoning-stat-label">System Load</span><span class="reasoning-stat-value" id="perf-load">--</span><span class="reasoning-stat-detail" id="perf-load-detail">--</span></div>
+          <div class="reasoning-stat-card"><span class="reasoning-stat-label">Memory</span><span class="reasoning-stat-value" id="perf-memory">--</span><span class="reasoning-stat-detail" id="perf-memory-detail">--</span></div>
+          <div class="reasoning-stat-card"><span class="reasoning-stat-label">Containers</span><span class="reasoning-stat-value" id="perf-containers">--</span><span class="reasoning-stat-detail" id="perf-containers-detail">--</span></div>
+        </div>
+        <div class="reasoning-sections">
+          <section class="panel reasoning-section">
+            <div class="panel-header"><h3>Bottlenecks</h3></div>
+            <div class="reasoning-table-wrap"><table class="reasoning-table" id="performance-bottlenecks-table"><thead><tr><th>Severity</th><th>Source</th><th>Description</th><th>Recommendation</th><th>Status</th></tr></thead><tbody></tbody></table></div>
+            <div class="reasoning-empty" id="performance-bottlenecks-empty">No bottlenecks detected</div>
+          </section>
+          <section class="panel reasoning-section">
+            <div class="panel-header"><h3>Response Times</h3></div>
+            <div class="reasoning-table-wrap"><table class="reasoning-table" id="performance-response-times-table"><thead><tr><th>Source</th><th>Avg (ms)</th><th>P50</th><th>P95</th><th>P99</th><th>Count</th></tr></thead><tbody></tbody></table></div>
+            <div class="reasoning-empty" id="performance-response-times-empty">No data yet</div>
+          </section>
+          <section class="panel reasoning-section">
+            <div class="panel-header"><h3>Resource usage (24h)</h3></div>
+            <div class="reasoning-timeline-wrap" id="performance-resource-chart"><div class="reasoning-empty" id="performance-resource-empty">Chart (snapshots)</div></div>
+          </section>
+          <section class="panel reasoning-section">
+            <div class="panel-header"><h3>Optimization recommendations</h3></div>
+            <div class="reasoning-table-wrap"><table class="reasoning-table" id="performance-recommendations-table"><thead><tr><th>Priority</th><th>Title</th><th>Impact</th><th>Status</th><th>Actions</th></tr></thead><tbody></tbody></table></div>
+            <div class="reasoning-empty" id="performance-recommendations-empty">No recommendations yet</div>
+          </section>
+        </div>
       </div>
     </div>
 

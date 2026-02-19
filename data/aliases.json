@@ -20,8 +20,8 @@
   {
     "phrase": "browser status",
     "commandId": "system.trust",
-    "useCount": 2,
-    "lastUsed": "2026-02-08T19:08:29.379Z"
+    "useCount": 3,
+    "lastUsed": "2026-02-17T19:27:03.469Z"
   },
   {
     "phrase": "process status",
@@ -62,8 +62,8 @@
   {
     "phrase": "Pause notifications for today",
     "commandId": "schedule.mute_notifications",
-    "useCount": 1,
-    "lastUsed": "2026-02-12T12:56:44.438Z"
+    "useCount": 3,
+    "lastUsed": "2026-02-17T08:12:19.066Z"
   },
   {
     "phrase": "hey Jeeves give me a home lab report",
@@ -82,5 +82,17 @@
     "commandId": "schedule.mute_notifications",
     "useCount": 2,
     "lastUsed": "2026-02-14T05:21:53.821Z"
+  },
+  {
+    "phrase": "what do you see",
+    "commandId": "homelab.system_review",
+    "useCount": 1,
+    "lastUsed": "2026-02-14T18:09:37.425Z"
+  },
+  {
+    "phrase": "backup status",
+    "commandId": "homelab.status",
+    "useCount": 3,
+    "lastUsed": "2026-02-17T20:21:09.506Z"
   }
 ]

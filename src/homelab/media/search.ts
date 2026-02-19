@@ -1168,7 +1168,7 @@ export function parseBatchDownloadInput(input: string): string[] {
  * Returns success: false with error message if APIs fail (never fabricates empty).
  */
 export async function getDownloadQueue(): Promise<MediaQueueResult> {
-  logger.info('Fetching download queue');
+  logger.debug('Fetching download queue');
 
   const [sonarrResult, radarrResult] = await Promise.allSettled([
     getSonarrQueue(),

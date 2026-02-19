@@ -1,0 +1,26 @@
+# Vaultwarden on IP with TLS (HTTPS required for Subtle Crypto API)
+# Uses cert.pem and key.pem from signal-cursor-controller (same as Jeeves)
+# Access: https://192.168.7.50:8843 (accept self-signed cert once)
+
+version: '3.8'
+
+services:
+  vaultwarden:
+    image: vaultwarden/server:latest
+    env_file:
+      - /home/jeeves/signal-cursor-controller/.env
+    container_name: vaultwarden
+    restart: unless-stopped
+    ports:
+      - "8843:8843"
+    environment:
+      ROCKET_PORT: "8843"
+      DOMAIN: https://192.168.7.50:8843
+      ROCKET_TLS: "{certs=\"/ssl/cert.pem\",key=\"/ssl/key.pem\"}"
+    volumes:
+      - vaultwarden_data:/data
+      - /home/jeeves/signal-cursor-controller/cert.pem:/ssl/cert.pem:ro
+      - /home/jeeves/signal-cursor-controller/key.pem:/ssl/key.pem:ro
+
+volumes:
+  vaultwarden_data:

@@ -345,7 +345,8 @@ class CommandCenter {
       voiceStatus: document.getElementById('voice-status'),
       voiceHoldBtn: document.getElementById('voice-hold-btn'),
       voiceMicSelect: document.getElementById('voice-mic-select'),
-      voiceWakeToggle: document.getElementById('voice-wake-toggle')
+      voiceWakeToggle: document.getElementById('voice-wake-toggle'),
+      voiceSpeakToggle: document.getElementById('voice-speak-toggle')
     };
     
     this.pendingChanges = [];
@@ -543,21 +544,11 @@ class CommandCenter {
   }
   
   updatePrdStatus(status) {
-    if (status.active && status.plan) {
-      const plan = status.plan;
-      const completedCount = plan.phases.filter(p => p.status === 'completed').length;
-      const currentPhase = plan.phases[plan.currentPhaseIndex];
-      this.log('system', `PRD Execution: ${completedCount}/${plan.phases.length} phases | Current: ${currentPhase?.name || 'Complete'}`);
-    }
+    // PRD phase updates not shown in console (view in Activity if needed).
   }
   
   handlePrdCheckpoint(checkpoint) {
-    const icon = checkpoint.requiresResponse ? '🔔' : '✅';
-    this.log('system', `${icon} **${checkpoint.phaseName}**: ${checkpoint.message}`);
-    
-    if (checkpoint.filesChanged && checkpoint.filesChanged.length > 0) {
-      this.log('system', `Files changed: ${checkpoint.filesChanged.join(', ')}`);
-    }
+    // PRD checkpoints not shown in console to reduce noise.
   }
   
   updateStatus(status) {
@@ -649,6 +640,16 @@ class CommandCenter {
       });
       this.elements.voiceMicSelect.addEventListener('focus', () => this.populateVoiceMicSelect());
     }
+    if (this.elements.voiceSpeakToggle) {
+      try {
+        this.elements.voiceSpeakToggle.checked = localStorage.getItem('jeeves_voice_speak') === '1';
+      } catch (_) {}
+      this.elements.voiceSpeakToggle.addEventListener('change', () => {
+        try {
+          localStorage.setItem('jeeves_voice_speak', this.elements.voiceSpeakToggle.checked ? '1' : '0');
+        } catch (_) {}
+      });
+    }
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = protocol + '//' + window.location.host + '/voice';
     const setVoiceStatus = (text, state) => {
@@ -713,7 +714,7 @@ class CommandCenter {
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === 'transcript' && msg.text) {
-          this.log('user', msg.text);
+          // User voice input; not logged to console to reduce noise.
         }
         if (msg.type === 'status') setVoiceStatus('THINKING…', 'processing');
         if (msg.type === 'voice_response') {
@@ -743,7 +744,8 @@ class CommandCenter {
           }).catch(() => setVoiceStatusReady());
         }
         if (msg.type === 'error') {
-          this.log('error', msg.message || 'Voice error');
+          if (msg.message && !/Wake model not found|wake.*script|Wake listener failed/.test(msg.message))
+            this.log('error', msg.message || 'Voice error');
           setVoiceStatusReady();
           const wakeErr = msg.message && (msg.message.includes('Wake') || msg.message.includes('wake'));
           if (wakeErr && this.elements.voiceWakeToggle?.checked) {
@@ -760,9 +762,8 @@ class CommandCenter {
           if (this.voiceWakeStream && this.voiceWakeStreamPending) {
             this.voiceWakeStream.start(this.getPreferredVoiceDeviceId()).then(() => {
               setVoiceStatus('Listening for Hey Jeeves…', 'listening');
-            }).catch((err) => {
+            }).catch(() => {
               this.voiceWakeStreamPending = false;
-              this.log('error', 'Hey Jeeves: mic failed – ' + (err && err.message ? err.message : 'allow microphone'));
             });
             this.voiceWakeStreamPending = false;
           }
@@ -788,8 +789,6 @@ class CommandCenter {
                 this.voiceWs.send(JSON.stringify({ type: 'audio_command', audio: btoa(binary), format: 'wav', timestamp: Date.now() }));
                 setVoiceStatus('THINKING…', 'processing');
               } else {
-                if (wavBuffer && wavBuffer.byteLength > 0 && wavBuffer.byteLength < minBytes)
-                  this.log('system', 'Voice: recording too short (try saying "Hey Jeeves" again).');
                 setVoiceStatusReady();
               }
               setTimeout(() => { this.recordingAfterWake = false; }, 500);
@@ -811,17 +810,14 @@ class CommandCenter {
         const result = event.results[event.results.length - 1];
         const transcript = (result && result[0] && result[0].transcript) ? result[0].transcript.trim() : '';
         if (transcript && this.voiceWs && this.voiceWs.readyState === 1) {
-          this.log('user', transcript);
           this.voiceWs.send(JSON.stringify({ type: 'text_command', text: transcript, timestamp: Date.now() }));
           setVoiceStatus('THINKING…', 'processing');
         } else {
-          if (!transcript) this.log('system', 'Voice: didn’t catch that. Try again.');
           setVoiceStatus('READY', 'ready');
         }
       };
       browserRecognition.onerror = (event) => {
-        if (event.error === 'no-speech') this.log('system', 'Voice: no speech heard. Hold the button while you speak.');
-        else if (event.error !== 'aborted') this.log('error', 'Voice: ' + (event.error || 'recognition error'));
+        if (event.error !== 'aborted') this.log('error', 'Voice: ' + (event.error || 'recognition error'));
         setVoiceStatusReady();
       };
       browserRecognition.onend = () => {
@@ -876,11 +872,6 @@ class CommandCenter {
           this.voiceWs.send(JSON.stringify({ type: 'audio_command', audio: btoa(binary), format: 'wav', timestamp: Date.now() }));
           setVoiceStatus('THINKING…', 'processing');
         } else {
-          if (!wavBuffer) {
-            if (!heldLongEnough) this.log('system', 'Voice: hold the button at least half a second while speaking, then release.');
-            else this.log('system', 'Voice: no audio recorded (hold longer while speaking)');
-          } else if (wavBuffer.byteLength < MIN_WAV_BYTES)
-            this.log('system', 'Voice: recording too short. Hold at least a second while speaking.');
           setVoiceStatusReady();
         }
       }).catch(() => setVoiceStatusReady());
@@ -942,13 +933,6 @@ class CommandCenter {
               this.log('error', 'Wake test: ' + result.error);
               return;
             }
-            const maxScore = result.maxScore != null ? result.maxScore : 0;
-            const detected = result.wakeDetected === true;
-            if (detected) {
-              this.log('system', 'Hey Jeeves detected! (score ' + maxScore.toFixed(3) + ')');
-            } else {
-              this.log('system', 'Not detected (max score ' + maxScore.toFixed(3) + ', need ' + (result.threshold || 0.5) + '). Say "Hey Jeeves" clearly and try again.');
-            }
             const now = new Date();
             const stamp = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') + '-' + String(now.getMinutes()).padStart(2, '0') + '-' + String(now.getSeconds()).padStart(2, '0');
             const filename = 'hey_jeeves_test_' + stamp + '.pcm';
@@ -994,57 +978,23 @@ class CommandCenter {
   handleLog(log) {
     if (log.level === 'debug') return;
     if (!log.message || log.message.trim() === '') return;
-    
-    // Filter out internal operational logs that clutter the chat.
-    // Only actual messages and responses should appear here.
+    // Only show server errors in the UI; skip info/warn to reduce noise.
+    if (log.level !== 'error') return;
     const msg = log.message;
     const SUPPRESSED = [
-      // Cognitive pipeline internals
-      /^Using .* model/i,
-      /^Prompt analysis/i,
-      /^Checking capabilities/i,
-      /^Pending plan check/i,
-      /^No plan or changes/i,
-      /^Approval pattern/i,
-      /confidence_scoring/i,
-      /reasoning_orient/i,
-      // Security monitor (viewable in Security tab)
       /^\[security-monitor\]/i,
       /^\[security-response\]/i,
       /^\[vercel-security\]/i,
-      // Cost tracking (viewable in Costs tab)
-      /^\[COST\]/i,
-      // Self-update lifecycle
-      /^Self-update/i,
-      // Scout (viewable in Scout tab)
-      /^Scout loop/i,
-      /^Knowledge Scout/i,
-      // Scheduler
-      /^Scheduler/i,
-      // Signal connection lifecycle
-      /^Signal (connection|interface|socket|Reconnect)/i,
-      /signal-cli/i,
-      // Startup noise
-      /^Security Guardian/i,
-      /^Decision recorder/i,
-      /^System ready/i,
-      /^Open http/i,
-      /^Press Ctrl/i,
-      /^Starting /i,
-      /^WebSocket client/i,
-      /^Shutting down/i,
-      /^Connection lost/i,
-      /^Connected to/i,
     ];
     if (SUPPRESSED.some(p => p.test(msg))) return;
-    
-    const type = log.level === 'error' ? 'error' : 
-                 log.level === 'warn' ? 'error' : 'system';
-    this.log(type, log.message);
+    this.log('error', log.message);
   }
   
   handleResponse(response) {
     this.log('response', response.response);
+    if (this.elements.voiceSpeakToggle?.checked && response.response?.trim()) {
+      this.requestSpeak(response.response.trim());
+    }
   }
   
   handleStreamStart(payload) {
@@ -1118,12 +1068,37 @@ class CommandCenter {
       }
     }
     
+    if (this.elements.voiceSpeakToggle?.checked && this.streamContent.trim()) {
+      this.requestSpeak(this.streamContent.trim());
+    }
     this.lastStreamId = this.activeStreamId;
     this.lastStreamHadContent = this.streamHadContent;
     this.activeStreamId = null;
     this.streamContent = '';
     this.streamElement = null;
     this.streamHadContent = false;
+  }
+
+  requestSpeak(text) {
+    if (!text) return;
+    fetch('/api/voice/speak', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    }).then(r => {
+      if (!r.ok) return r.json().then(d => { throw new Error(d.error || r.statusText); });
+      return r.json();
+    }).then(data => {
+      if (!data.audio) return;
+      const bytes = new Uint8Array(atob(data.audio).split('').map(c => c.charCodeAt(0)));
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      ctx.decodeAudioData(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)).then(decoded => {
+        const src = ctx.createBufferSource();
+        src.buffer = decoded;
+        src.connect(ctx.destination);
+        src.start(0);
+      }).catch(() => {});
+    }).catch(() => {});
   }
   
   scrollToBottom() {
@@ -1412,8 +1387,6 @@ class CommandCenter {
         if (file.isImage && file.content) {
           // Show image thumbnail in chat
           this.logAttachment(file.name, file.content);
-        } else {
-          this.log('system', `Attached: ${file.name} (${this.formatFileSize(file.size || 0)})`);
         }
       }
     }
@@ -1656,8 +1629,12 @@ class HomelabDashboard {
     };
 
     this.serviceGrid.innerHTML = sorted.map(svc => {
-      const stateClass = svc.state || 'unknown';
-      const detail = svc.state === 'running' 
+      const running = svc.state === 'running';
+      const hasCollector = svc.hasCollector === true;
+      const apiOk = svc.apiConfigured === true && svc.apiReachable === true;
+      const stateClass = running && (!hasCollector || apiOk) ? 'running' : (running && hasCollector ? 'running-no-api' : (svc.state || 'unknown'));
+      const dotTitle = stateClass === 'running-no-api' ? ' API not configured or unreachable. Set env in .env and ensure service is reachable.' : '';
+      const detail = svc.state === 'running'
         ? (svc.memUsage || svc.ramMB + 'MB') 
         : svc.state;
       const isExpanded = this.expandedService === svc.name;
@@ -1667,7 +1644,7 @@ class HomelabDashboard {
         : `<span class="service-name" title="${svc.purpose || svc.name}">${svc.name}</span>`;
       return `<div class="service-card ${isExpanded ? 'expanded' : ''}" data-service="${svc.name}">
         <div class="service-card-header">
-          <span class="service-status-dot ${stateClass}"></span>
+          <span class="service-status-dot ${stateClass}" title="${dotTitle}"></span>
           ${nameEl}
           ${isExpanded ? '<button class="service-collapse-btn" data-collapse="true">&#9660;</button>' : ''}
         </div>
@@ -1742,11 +1719,17 @@ class HomelabDashboard {
       if (skipKeys.includes(key)) continue;
       if (Array.isArray(value)) {
         html += `<div class="deep-dive-section"><h4>${key.toUpperCase()}</h4>`;
-        for (const item of value.slice(0, 8)) {
+        for (const item of value.slice(0, 50)) {
           if (typeof item === 'object') {
             const label = item.title || item.name || item.message || JSON.stringify(item);
-            const extra = item.status || item.progress != null ? `${item.progress || 0}%` : '';
-            html += `<div class="deep-dive-list-item"><span>${this.cc.escapeHtml(String(label))}</span><span>${extra}</span></div>`;
+            const statusPart = item.status ? String(item.status) : '';
+            const progressPart = item.progress != null ? `${item.progress || 0}%` : '';
+            const extra = [statusPart, progressPart].filter(Boolean).join(' · ');
+            const subtext = item.extra ?? item.image;
+            html += `<div class="deep-dive-list-item"><span>${this.cc.escapeHtml(String(label))}</span><span>${this.cc.escapeHtml(extra)}</span></div>`;
+            if (subtext) {
+              html += `<div class="deep-dive-list-subtext">${this.cc.escapeHtml(String(subtext))}</div>`;
+            }
             if (item.progress != null) {
               html += `<div class="deep-dive-progress"><div class="deep-dive-progress-fill" style="width:${item.progress}%"></div></div>`;
             }
@@ -2635,6 +2618,258 @@ class ScoutPanel {
 }
 
 // ============================================================================
+// Reasoning Panel (REASONING tab)
+// ============================================================================
+class ReasoningPanel {
+  constructor() {
+    this.refreshBtn = document.getElementById('reasoning-refresh-btn');
+    this.daysSelect = document.getElementById('reasoning-days');
+    if (this.refreshBtn) this.refreshBtn.addEventListener('click', () => this.init());
+    if (this.daysSelect) this.daysSelect.addEventListener('change', () => this.init());
+  }
+
+  getDays() {
+    const v = this.daysSelect?.value;
+    return v === '' ? '' : `days=${v}`;
+  }
+
+  async init() {
+    const q = this.getDays();
+    const suffix = q ? '?' + q : '';
+    try {
+      const [metricsRes, tasksRes, confidenceRes, errorsRes, timelineRes] = await Promise.all([
+        fetch('/api/reasoning/metrics' + suffix),
+        fetch('/api/reasoning/tasks' + suffix),
+        fetch('/api/reasoning/confidence' + suffix),
+        fetch('/api/reasoning/errors' + suffix),
+        fetch('/api/reasoning/timeline' + suffix),
+      ]);
+      const metrics = metricsRes.ok ? await metricsRes.json() : {};
+      const tasks = tasksRes.ok ? await tasksRes.json() : [];
+      const confidence = confidenceRes.ok ? await confidenceRes.json() : [];
+      const errors = errorsRes.ok ? await errorsRes.json() : [];
+      const timeline = timelineRes.ok ? await timelineRes.json() : [];
+      this.update(metrics, tasks, confidence, errors, timeline);
+    } catch {
+      this.update({}, [], [], [], []);
+    }
+  }
+
+  update(metrics, tasks, confidence, errors, timeline) {
+    const total = metrics.totalTasks ?? 0;
+    const noData = total === 0;
+
+    // Stat cards
+    const successCount = total ? Math.round((metrics.successRate / 100) * total) : 0;
+    document.getElementById('reasoning-success-rate').textContent = noData ? '--' : metrics.successRate + '%';
+    document.getElementById('reasoning-success-detail').textContent = noData ? '--' : `(${successCount} of ${total} tasks)`;
+    document.getElementById('reasoning-test-rate').textContent = noData ? '--' : (metrics.testPassRate ?? 0) + '%';
+    document.getElementById('reasoning-test-detail').textContent = noData ? '--' : '(with tests)';
+    document.getElementById('reasoning-avg-conf').textContent = noData ? '--' : (metrics.avgConfidence ?? 0) + ' / 10';
+    document.getElementById('reasoning-conf-detail').textContent = noData ? '--' : '';
+    const totalErr = metrics.totalErrors ?? 0;
+    const applied = metrics.learningApplied ?? 0;
+    document.getElementById('reasoning-learning').textContent = noData ? '--' : String(applied);
+    document.getElementById('reasoning-learning-detail').textContent = noData ? '--' : (totalErr ? `${applied} of ${totalErr} errors (${Math.round((applied / totalErr) * 100)}%)` : 'errors fixed');
+
+    // Task type table
+    const tasksTbody = document.querySelector('#reasoning-tasks-table tbody');
+    const tasksEmpty = document.getElementById('reasoning-tasks-empty');
+    if (tasksTbody && tasksEmpty) {
+      if (tasks.length === 0) {
+        tasksTbody.innerHTML = '';
+        tasksEmpty.classList.add('visible');
+      } else {
+        tasksEmpty.classList.remove('visible');
+        tasksTbody.innerHTML = tasks.map(t => `
+          <tr><td>${this.esc(t.taskType)}</td><td>${t.total}</td><td>${t.successRate}%</td><td>${t.avgIterations}</td><td>${t.testPassRate}%</td><td>${t.avgConfidence}</td></tr>
+        `).join('');
+      }
+    }
+
+    // Confidence table (bucket labels 1-3, 4-6, 7-10)
+    const confLabels = ['1-3', '4-6', '7-10'];
+    const statusLabels = ['Underconfident', 'Accurate', 'Overconfident'];
+    const confidenceTbody = document.querySelector('#reasoning-confidence-table tbody');
+    const confidenceEmpty = document.getElementById('reasoning-confidence-empty');
+    if (confidenceTbody && confidenceEmpty) {
+      if (confidence.length === 0) {
+        confidenceTbody.innerHTML = '';
+        confidenceEmpty.classList.add('visible');
+      } else {
+        confidenceEmpty.classList.remove('visible');
+        confidenceTbody.innerHTML = confidence.map((c, i) => `
+          <tr><td>${confLabels[i]}</td><td>${c.tasksAtLevel}</td><td>${c.actualSuccessRate}%</td><td>${c.deviation}</td><td>${statusLabels[i]}</td></tr>
+        `).join('');
+      }
+    }
+
+    // Errors table
+    const errorsTbody = document.querySelector('#reasoning-errors-table tbody');
+    const errorsEmpty = document.getElementById('reasoning-errors-empty');
+    if (errorsTbody && errorsEmpty) {
+      if (errors.length === 0) {
+        errorsTbody.innerHTML = '';
+        errorsEmpty.classList.add('visible');
+      } else {
+        errorsEmpty.classList.remove('visible');
+        errorsTbody.innerHTML = errors.map(e => `
+          <tr><td>${this.esc(e.errorType)}</td><td>${e.firstSeen}</td><td>${e.occurrences}</td><td>${e.fixedByLearning ? 'Yes' : 'No'}</td><td>${e.lastSeen}</td></tr>
+        `).join('');
+      }
+    }
+
+    // Timeline (simple bar list)
+    const timelineWrap = document.getElementById('reasoning-timeline');
+    if (timelineWrap) {
+      if (timeline.length === 0) {
+        timelineWrap.innerHTML = '<div class="reasoning-empty visible" id="reasoning-timeline-empty">Not yet run</div>';
+      } else {
+        timelineWrap.innerHTML = timeline.map(d => `
+          <div class="reasoning-timeline-day">
+            <span style="min-width:100px">${d.date}</span>
+            <span style="min-width:60px">${d.successRate}%</span>
+            <span style="min-width:80px">${d.tasksCompleted} tasks</span>
+            <div class="reasoning-timeline-bar" style="flex:1;max-width:200px"><div class="reasoning-timeline-fill" style="width:${d.successRate}%"></div></div>
+          </div>
+        `).join('');
+      }
+    }
+  }
+
+  esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+}
+
+// ============================================================================
+// Performance Panel (PERFORMANCE tab)
+// ============================================================================
+class PerformancePanel {
+  constructor() {
+    this.refreshBtn = document.getElementById('performance-refresh-btn');
+    this.daysSelect = document.getElementById('performance-days');
+    if (this.refreshBtn) this.refreshBtn.addEventListener('click', () => this.init());
+    if (this.daysSelect) this.daysSelect.addEventListener('change', () => this.init());
+  }
+
+  getDays() {
+    const v = this.daysSelect?.value;
+    return v === '90' ? 90 : v === '30' ? 30 : 7;
+  }
+
+  async init() {
+    const days = this.getDays();
+    const q = `days=${days}`;
+    try {
+      const [summaryRes, bottlenecksRes, responseTimesRes, snapshotsRes, recsRes] = await Promise.all([
+        fetch('/api/performance/summary?' + q),
+        fetch('/api/performance/bottlenecks?' + q),
+        fetch('/api/performance/response-times?' + q),
+        fetch('/api/performance/snapshots?days=1'),
+        fetch('/api/performance/recommendations'),
+      ]);
+      const summary = summaryRes.ok ? await summaryRes.json() : {};
+      const bottlenecks = bottlenecksRes.ok ? await bottlenecksRes.json() : [];
+      const responseTimes = responseTimesRes.ok ? await responseTimesRes.json() : [];
+      const snapshots = snapshotsRes.ok ? await snapshotsRes.json() : [];
+      const recommendations = recsRes.ok ? await recsRes.json() : [];
+      this.update(summary, bottlenecks, responseTimes, snapshots, recommendations);
+    } catch {
+      this.update({}, [], [], [], []);
+    }
+  }
+
+  update(summary, bottlenecks, responseTimes, snapshots, recommendations) {
+    const noSummary = summary.avgResponseMs === undefined;
+    document.getElementById('perf-avg-response').textContent = noSummary ? '--' : (summary.avgResponseMs / 1000).toFixed(2) + 's';
+    document.getElementById('perf-avg-detail').textContent = noSummary ? '--' : (summary.responseTimeTrend !== 0 ? (summary.responseTimeTrend > 0 ? '+' : '') + summary.responseTimeTrend + 's vs prev' : '');
+    document.getElementById('perf-load').textContent = noSummary ? '--' : (summary.systemLoad ?? 0).toFixed(2);
+    document.getElementById('perf-load-detail').textContent = noSummary ? '--' : ' / ' + (summary.totalCores || 4) + ' cores';
+    const memPct = summary.memoryTotalMb ? Math.round((summary.memoryUsedMb / summary.memoryTotalMb) * 100) : 0;
+    document.getElementById('perf-memory').textContent = noSummary ? '--' : (summary.memoryUsedMb ?? 0) + ' / ' + (summary.memoryTotalMb ?? 0) + ' MB';
+    document.getElementById('perf-memory-detail').textContent = noSummary ? '--' : (memPct ? memPct + '% used' : '');
+    document.getElementById('perf-containers').textContent = noSummary ? '--' : (summary.containersRunning ?? 0);
+    document.getElementById('perf-containers-detail').textContent = noSummary ? '--' : (summary.containersUnhealthy ? summary.containersUnhealthy + ' unhealthy' : '');
+
+    const bottlenecksTbody = document.querySelector('#performance-bottlenecks-table tbody');
+    const bottlenecksEmpty = document.getElementById('performance-bottlenecks-empty');
+    if (bottlenecksTbody && bottlenecksEmpty) {
+      const active = bottlenecks.filter(b => !b.resolved);
+      if (active.length === 0) {
+        bottlenecksTbody.innerHTML = '';
+        bottlenecksEmpty.classList.add('visible');
+      } else {
+        bottlenecksEmpty.classList.remove('visible');
+        bottlenecksTbody.innerHTML = active.map(b => `
+          <tr><td>${b.severity}</td><td>${this.esc(b.source)}</td><td>${this.esc(b.description)}</td><td>${this.esc(b.recommendation)}</td><td>${b.resolved ? 'Resolved' : 'Active'}</td></tr>
+        `).join('');
+      }
+    }
+
+    const rtTbody = document.querySelector('#performance-response-times-table tbody');
+    const rtEmpty = document.getElementById('performance-response-times-empty');
+    if (rtTbody && rtEmpty) {
+      if (responseTimes.length === 0) {
+        rtTbody.innerHTML = '';
+        rtEmpty.classList.add('visible');
+      } else {
+        rtEmpty.classList.remove('visible');
+        rtTbody.innerHTML = responseTimes.map(r => `
+          <tr><td>${this.esc(r.source)}</td><td>${r.avg_ms}</td><td>${r.p50_ms}</td><td>${r.p95_ms}</td><td>${r.p99_ms}</td><td>${r.count}</td></tr>
+        `).join('');
+      }
+    }
+
+    const resourceWrap = document.getElementById('performance-resource-chart');
+    if (resourceWrap) {
+      if (snapshots.length === 0) {
+        resourceWrap.innerHTML = '<div class="reasoning-empty visible" id="performance-resource-empty">No snapshot data (24h)</div>';
+      } else {
+        resourceWrap.innerHTML = '<div class="reasoning-empty" id="performance-resource-empty">' + snapshots.length + ' snapshots in last 24h</div>';
+      }
+    }
+
+    const recTbody = document.querySelector('#performance-recommendations-table tbody');
+    const recEmpty = document.getElementById('performance-recommendations-empty');
+    if (recTbody && recEmpty) {
+      if (recommendations.length === 0) {
+        recTbody.innerHTML = '';
+        recEmpty.classList.add('visible');
+      } else {
+        recEmpty.classList.remove('visible');
+        recTbody.innerHTML = recommendations.map(r => `
+          <tr>
+            <td>${r.priority}</td><td>${this.esc(r.title)}</td><td>${this.esc(r.impact)}</td><td>${r.status}</td>
+            <td>${r.status === 'pending' ? '<button class="cmd-btn small dismiss-rec" data-id="' + this.esc(r.id) + '">Dismiss</button> <button class="cmd-btn small apply-rec" data-id="' + this.esc(r.id) + '">Apply</button>' : ''}</td>
+          </tr>
+        `).join('');
+        recTbody.querySelectorAll('.dismiss-rec').forEach(btn => {
+          btn.addEventListener('click', () => this.dismiss(btn.dataset.id));
+        });
+        recTbody.querySelectorAll('.apply-rec').forEach(btn => {
+          btn.addEventListener('click', () => this.apply(btn.dataset.id));
+        });
+      }
+    }
+  }
+
+  async dismiss(id) {
+    try {
+      await fetch('/api/performance/recommendations/' + encodeURIComponent(id) + '/dismiss', { method: 'POST' });
+      this.init();
+    } catch { /* ignore */ }
+  }
+
+  async apply(id) {
+    try {
+      await fetch('/api/performance/recommendations/' + encodeURIComponent(id) + '/apply', { method: 'POST' });
+      this.init();
+    } catch { /* ignore */ }
+  }
+
+  esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+}
+
+// ============================================================================
 // Security Panel
 // ============================================================================
 class SecurityPanel {
@@ -2885,6 +3120,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Scout panel
   window.scoutPanel = new ScoutPanel();
+  window.reasoningPanel = new ReasoningPanel();
+  window.performancePanel = new PerformancePanel();
 
   // Security panel
   window.securityPanel = new SecurityPanel();
@@ -2916,6 +3153,12 @@ document.addEventListener('DOMContentLoaded', () => {
   window.tabController.onActivate('scout', () => {
     if (!loaded.scout) { loaded.scout = true; window.scoutPanel.init(); }
   });
+  window.tabController.onActivate('reasoning', () => {
+    if (!loaded.reasoning) { loaded.reasoning = true; window.reasoningPanel.init(); }
+  });
+  window.tabController.onActivate('performance', () => {
+    if (!loaded.performance) { loaded.performance = true; window.performancePanel.init(); }
+  });
   window.tabController.onActivate('security', () => {
     if (!loaded.security) { loaded.security = true; window.securityPanel.init(); }
   });
@@ -2941,7 +3184,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = await fetch('/api/conversations', { method: 'DELETE' });
       const data = await res.json();
       if (data.success) {
-        window.commandCenter?.log('system', `Cleared ${data.cleared} messages from history.`);
+        // History cleared; no console message to reduce noise.
       }
     } catch (err) {
       window.commandCenter?.log('error', `Failed to clear history: ${err}`);

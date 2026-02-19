@@ -67,6 +67,11 @@ export function recordLearning(input: RecordLearningInput): string {
     trigger: input.trigger.substring(0, 60)
   });
 
+  // Record for REASONING tab: one error occurrence linked to this learning (fixed by learning)
+  import('../../reasoning-recorder.js').then(({ recordErrorOccurrence }) => {
+    recordErrorOccurrence(input.category, id);
+  }).catch(() => {});
+
   return id;
 }
 
@@ -203,6 +208,55 @@ export function getLearnings(opts?: {
   sql += ' ORDER BY confidence DESC, times_applied DESC';
 
   return (db.prepare(sql).all(...params) as any[]).map(rowToLearning);
+}
+
+const SCENARIO_CATEGORY_PREFIX = 'scenario:';
+
+/**
+ * Get the single most recent learning for a category (e.g. scenario:rememberpreference).
+ */
+export function getLearningByCategory(category: string): Learning | null {
+  const list = getLearnings({ category });
+  return list.length > 0 ? list[0]! : null;
+}
+
+/**
+ * Apply self-test scenario failure: weaken existing scenario learning or create one.
+ * Called when jeeves-qa reports a scenario run with passed=false.
+ */
+export function applyScenarioFailure(
+  scenarioId: string,
+  failureDetail: { trigger: string; check: string; detail: string }
+): void {
+  const category = SCENARIO_CATEGORY_PREFIX + scenarioId;
+  const existing = getLearningByCategory(category);
+  if (existing) {
+    weakenLearning(existing.id);
+    logger.debug('Scenario learning weakened (failure)', { scenarioId, learningId: existing.id });
+    return;
+  }
+  recordLearning({
+    category,
+    trigger: failureDetail.trigger,
+    rootCause: failureDetail.check,
+    fix: failureDetail.detail,
+    lesson: 'Self-test expectation: response should satisfy this check.',
+    appliesTo: 'self-test',
+  });
+  logger.info('Scenario learning created from self-test failure', { scenarioId, check: failureDetail.check });
+}
+
+/**
+ * Apply self-test scenario success: reinforce existing scenario learning.
+ * Called when jeeves-qa reports a scenario run with passed=true.
+ */
+export function applyScenarioSuccess(scenarioId: string): void {
+  const category = SCENARIO_CATEGORY_PREFIX + scenarioId;
+  const existing = getLearningByCategory(category);
+  if (existing) {
+    reinforceLearning(existing.id);
+    logger.debug('Scenario learning reinforced (success)', { scenarioId, learningId: existing.id });
+  }
 }
 
 // ==========================================

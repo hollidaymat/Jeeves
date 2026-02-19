@@ -2,6 +2,14 @@
  * Signal Cursor Controller - Type Definitions
  */
 
+import type { generateUUID, isValidUUID, generateShortUUID } from '../utils/uuid.js';
+
+// ============================================================================
+// UUID Utilities
+// ============================================================================
+
+export type { generateUUID, isValidUUID, generateShortUUID };
+
 // ============================================================================
 // Message Types
 // ============================================================================
@@ -59,6 +67,7 @@ export type ActionType =
   | 'memory_summary'    // Show project summary
   | 'set_preference'    // Set a user preference
   | 'prd_submit'        // Submit a PRD for execution
+  | 'write_projects_prd_content'  // Write content into each ~/projects/*/prd.md
   | 'prd_approve'       // Approve execution plan
   | 'prd_pause'         // Pause PRD execution
   | 'prd_resume'        // Resume PRD execution
@@ -146,6 +155,11 @@ export type ActionType =
   | 'cursor_conversation'    // View Cursor agent conversation
   | 'cursor_confirm'         // Confirm pending Cursor task ("go", "yes")
   | 'cursor_repos'           // List available repos
+  // Development (autonomous dev loop)
+  | 'dev_task'               // Run a development task (implement/fix/add)
+  | 'dev_recent'             // Recent development changes (last 5)
+  | 'dev_rollback'           // Rollback last change
+  | 'dev_changelog'          // Full changelog (last 20)
   // Vercel commands
   | 'vercel_url'             // Look up project URL
   | 'vercel_deploy'          // Trigger deployment

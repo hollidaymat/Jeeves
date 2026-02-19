@@ -1,0 +1,8 @@
+# Bake WebUI CSRF/HostHeader patch into linuxserver defaults so the login page
+# is served when the container copies /defaults/qBittorrent.conf to /config (on first run).
+# See README "Persistent fix" for why the in-container patch is lost on restart.
+FROM lscr.io/linuxserver/qbittorrent:latest
+
+RUN echo 'WebUI\CSRFProtection=false' >> /defaults/qBittorrent.conf && \
+    echo 'WebUI\ClickjackingProtection=false' >> /defaults/qBittorrent.conf && \
+    echo 'WebUI\HostHeaderValidation=false' >> /defaults/qBittorrent.conf

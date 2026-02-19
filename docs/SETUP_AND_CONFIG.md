@@ -72,6 +72,49 @@ Paperless uses tokens for API access (not the superuser password).
 
 ---
 
+### 4. Vaultwarden – HTTPS required (Subtle Crypto API)
+
+Vaultwarden’s web vault uses the Subtle Crypto API, which only works over HTTPS. Use the IP directly so no hosts file is needed:
+
+1. Deploy the Vaultwarden stack: `templates/stacks/vaultwarden/docker-compose.yml`
+2. Uses `https://192.168.7.50:8843` and the same cert.pem/key.pem as Jeeves.
+3. In `.env`: `VAULTWARDEN_URL=https://192.168.7.50:8843`
+4. Open **https://192.168.7.50:8843** and accept the self-signed cert once.
+
+---
+
+### 5. Home Assistant Community Store (HACS)
+
+HACS lets you install community integrations, themes, and frontend plugins. Use this if Home Assistant runs in **Docker**.
+
+**Prerequisites:** Home Assistant 2024.4.1 or newer. Outgoing access to GitHub (and Cloudflare) must not be blocked.
+
+**Install (Container / Docker):**
+
+1. Find the Home Assistant container name:
+   ```bash
+   docker ps --format '{{.Names}}' | grep -i home
+   ```
+
+2. Run the HACS download script inside the container:
+   ```bash
+   docker exec -it <container_name> bash -c "wget -O - https://get.hacs.xyz | bash -"
+   ```
+   Replace `<container_name>` with the name from step 1. If the image has no `bash`, use `sh`:
+   ```bash
+   docker exec -it <container_name> sh -c "wget -O - https://get.hacs.xyz | sh -"
+   ```
+
+3. Restart Home Assistant (restart the container or **Settings → System → Restart** in HA).
+
+4. In the browser: **clear cache** or hard refresh (Ctrl+Shift+R). Go to **Settings → Devices & services → Add integration**, search for **HACS**, select it, acknowledge, **Submit**.
+
+5. **GitHub auth:** Copy the device code, open [https://github.com/login/device](https://github.com/login/device), sign in, enter the code, **Authorize HACS**. Back in HA, assign HACS to an area, **Finish**.
+
+Use **HACS** in the sidebar to browse and install integrations, themes, and frontend modules.
+
+---
+
 ## Optional checks
 
 - **Host:** All URLs use `192.168.7.50`. If Jeeves runs on the same machine as Docker, you can use `http://localhost:<port>` instead for any service.

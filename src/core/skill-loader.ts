@@ -391,14 +391,26 @@ export function isCapabilitiesFollowUp(): boolean {
  */
 export async function getCapabilitiesContext(isFollowUp: boolean = false): Promise<string> {
   const capabilitiesPath = join(__dirname, '../../data/capabilities.md');
-  
-  logger.info('Loading capabilities', { path: capabilitiesPath, exists: existsSync(capabilitiesPath), isFollowUp });
-  
+  const fallbackInRepo = join(__dirname, '../../docs/CAPABILITY_AUDIT.md');
+  const fallbackCwd = join(process.cwd(), 'docs/CAPABILITY_AUDIT.md');
+  const fallbackHome = join(process.env.HOME || process.env.USERPROFILE || '', 'docs', 'CAPABILITY_AUDIT.md');
+
+  const pathToUse = existsSync(capabilitiesPath)
+    ? capabilitiesPath
+    : existsSync(fallbackInRepo)
+      ? fallbackInRepo
+      : existsSync(fallbackCwd)
+        ? fallbackCwd
+        : existsSync(fallbackHome)
+          ? fallbackHome
+          : null;
+  logger.info('Loading capabilities', { path: pathToUse ?? capabilitiesPath, exists: !!pathToUse, isFollowUp });
+
   try {
-    if (existsSync(capabilitiesPath)) {
-      const content = await readFile(capabilitiesPath, 'utf-8');
+    if (pathToUse) {
+      const content = await readFile(pathToUse, 'utf-8');
       logger.info('Capabilities file loaded', { contentLength: content.length });
-      
+
       if (isFollowUp) {
         // For follow-up questions, provide context without the heavy-handed instructions
         return `
@@ -416,7 +428,7 @@ ${content}
 
 **Important**: This is a genuine conversation. Engage naturally and share your perspective on these features.`;
       }
-      
+
       // Initial query - be explicit about using the info
       return `
 ## YOUR CAPABILITIES
@@ -431,11 +443,11 @@ ${content}
 
 **Instructions**: Describe your capabilities naturally based on the above. For questions about "new features", highlight the "Recent Additions" section. Be helpful and conversational.`;
     } else {
-      logger.warn('Capabilities file not found', { path: capabilitiesPath });
+      logger.warn('Capabilities file not found', { path: capabilitiesPath, fallbacks: [fallbackInRepo, fallbackCwd, fallbackHome] });
     }
   } catch (err) {
     logger.error('Failed to load capabilities', { error: String(err) });
   }
-  
+
   return '';
 }

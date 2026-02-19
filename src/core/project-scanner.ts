@@ -60,7 +60,7 @@ function scanDirectory(dirPath: string, depth: number = 0): Project[] {
       const fullPath = join(dirPath, entry.name);
       
       if (hasProjectMarker(fullPath)) {
-        // Found a project
+        if (fullPath.includes('/.cache/') || fullPath.includes('\\.cache\\')) continue;
         const stats = statSync(fullPath);
         const project: Project = {
           name: entry.name.toLowerCase().replace(/[^a-z0-9]/g, '-'),

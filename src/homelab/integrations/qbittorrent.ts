@@ -12,9 +12,10 @@
 import { logger } from '../../utils/logger.js';
 
 const DEFAULT_HOST = '192.168.7.50';
-const BASE_URL = process.env.QBITTORRENT_URL || `http://${DEFAULT_HOST}:8080`;
+const DEFAULT_PORT = 8085;  // gluetun stack uses 8085 (Traefik uses 8080)
+const BASE_URL = process.env.QBITTORRENT_URL || `http://${DEFAULT_HOST}:${DEFAULT_PORT}`;
 const USER = process.env.QBITTORRENT_USER || 'admin';
-const PASS = process.env.QBITTORRENT_PASS || 'adminadmin';
+const PASS = process.env.QBITTORRENT_PASS || '';
 
 let authCookie: string | null = null;
 
@@ -104,7 +105,7 @@ async function ensureLogin(): Promise<boolean> {
     }
 
     if (!authCookie) {
-      logger.warn('[qbittorrent] Login response had no SID cookie (body: %s)', body.trim() || res.status);
+      logger.warn('[qbittorrent] Login response had no SID cookie', { body: body.trim() || String(res.status) });
       return false;
     }
 

@@ -244,6 +244,122 @@ function runMigrations(database: Database.Database): void {
         );
         CREATE INDEX IF NOT EXISTS idx_growth_run_summaries_run_at ON growth_run_summaries(run_at);
       `
+    },
+    {
+      name: '005_execution_log',
+      sql: `
+        -- Execution log: plan runs and dev_task runs (so we can tell if Jeeves succeeded)
+        CREATE TABLE IF NOT EXISTS execution_log (
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL,
+          description TEXT NOT NULL,
+          trigger_message TEXT,
+          project_root TEXT NOT NULL,
+          outcome TEXT NOT NULL,
+          steps_json TEXT NOT NULL DEFAULT '[]',
+          summary TEXT,
+          created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_execution_log_created_at ON execution_log(created_at);
+        CREATE INDEX IF NOT EXISTS idx_execution_log_outcome ON execution_log(outcome);
+      `
+    },
+    {
+      name: '006_reasoning_tables',
+      sql: `
+        -- Reasoning evaluation: one row per completed task (for REASONING tab metrics)
+        CREATE TABLE IF NOT EXISTS reasoning_tasks (
+          id TEXT PRIMARY KEY,
+          timestamp INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+          task_type TEXT NOT NULL,
+          success INTEGER NOT NULL DEFAULT 0,
+          confidence REAL,
+          iterations INTEGER NOT NULL DEFAULT 1,
+          test_passed INTEGER,
+          trace_id TEXT,
+          classification TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_reasoning_tasks_timestamp ON reasoning_tasks(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_reasoning_tasks_task_type ON reasoning_tasks(task_type);
+        CREATE INDEX IF NOT EXISTS idx_reasoning_tasks_success ON reasoning_tasks(success);
+        CREATE INDEX IF NOT EXISTS idx_reasoning_tasks_confidence ON reasoning_tasks(confidence);
+
+        -- Error occurrences for "common errors & recurrence" and "fixed by learning"
+        CREATE TABLE IF NOT EXISTS reasoning_error_occurrences (
+          id TEXT PRIMARY KEY,
+          timestamp INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+          error_type TEXT NOT NULL,
+          learning_id TEXT,
+          FOREIGN KEY (learning_id) REFERENCES learnings(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_reasoning_errors_error_type ON reasoning_error_occurrences(error_type);
+        CREATE INDEX IF NOT EXISTS idx_reasoning_errors_timestamp ON reasoning_error_occurrences(timestamp);
+      `
+    },
+    {
+      name: '007_performance_profiler',
+      sql: `
+        -- Performance profiler: raw metrics from instrumented code
+        CREATE TABLE IF NOT EXISTS performance_metrics (
+          id TEXT PRIMARY KEY,
+          timestamp INTEGER NOT NULL,
+          category TEXT NOT NULL,
+          source TEXT NOT NULL,
+          metric_name TEXT NOT NULL,
+          value REAL NOT NULL,
+          metadata TEXT,
+          created_at INTEGER DEFAULT (strftime('%s', 'now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_perf_metrics_timestamp ON performance_metrics(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_perf_metrics_category ON performance_metrics(category);
+        CREATE INDEX IF NOT EXISTS idx_perf_metrics_source ON performance_metrics(source);
+
+        -- System snapshots (CPU, memory, disk, load, docker) every 60s
+        CREATE TABLE IF NOT EXISTS performance_snapshots (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          timestamp INTEGER NOT NULL,
+          cpu_percent REAL,
+          memory_used_mb REAL,
+          memory_total_mb REAL,
+          disk_used_gb REAL,
+          disk_total_gb REAL,
+          docker_containers_running INTEGER,
+          docker_containers_total INTEGER,
+          uptime_seconds INTEGER,
+          load_average_1m REAL,
+          load_average_5m REAL,
+          load_average_15m REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_perf_snapshots_timestamp ON performance_snapshots(timestamp);
+
+        -- Detected bottlenecks (keep indefinitely)
+        CREATE TABLE IF NOT EXISTS bottlenecks (
+          id TEXT PRIMARY KEY,
+          detected_at INTEGER NOT NULL,
+          category TEXT NOT NULL,
+          source TEXT NOT NULL,
+          severity TEXT NOT NULL,
+          description TEXT NOT NULL,
+          recommendation TEXT NOT NULL,
+          auto_fixable INTEGER DEFAULT 0,
+          resolved INTEGER DEFAULT 0,
+          resolved_at INTEGER
+        );
+
+        -- Optimizer recommendations
+        CREATE TABLE IF NOT EXISTS performance_recommendations (
+          id TEXT PRIMARY KEY,
+          created_at INTEGER NOT NULL,
+          priority TEXT NOT NULL,
+          category TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL,
+          action TEXT NOT NULL,
+          auto_action TEXT,
+          impact TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending'
+        );
+      `
     }
   ];
 

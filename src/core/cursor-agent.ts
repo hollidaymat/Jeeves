@@ -16,7 +16,7 @@ export function setStreamCallback(callback: StreamCallback | null): void {
 }
 import { readdir, readFile, stat, writeFile, copyFile, rename, mkdir, unlink } from 'fs/promises';
 import { join, extname, basename, dirname } from 'path';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, statSync } from 'fs';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { 
@@ -538,117 +538,299 @@ async function validateCommandTrust(command: string): Promise<string | null> {
   return null; // Command is allowed
 }
 
+/** Remove ```plan...``` block and intermediate status lines from response text. */
+function stripPlanBlockAndStatusLines(text: string): string {
+  let out = text.replace(/```plan\s*[\s\S]*?```/gi, '').trim();
+  const statusLineRe = /^(Executing|Pending plan|Standby|Done executing|Extracted plan)[^\n]*\n?/gim;
+  out = out.replace(statusLineRe, '').trim();
+  return out;
+}
+
 /**
- * Extract a plan from AI response and store it
- * Validates commands against trust constraints
+ * Extract a plan from AI response without storing.
+ * Returns parsed plan or null. Validates commands against trust constraints.
  */
-async function extractAndStorePlan(text: string): Promise<void> {
-  // Look for ```plan blocks
+async function extractPlanFromText(text: string): Promise<{ commands: string[]; description: string } | null> {
   const planMatch = text.match(/```plan\s*([\s\S]*?)```/i);
-  if (!planMatch) return;
-  
+  if (!planMatch) return null;
+
   const planBlock = planMatch[1];
-  
-  // Extract description
   const descMatch = planBlock.match(/DESCRIPTION:\s*(.+)/i);
   const description = descMatch ? descMatch[1].trim() : 'Proposed plan';
-  
-  // Extract commands
   const commandsMatch = planBlock.match(/COMMANDS:\s*([\s\S]*)/i);
-  if (!commandsMatch) return;
-  
+  if (!commandsMatch) return null;
+
   const rawCommands = commandsMatch[1]
     .split('\n')
-    .map(line => line.trim())
-    .filter(line => line.length > 0 && !line.startsWith('#') && !line.startsWith('//'));
-  
-  if (rawCommands.length === 0) return;
-  
-  // Validate each command against trust constraints
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith('#') && !line.startsWith('//'));
+  if (rawCommands.length === 0) return null;
+
   const validCommands: string[] = [];
-  const rejectedCommands: string[] = [];
-  
   for (const cmd of rawCommands) {
     const error = await validateCommandTrust(cmd);
-    if (error) {
-      rejectedCommands.push(`${cmd} (BLOCKED: ${error})`);
-      logger.warn('Command blocked by trust constraints', { command: cmd, error });
-    } else {
-      validCommands.push(cmd);
-    }
+    if (!error) validCommands.push(cmd);
+    else logger.warn('Command blocked by trust constraints', { command: cmd, error });
   }
-  
-  // Only store valid commands
-  if (validCommands.length > 0) {
-    setPendingPlan(validCommands, description);
-    logger.info('Extracted plan from AI response', { 
-      description, 
-      validCommands: validCommands.length,
-      rejectedCommands: rejectedCommands.length 
+  if (validCommands.length === 0) return null;
+  return { commands: validCommands, description };
+}
+
+/**
+ * Extract a plan from AI response and store it (for modifying plans).
+ * Validates commands against trust constraints.
+ */
+async function extractAndStorePlan(text: string): Promise<void> {
+  const plan = await extractPlanFromText(text);
+  if (!plan) return;
+  setPendingPlan(plan.commands, plan.description);
+  logger.info('Extracted plan from AI response', { description: plan.description, validCommands: plan.commands.length });
+}
+
+/** Allowlisted shell commands for plan execution. Run for real instead of sending to LLM. */
+const PLAN_SHELL_ALLOWLIST = [
+  // Create structure
+  /^mkdir\s+-p\s+.+$/,
+  /^touch\s+.+$/,
+  // List / inspect
+  /^ls\s+(-[a-zA-Z]+\s+)?(.*)$/,
+  /^pwd\s*$/,
+  /^test\s+-d\s+.+$/,
+  /^\[\s+-d\s+.+\s*\]\s*$/,
+  /^stat\s+.+$/,
+  /^realpath\s+.+$/,
+  // Read files (safe)
+  /^cat\s+.+$/,
+  /^head\s+.+$/,
+  /^tail\s+.+$/,
+  /^wc\s+.+$/,
+  // Search
+  /^grep\s+.+$/,
+  /^find\s+.+$/,
+  // Copy / move
+  /^cp\s+(-r\s+)?.+$/,
+  /^mv\s+.+$/,
+  // Write (PRDs, notes, etc.): echo/printf to file or stdout, tee
+  /^echo\s+.+$/,
+  /^printf\s+.+$/,
+  /^tee\s+(-a\s+)?.+$/,
+  /^echo\s+.+\|\s*tee\s+(-a\s+)?.+$/,
+  /^printf\s+.+\|\s*tee\s+(-a\s+)?.+$/,
+  // Info
+  /^which\s+\S+$/,
+  /^date\s*$/,
+];
+
+function isAllowlistedPlanShellCommand(raw: string): boolean {
+  const t = raw.trim();
+  return PLAN_SHELL_ALLOWLIST.some((re) => re.test(t));
+}
+
+/** Commands that modify fs or run arbitrary writes. If any of these appear, plan is not read-only. */
+const MODIFYING_PATTERNS = [
+  /^mkdir\s+/,
+  /^touch\s+/,
+  /^cp\s+/,
+  /^mv\s+/,
+  /^echo\s+.+>/,
+  /^printf\s+.+>/,
+  /^tee\s+/,
+  /^echo\s+.+\|\s*tee/,
+  /^printf\s+.+\|\s*tee/,
+  /^cat\s+>>?\s+\S+\s+<</,
+];
+
+function isReadOnlyPlan(commands: string[]): boolean {
+  for (const cmd of commands) {
+    const t = cmd.trim();
+    if (MODIFYING_PATTERNS.some((re) => re.test(t))) return false;
+    if (matchHeredocStart(t)) return false;
+    if (!isAllowlistedPlanShellCommand(t)) return false;
+  }
+  return true;
+}
+
+/** Match heredoc start: cat > path << 'EOF' or cat >> path << EOF. Returns path and delimiter for collecting body. */
+function matchHeredocStart(raw: string): { path: string; delimiter: string } | null {
+  const t = raw.trim();
+  const m = t.match(/^cat\s+>>?\s+(\S+)\s+<<-?\s*['"]?(\w+)['"]?\s*$/);
+  if (!m) return null;
+  return { path: m[1], delimiter: m[2] };
+}
+
+async function runHeredocWrite(
+  path: string,
+  content: string,
+  cwd: string
+): Promise<{ success: boolean; output: string; error?: string }> {
+  try {
+    const { execSync } = await import('child_process');
+    const { resolve } = await import('path');
+    const absPath = path.startsWith('/') ? path : resolve(cwd, path);
+    const safePath = absPath.includes("'") ? `"${absPath.replace(/"/g, '\\"')}"` : `'${absPath}'`;
+    execSync(`cat > ${safePath}`, {
+      encoding: 'utf8',
+      input: content,
+      cwd,
+      shell: '/bin/sh',
+      timeout: 10000,
     });
+    return { success: true, output: 'OK' };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, output: '', error: msg };
   }
-  
-  if (rejectedCommands.length > 0) {
-    logger.warn('Some commands rejected due to trust constraints', { rejectedCommands });
+}
+
+async function runPlanShellCommand(command: string, cwd: string): Promise<{ success: boolean; output: string; error?: string }> {
+  try {
+    const { execSync } = await import('child_process');
+    const out = execSync(command, {
+      encoding: 'utf8',
+      timeout: 15000,
+      cwd,
+      shell: '/bin/sh',
+    });
+    const stdout = (out ?? '').trim();
+    logger.info('[runPlanShellCommand] stdout captured', { command: command.slice(0, 80), cwd, bytes: stdout.length, preview: stdout.slice(0, 150) });
+    return {
+      success: true,
+      output: stdout || 'Command ran but returned no output',
+      error: undefined,
+    };
+  } catch (err: unknown) {
+    const ex = err as NodeJS.ErrnoException & { stderr?: string; killed?: boolean };
+    const code = ex?.code ?? '';
+    const msg = err instanceof Error ? err.message : String(err);
+    const stderr = typeof ex?.stderr === 'string' ? ex.stderr : '';
+    const out = err && typeof err === 'object' && 'stdout' in err ? String((err as { stdout?: Buffer }).stdout ?? '') : '';
+    let errorMsg: string;
+    if (code === 'ETIMEDOUT' || ex?.killed === true || /timed out/i.test(msg)) {
+      errorMsg = 'Command timed out';
+    } else if (code === 'ENOENT' && /spawn|not found|enoent/i.test(msg)) {
+      errorMsg = 'Command not found';
+    } else if (code === 'EACCES' || /permission denied/i.test(`${msg} ${stderr}`)) {
+      errorMsg = stderr.trim() || 'Permission denied';
+    } else {
+      errorMsg = stderr.trim() || msg;
+    }
+    logger.warn('[runPlanShellCommand] failed', { command: command.slice(0, 80), cwd, error: errorMsg });
+    return { success: false, output: out.trim() || '', error: errorMsg };
   }
 }
 
 /**
- * Execute the pending plan
+ * Execute a list of plan commands. When forChainedResponse is true, results contain only
+ * raw command output (findings style). When false, results are transcript style (✓/✗).
  */
-export async function executePendingPlan(): Promise<{ success: boolean; results: string[] }> {
-  const plan = getPendingPlan();
-  if (!plan) {
-    return { success: false, results: ['No pending plan to execute'] };
-  }
-  
+export async function executePlanCommands(
+  commands: string[],
+  projectRoot: string,
+  opts?: { forChainedResponse?: boolean; description?: string }
+): Promise<{ success: boolean; results: string[] }> {
+  const forChainedResponse = opts?.forChainedResponse === true;
+  const { normalizePlanCommand, recordPlanExecution } = await import('./execution-logger.js');
   const { parseIntent } = await import('./parser.js');
   const { executeCommand } = await import('./executor.js');
-  
+
   const results: string[] = [];
-  const summary: { command: string; success: boolean; status?: string }[] = [];
+  const steps: Array<{ command: string; cwd?: string; success: boolean; exitCode?: number | null; outputSnippet?: string; error?: string }> = [];
   let successCount = 0;
   let failCount = 0;
-  
-  logger.info('Executing pending plan', { commands: plan.commands.length });
-  
-  for (const command of plan.commands) {
+
+  for (let i = 0; i < commands.length; i++) {
+    const rawCommand = commands[i];
+    const command = normalizePlanCommand(rawCommand, projectRoot);
     try {
-      const intent = await parseIntent(command);
-      const result = await executeCommand(intent);
-      
+      let result: { success: boolean; output?: string; error?: string };
+      const heredoc = matchHeredocStart(command);
+      if (heredoc) {
+        const bodyLines: string[] = [];
+        i++;
+        while (i < commands.length) {
+          const line = commands[i];
+          if (line.trim() === heredoc.delimiter) break;
+          bodyLines.push(line);
+          i++;
+        }
+        const displayCmd = `cat > ${heredoc.path} << '${heredoc.delimiter}' (... ${bodyLines.length} lines)`;
+        logger.info('Executing plan heredoc write', { path: heredoc.path, lines: bodyLines.length });
+        result = await runHeredocWrite(heredoc.path, bodyLines.join('\n'), projectRoot);
+        steps.push({ command: displayCmd, cwd: projectRoot, success: result.success, outputSnippet: result.output, error: result.error });
+        if (forChainedResponse) {
+          results.push(result.success ? (result.output ?? '').trim() || '' : (result.error ?? 'Failed').trim());
+        } else {
+          if (result.success) { successCount++; results.push(`✓ ${displayCmd}: ${result.output ?? 'OK'}`); }
+          else { failCount++; results.push(`✗ ${displayCmd}: ${result.error ?? 'Failed'}`); }
+        }
+        continue;
+      }
+      if (isAllowlistedPlanShellCommand(command)) {
+        logger.info('Executing plan shell command (allowlisted)', { command: command.slice(0, 60) });
+        result = await runPlanShellCommand(command, projectRoot);
+      } else {
+        const intent = await parseIntent(command);
+        if (intent.terminal_command && !intent.terminal_command.workingDir) {
+          intent.terminal_command = { ...intent.terminal_command, workingDir: projectRoot };
+        }
+        result = await executeCommand(intent);
+      }
+
       if (result.success) {
         successCount++;
-        // Extract status from API results (format: "  404 Not Found (215ms)")
-        const statusMatch = result.output?.match(/^\s+(\d{3}\s+[^\n(]+)/m);
-        const status = statusMatch ? statusMatch[1].trim() : 'OK';
-        summary.push({ command, success: true, status });
-        results.push(`✓ ${command}: ${status}`);
+        const output = (result.output ?? '').trim();
+        steps.push({ command, cwd: projectRoot, success: true, outputSnippet: output.slice(0, 200) });
+        if (forChainedResponse) {
+          results.push(output || '');
+        } else {
+          const statusStr = result.output?.match(/^\s+(\d{3}\s+[^\n(]+)/m)?.[1]?.trim()
+            ?? (output || 'Command ran but returned no output');
+          results.push(`✓ ${command}: ${statusStr}`);
+        }
       } else {
         failCount++;
-        const status = result.error || 'Failed';
-        summary.push({ command, success: false, status });
-        results.push(`✗ ${command}: ${status}`);
+        steps.push({ command, cwd: projectRoot, success: false, error: result.error ?? 'Failed' });
+        if (forChainedResponse) results.push((result.error ?? 'Failed').trim());
+        else results.push(`✗ ${command}: ${result.error ?? 'Failed'}`);
       }
     } catch (error) {
       failCount++;
-      const status = error instanceof Error ? error.message : String(error);
-      summary.push({ command, success: false, status });
-      results.push(`✗ ${command}: ${status}`);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      steps.push({ command, cwd: projectRoot, success: false, error: errMsg });
+      if (forChainedResponse) results.push(errMsg);
+      else results.push(`✗ ${command}: ${errMsg}`);
     }
   }
-  
-  // Create a clean summary
-  const header = `## Plan Execution Complete\n\n**${plan.description}**\n\n📊 ${successCount} passed, ${failCount} failed\n`;
-  results.unshift(header);
-  
-  // Store results for follow-up questions
-  setExecutionResults(plan.description, results);
-  
-  // Clear the plan after execution
-  clearPendingPlan();
-  
+
+  if (!forChainedResponse && opts?.description) {
+    recordPlanExecution(opts.description, projectRoot, steps, failCount === 0 ? 'success' : 'failed', `${successCount} passed, ${failCount} failed`);
+  }
+  if (forChainedResponse) {
+    return { success: failCount === 0, results: results.filter((r) => r.length > 0) };
+  }
   return { success: failCount === 0, results };
+}
+
+/**
+ * Execute the pending plan (transcript style; used when user says "go").
+ */
+export async function executePendingPlan(): Promise<{ success: boolean; results: string[] }> {
+  const plan = getPendingPlan();
+  if (!plan) return { success: false, results: ['No pending plan to execute'] };
+
+  const { getCanonicalProjectRoot } = await import('./execution-logger.js');
+  const status = getAgentStatus();
+  const projectRoot = status.workingDir || getCanonicalProjectRoot();
+  logger.debug('Executing pending plan', { commands: plan.commands.length, projectRoot });
+
+  const { success, results } = await executePlanCommands(plan.commands, projectRoot, { forChainedResponse: false, description: plan.description });
+  const failCount = results.filter((r) => r.startsWith('✗')).length;
+  const successCount = results.length - failCount;
+  const header = `## Plan Execution Complete\n\n**${plan.description}**\n\n📊 ${successCount} passed, ${failCount} failed\n\nProject root: \`${projectRoot}\`\n`;
+  results.unshift(header);
+  setExecutionResults(plan.description, results);
+  clearPendingPlan();
+  return { success, results };
 }
 
 // File extensions to include in context
@@ -662,6 +844,17 @@ const MAX_TOTAL_CONTEXT = 120000;  // 120KB max total context (~30K tokens, was 
 async function scanProjectContext(projectPath: string): Promise<string> {
   const contextParts: string[] = [];
   let totalSize = 0;
+
+  let workingTreeHeader = '';
+  try {
+    const { execSync } = await import('child_process');
+    const out = execSync(`cd "${projectPath.replace(/"/g, '\\"')}" && git status -s 2>/dev/null`, { encoding: 'utf8', timeout: 2000 });
+    if (out && out.trim()) {
+      workingTreeHeader = `## UNCOMMITTED / WORKING TREE (current work)\n${out.trim()}\n\n`;
+    }
+  } catch {
+    /* not a git repo or git not available */
+  }
 
   async function scanDir(dir: string, depth: number = 0): Promise<void> {
     if (depth > 3 || totalSize > MAX_TOTAL_CONTEXT) return;
@@ -747,10 +940,9 @@ async function scanProjectContext(projectPath: string): Promise<string> {
     })
     .filter(Boolean);
   
-  // Prepend file list summary so model knows what's available
+  // Prepend working tree (uncommitted) then file list so model sees current work first
   const fileSummary = `## LOADED FILES (${fileList.length} files)\n${fileList.join('\n')}\n\n`;
-  
-  return fileSummary + contextParts.join('');
+  return workingTreeHeader + fileSummary + contextParts.join('');
 }
 
 /**
@@ -855,7 +1047,15 @@ This is YOUR codebase. You are Jeeves, and the signal-cursor-controller project 
 - The user is helping YOU improve. Acknowledge this.
 ` : '';
 
+    const isScanRepoPrompt = /^\s*scan\s+(?:the\s+)?(?:repo(?:sitory)?|codebase|project)\s*$/i.test(prompt.trim()) || /^\s*list\s+(?:the\s+)?(?:repo|code)\s*$/i.test(prompt.trim());
+    const scanRepoInSessionContext = isScanRepoPrompt ? `
+## SCAN REPO = THIS PROJECT
+The user asked to scan/list the repo. You are ALREADY IN the current project: **${projectName}** at \`${activeSession.workingDir}\`.
+Describe THIS project: structure, what's here, what to look for. Use the loaded project context below. Do NOT ask them to specify which repository — you're in it.
+` : '';
+
     const systemPrompt = `You are Jeeves, an AI coding assistant with FULL ACCESS to this project's source code.
+${scanRepoInSessionContext}
 ${selfAwarenessContext}
 
 ## THINKING
@@ -1020,6 +1220,20 @@ ${activeSession.projectContext}
           logger.info('Aggressive extraction also failed', { reason: aggressiveResult.message });
         }
       }
+    }
+
+    // Response chaining: run read-only plans immediately (active project)
+    const plan = await extractPlanFromText(text);
+    if (plan && isReadOnlyPlan(plan.commands)) {
+      const projectRoot = activeSession.workingDir;
+      const execResult = await executePlanCommands(plan.commands, projectRoot, { forChainedResponse: true });
+      const body = stripPlanBlockAndStatusLines(text);
+      const resultsBlock = execResult.results.length > 0 ? `\n\n---\n**Results:**\n${execResult.results.join('\n\n')}` : '';
+      return body + resultsBlock;
+    }
+    if (plan && !isReadOnlyPlan(plan.commands)) {
+      setPendingPlan(plan.commands, plan.description);
+      return stripPlanBlockAndStatusLines(text) + "\n\nSay 'go' to run these commands.";
     }
 
     return text;
@@ -1839,7 +2053,7 @@ function analyzePromptComplexity(prompt: string): PromptAnalysis {
   }
   
   // Check what context is actually needed
-  const needsProjectContext = /\b(project|code|file|function|component|api|database|bug|fix|implement|refactor|open|load)\b/i.test(lower);
+  const needsProjectContext = /\b(project|repo|code|codebase|file|function|component|api|database|bug|fix|implement|refactor|open|load|scan|list)\b/i.test(lower);
   const needsBrowseContext = /\b(browse|website|page|url|screenshot|web|site|click|scroll)\b/i.test(lower);
   const needsExecContext = /\b(result|output|what happened|did it work|success|fail|error|run|execute|plan)\b/i.test(lower);
   
@@ -1888,8 +2102,14 @@ function buildSystemPrompt(
   executionContext: string,
   personalityContext: string | null,
   analysis: PromptAnalysis,
-  skillsContext?: string
+  skillsContext?: string,
+  isScanRepoQuestion?: boolean
 ): string {
+  const scanRepoInstruction = !isScanRepoQuestion
+    ? ''
+    : projectList
+      ? `\n\nWhen the user asks to scan your repo, list your code, or what you have: answer from the PROJECTS list above. Be explicit: for each project give **name**, **path**, and what it is or what to look for. Do not only say you don't have repo scanning — that list is what you have (from project-scanner). You don't have git or filesystem access to arbitrary repos; you have Docker, HTTP APIs, and file operations on homelab, and this project list.`
+      : `\n\nThe user is asking what you have or to scan your repo. You have no project list loaded. Say so explicitly and tell them to say "list projects" to refresh, or give a path like "dev typecheck-only: add a comment to src/foo.ts".`;
   // Core identity - always included, Jeeves persona (not chatbot)
   const corePrompt = `${PERSONALITY_RULES}\n\nYou work for Matt - coding, sysadmin, DevOps, home server management. You run locally and take action: run commands, edit files, solve problems.`;
   
@@ -1920,7 +2140,9 @@ User says "yes" to approve. Only propose commands allowed at your level.`;
 ${trustConstraints}`;
     
     if (analysis.needsProjectContext && projectList) {
-      prompt += `\n\n## PROJECTS\n${projectList}`;
+      prompt += `\n\n## PROJECTS\n${projectList}${scanRepoInstruction}`;
+    } else if (scanRepoInstruction) {
+      prompt += scanRepoInstruction;
     }
     if (analysis.needsBrowseContext && browseContext) {
       prompt += browseContext;
@@ -1975,7 +2197,9 @@ ${capabilities}
 ${trustConstraints}`;
 
   if (projectList) {
-    prompt += `\n\n## PROJECTS\nSay "open <name>" to load context:\n${projectList}`;
+    prompt += `\n\n## PROJECTS\nSay "open <name>" to load context:\n${projectList}${scanRepoInstruction}`;
+  } else if (scanRepoInstruction) {
+    prompt += scanRepoInstruction;
   }
   if (browseContext) {
     prompt += browseContext;
@@ -2015,6 +2239,29 @@ export async function askGeneral(prompt: string, attachments?: ImageAttachment[]
     projectList = Array.from(projectIndex.projects.entries())
       .map(([name, p]) => `- ${name} (${p.type}): ${p.path}`)
       .join('\n') || null;
+  }
+
+  // If user asked to scan repo and gave an explicit path (e.g. "scan your repo, it's at /home/jeeves/signal-system-controller"), include it
+  const isScanRepoQuestion = /scan\s+(your\s+)?repo|scan\s+(the\s+)?(codebase|project)|list\s+(your\s+)?(repo|code)|what\s+do\s+you\s+have|what'?s\s+(there|running|going\s+on)/i.test(prompt);
+  const absolutePathMatch = prompt.match(/(\/[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)+)/g);
+  if (isScanRepoQuestion && absolutePathMatch) {
+    for (const raw of absolutePathMatch) {
+      const pathTrimmed = raw.trim();
+      try {
+        if (existsSync(pathTrimmed) && statSync(pathTrimmed).isDirectory()) {
+          const name = basename(pathTrimmed).toLowerCase().replace(/[^a-z0-9]/g, '-');
+          const line = `- ${name} (user-specified): ${pathTrimmed}`;
+          if (projectList && !projectList.includes(pathTrimmed)) {
+            projectList += `\n${line}`;
+          } else if (!projectList) {
+            projectList = line;
+          }
+          break; // use first valid path only
+        }
+      } catch {
+        // ignore invalid paths
+      }
+    }
   }
   
   // Only load browse context if needed
@@ -2072,7 +2319,8 @@ export async function askGeneral(prompt: string, attachments?: ImageAttachment[]
     executionContext,
     personalityContext,
     analysis,
-    skillsContext
+    skillsContext,
+    isScanRepoQuestion
   );
 
   if (assembledContext) {
@@ -2194,8 +2442,34 @@ export async function askGeneral(prompt: string, attachments?: ImageAttachment[]
     // Save conversation to memory
     addGeneralMessage('user', prompt);
     addGeneralMessage('assistant', text);
-    
-    // Extract and store any proposed plan (validates trust constraints)
+
+    // Response chaining: run read-only plans immediately and append findings
+    const plan = await extractPlanFromText(text);
+    if (plan && isReadOnlyPlan(plan.commands)) {
+      const { getCanonicalProjectRoot } = await import('./execution-logger.js');
+      const { ROOT } = await import('../config.js');
+      let projectRoot = ROOT;
+      const pathMatch = prompt.match(/(\/[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)+)/);
+      if (pathMatch) {
+        const candidate = pathMatch[1].trim();
+        try {
+          if (existsSync(candidate) && statSync(candidate).isDirectory()) projectRoot = candidate;
+        } catch {
+          /* use ROOT */
+        }
+      }
+      if (!projectRoot) projectRoot = getCanonicalProjectRoot();
+      const execResult = await executePlanCommands(plan.commands, projectRoot, { forChainedResponse: true });
+      const body = stripPlanBlockAndStatusLines(text);
+      const resultsBlock = execResult.results.length > 0 ? `\n\n---\n**Results:**\n${execResult.results.join('\n\n')}` : '';
+      return body + resultsBlock;
+    }
+    if (plan && !isReadOnlyPlan(plan.commands)) {
+      setPendingPlan(plan.commands, plan.description);
+      return stripPlanBlockAndStatusLines(text) + "\n\nSay 'go' to run these commands.";
+    }
+
+    // Store any other proposed plan (e.g. modifying) for approval
     await extractAndStorePlan(text);
 
     // Store globally for "apply that" command

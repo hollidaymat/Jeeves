@@ -35,19 +35,46 @@ function formatSize(bytes: number): string {
 /**
  * Get storage usage from Nextcloud.
  */
+let lastError: string | null = null;
+function setLastError(msg: string): void {
+  lastError = msg;
+}
+
 export async function getStorageInfo(): Promise<NextcloudStorage | null> {
+  lastError = null;
   if (!NC_USER || !NC_PASS) {
     logger.debug('[nextcloud] No credentials configured');
     return null;
   }
 
   try {
-    const res = await fetch(`${NC_URL}/ocs/v1.php/cloud/users/${NC_USER}?format=json`, {
+    const url = `${NC_URL.replace(/\/$/, '')}/ocs/v1.php/cloud/users/${NC_USER}?format=json`;
+    const res = await fetch(url, {
       headers: authHeaders(),
       signal: AbortSignal.timeout(10000),
     });
 
-    const data = await res.json() as Record<string, unknown>;
+    const text = await res.text();
+    const contentType = res.headers.get('content-type') ?? '';
+    if (!contentType.includes('application/json') && !text.trimStart().startsWith('{')) {
+      if (res.status === 401) {
+        setLastError(`401 Unauthorized. Check NEXTCLOUD_USER and NEXTCLOUD_PASS (or use an app password).`);
+      } else if (text.includes('<!') || text.includes('<html')) {
+        setLastError(`Server returned HTML instead of JSON (status ${res.status}). Is NEXTCLOUD_URL correct? If Nextcloud is at a subpath (e.g. /nextcloud), set NEXTCLOUD_URL=http://nextcloud.home.local/nextcloud`);
+      } else {
+        setLastError(`Unexpected response (${res.status}): ${text.slice(0, 120)}…`);
+      }
+      return null;
+    }
+
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      setLastError(`Invalid JSON from server: ${text.slice(0, 120)}…`);
+      return null;
+    }
+
     const quota = (data as Record<string, Record<string, Record<string, Record<string, number>>>>).ocs?.data?.quota;
 
     if (quota) {
@@ -62,9 +89,18 @@ export async function getStorageInfo(): Promise<NextcloudStorage | null> {
       };
     }
   } catch (error) {
-    logger.debug('[nextcloud] API call failed', { error: String(error) });
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.debug('[nextcloud] API call failed', { error: msg });
+    setLastError(msg);
   }
   return null;
+}
+
+/** Call after getStorageInfo() returns null to get the reason (e.g. certificate, 401, timeout). */
+export function getLastNextcloudError(): string | null {
+  const e = lastError;
+  lastError = null;
+  return e;
 }
 
 /**
@@ -126,8 +162,12 @@ export async function createShareLink(path: string): Promise<string | null> {
   }
 }
 
-export function formatStorageInfo(info: NextcloudStorage | null): string {
-  if (!info) return 'Nextcloud not configured or unreachable. Set NEXTCLOUD_URL, NEXTCLOUD_USER, NEXTCLOUD_PASS in .env.';
+export function formatStorageInfo(info: NextcloudStorage | null, detailError?: string | null): string {
+  if (!info) {
+    const base = 'Nextcloud not configured or unreachable. Set NEXTCLOUD_URL, NEXTCLOUD_USER, NEXTCLOUD_PASS in .env.';
+    if (detailError?.trim()) return `${base}\nError: ${detailError.trim()}`;
+    return base;
+  }
   return [
     '## Nextcloud Storage',
     '',

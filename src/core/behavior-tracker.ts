@@ -44,12 +44,57 @@ export interface LoopCheckResult {
   response?: string;
 }
 
+/** Skip loop check for short system/template messages (e.g. "AI session ready") so repeated "open X" doesn't trigger. */
+function isSystemTemplateResponse(response: string): boolean {
+  if (!response || response.length > 400) return false;
+  return /AI assistant ready for|Loaded \d+KB of project context|No active AI session|session (ready|ended)/i.test(response);
+}
+
+/** Skip loop check for plan-style responses (user correcting "didn't work" + agent re-proposing plan). */
+function isPlanProposalResponse(response: string): boolean {
+  if (!response) return false;
+  return (/```plan|COMMANDS:\s*\n/i.test(response) && /mkdir|ls\s|pwd|test\s+-d|cat\s+>.*<</i.test(response));
+}
+
+/** Skip fingerprint when response is mainly asking user to approve/run (so "go" next turn doesn't trigger loop). */
+function isWaitingForApprovalResponse(response: string): boolean {
+  if (!response || response.length > 800) return false;
+  const hasApprovalWording = /say\s+['"]?go['"]?|reply\s+go\s+to\s+run|approve\s+to\s+execute|run\s+these\s+commands/i.test(response);
+  const hasPlanOrCommands = /COMMANDS:\s*\n|```plan|Say 'go' to run/i.test(response);
+  return hasApprovalWording && hasPlanOrCommands;
+}
+
+/** Skip fingerprint for confirmation requests and feedback acknowledgments (avoids loop on "yes go ahead"). */
+function isConfirmationOrFeedbackResponse(response: string): boolean {
+  if (!response || response.length > 600) return false;
+  return (
+    /Would you like me to/i.test(response) ||
+    /^Got it\./i.test(response.trim()) ||
+    /^Noted\./i.test(response.trim()) ||
+    /I(?:'ll| will) (?:run|execute|check|list)/i.test(response) ||
+    /Running\s+\w+/i.test(response) ||
+    /^Sure,? (?:running|executing)/i.test(response.trim())
+  );
+}
+
 /**
  * Check if the response indicates a loop (3+ identical fingerprints in last 5).
  * Call before returning any response from cognitive/normal path.
  */
 export function checkForLoop(response: string): LoopCheckResult {
   if (!response || response.length < 10) {
+    return { isLoop: false };
+  }
+  if (isSystemTemplateResponse(response)) {
+    return { isLoop: false };
+  }
+  if (isPlanProposalResponse(response)) {
+    return { isLoop: false };
+  }
+  if (isWaitingForApprovalResponse(response)) {
+    return { isLoop: false };
+  }
+  if (isConfirmationOrFeedbackResponse(response)) {
     return { isLoop: false };
   }
 

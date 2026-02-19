@@ -12,6 +12,7 @@ export interface ProjectContext {
   files: string;
   dependencies: string;
   recentChanges: string;
+  workingTree: string;
 }
 
 /**
@@ -21,7 +22,7 @@ export interface ProjectContext {
 export async function getProjectContext(projectPath: string): Promise<ProjectContext | null> {
   if (!projectPath || !existsSync(projectPath)) return null;
 
-  const ctx: ProjectContext = { files: '', dependencies: '', recentChanges: '' };
+  const ctx: ProjectContext = { files: '', dependencies: '', recentChanges: '', workingTree: '' };
 
   try {
     // Project structure (first 30 .ts/.js files)
@@ -53,14 +54,29 @@ export async function getProjectContext(projectPath: string): Promise<ProjectCon
       }
     }
 
-    // Recent git log
+    // Recent git log (commits only)
     try {
       const gitLog = execSync(
         `cd "${projectPath}" && git log --oneline -5 2>/dev/null || echo "no git"`,
         { encoding: 'utf8', timeout: 3000 }
       );
       if (gitLog && !gitLog.includes('no git')) {
-        ctx.recentChanges = `RECENT CHANGES:\n${gitLog.trim()}`;
+        ctx.recentChanges = `RECENT COMMITS:\n${gitLog.trim()}`;
+      }
+    } catch {
+      /* skip */
+    }
+
+    // Working tree (uncommitted changes) — so "what's new" / "find features" sees current work, not just last commit
+    try {
+      const gitStatus = execSync(
+        `cd "${projectPath}" && git status -s 2>/dev/null || echo ""`,
+        { encoding: 'utf8', timeout: 3000 }
+      );
+      const trimmed = gitStatus.trim();
+      if (trimmed) {
+        const lines = trimmed.split('\n').filter(Boolean);
+        ctx.workingTree = `UNCOMMITTED / WORKING TREE (current work):\n${lines.join('\n')}`;
       }
     } catch {
       /* skip */
@@ -69,6 +85,6 @@ export async function getProjectContext(projectPath: string): Promise<ProjectCon
     return null;
   }
 
-  if (!ctx.files && !ctx.dependencies && !ctx.recentChanges) return null;
+  if (!ctx.files && !ctx.dependencies && !ctx.recentChanges && !ctx.workingTree) return null;
   return ctx;
 }

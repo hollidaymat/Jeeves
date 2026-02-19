@@ -1,3 +1,5 @@
+// Capabilities: self-test runs jeeves-qa + cognitive health; see docs/CAPABILITY_AUDIT
+// Capabilities: self-test runs jeeves-qa + cognitive health; see docs/CAPABILITY_AUDIT
 /**
  * Jeeves Self-Test
  * Runs the full test suite (jeeves-qa), collects results, and formats a report.
@@ -48,11 +50,44 @@ export interface SelfTestOptions {
 /**
  * Run the full self-test suite and return formatted results.
  */
+/** Base URL for self-test to hit our own server (same host/port/scheme as config). */
+function defaultApiBase(): string {
+  const scheme = config.server.tls ? 'https' : 'http';
+  const host = config.server.host === '0.0.0.0' ? '127.0.0.1' : config.server.host;
+  return `${scheme}://${host}:${config.server.port}`;
+}
+
 export async function runSelfTest(options: SelfTestOptions = {}): Promise<SelfTestResults> {
-  const { onProgress, apiBase = `http://127.0.0.1:${config.server.port}` } = options;
+  const { onProgress, apiBase = defaultApiBase() } = options;
+
+  logger.info('Self-test starting', { apiBase, serverHost: config.server.host, serverPort: config.server.port });
 
   const startTime = Date.now();
   onProgress?.('Running self-test. This takes 30–60 seconds.');
+
+  // Pre-flight: ensure we can reach our own API (so jeeves-qa child will be able to)
+  const healthUrl = `${apiBase.replace(/\/$/, '')}/api/debug/cognitive-health`;
+  try {
+    const res = await fetch(healthUrl, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const isTlsOrCert = /certificate|self signed|UNABLE_TO_VERIFY|TLS|SSL|CERT_|fetch failed/i.test(msg);
+    if (config.server.tls && (isTlsOrCert || msg === 'fetch failed')) {
+      // HTTPS: parent's fetch often fails (cert or generic "fetch failed"); jeeves-qa child has NODE_TLS_REJECT_UNAUTHORIZED=0
+      logger.info('Self-test: pre-flight failed (HTTPS); proceeding — jeeves-qa uses NODE_TLS_REJECT_UNAUTHORIZED=0', { apiBase, error: msg });
+    } else {
+      logger.error('Self-test: cannot reach API before running jeeves-qa', { apiBase, healthUrl, error: msg });
+      onProgress?.(`API unreachable at ${apiBase}. Check server bind (e.g. 0.0.0.0 or 127.0.0.1) and port.`);
+      return {
+        suites: [],
+        totals: { passed: 0, failed: 1, skipped: 0 },
+        durationMs: Date.now() - startTime,
+        cognitive: { contextAssembler: false, dbConnected: false, layersAvailable: [], lastTraceAge: null },
+        growth: getGrowthTrend(10),
+      };
+    }
+  }
 
   // 1. Run jeeves-qa with --json --no-llm (fast, machine-readable)
   const qaResult = await runJeevesQa(apiBase, onProgress);
@@ -90,10 +125,14 @@ async function runJeevesQa(
 
   return new Promise((resolvePromise, reject) => {
     const args = ['src/index.ts', '--json', '--no-llm', '--host', apiBase];
+    const env = { ...process.env };
+    if (config.server.tls) {
+      env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+    }
     const proc = spawn('npx', ['tsx', ...args], {
       cwd: JEEVES_QA_PATH,
       timeout: 120_000,
-      env: { ...process.env },
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -108,19 +147,31 @@ async function runJeevesQa(
     });
 
     proc.on('close', (code) => {
+      const trimmed = stdout.trim();
+      let parsed: { suites?: SuiteResult[]; totals?: { passed: number; failed: number; skipped: number }; error?: string };
       try {
-        const parsed = JSON.parse(stdout.trim());
-        resolvePromise({
-          suites: parsed.suites ?? [],
-          totals: parsed.totals ?? { passed: 0, failed: 0, skipped: 0 },
-        });
+        // Accept JSON on last line in case of leading stray output
+        const lastLine = trimmed.split('\n').filter(Boolean).pop() ?? trimmed;
+        parsed = JSON.parse(lastLine) as typeof parsed;
       } catch {
-        logger.warn('Self-test: jeeves-qa did not return valid JSON', { code, stderr: stderr.slice(0, 200) });
+        logger.warn('Self-test: jeeves-qa did not return valid JSON', {
+          code,
+          stderr: stderr.slice(0, 200),
+          stdoutPreview: trimmed.slice(0, 300),
+        });
         resolvePromise({
           suites: [],
           totals: { passed: 0, failed: code === 0 ? 0 : 1, skipped: 0 },
         });
+        return;
       }
+      if (parsed.error) {
+        logger.warn('Self-test: jeeves-qa reported error', { error: parsed.error, code });
+      }
+      resolvePromise({
+        suites: parsed.suites ?? [],
+        totals: parsed.totals ?? { passed: 0, failed: 0, skipped: 0 },
+      });
     });
 
     proc.on('error', (err) => {

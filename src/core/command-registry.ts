@@ -18,7 +18,8 @@ export type CommandCategory =
   | 'trust'
   | 'memory'
   | 'monitoring'
-  | 'integrations';
+  | 'integrations'
+  | 'development';
 
 export interface Command {
   id: string;
@@ -108,6 +109,16 @@ export const COMMAND_REGISTRY: Command[] = [
     action: 'jeeves_self_test',
     examples: ['run self test', 'self test', 'test yourself', 'how are you doing', 'run diagnostic'],
     category: 'system',
+  },
+
+  // homelab.deploy_gluetun before vercel.deploy so "deploy gluetun" matches here first
+  {
+    id: 'homelab.deploy_gluetun',
+    patterns: [/^(?:deploy\s+gluetun|set\s+up\s+vpn\s+for\s+downloads|gluetun\s+deploy|install\s+gluetun)$/i],
+    aliases: [],
+    action: 'deploy_gluetun_stack',
+    examples: ['deploy gluetun', 'set up vpn for downloads', 'gluetun deploy'],
+    category: 'homelab',
   },
 
   // --- VERCEL ---
@@ -593,7 +604,13 @@ export const COMMAND_REGISTRY: Command[] = [
     patterns: [/^(?:download|get|grab|add|queue)\s+(.+)/i],
     aliases: [],
     action: 'media_download',
-    extract: (match) => ({ target: match[1]?.trim() || '' }),
+    extract: (match, _msg) => {
+      const target = (match[1] || '').trim();
+      const lower = target.toLowerCase();
+      if (lower.startsWith('torrent')) return { _skip: true };
+      if (/error\s+handling\s+to\s+/i.test(target)) return { _skip: true };
+      return { target };
+    },
     examples: ['download inception', 'get breaking bad season 2'],
     category: 'media',
   },
@@ -641,19 +658,14 @@ export const COMMAND_REGISTRY: Command[] = [
   },
   {
     id: 'integrations.qbittorrent',
-    patterns: [/^(?:qbittorrent|qbit|qbit\s+status|torrent\s+status|qbit\s+torrents|qbit\s+list)$/i],
+    patterns: [
+      /^(?:qbittorrent|qbit|qbit\s+status|torrent\s+status|qbit\s+torrents|qbit\s+list)$/i,
+      /^add\s+torrent\b/i,
+    ],
     aliases: [],
     action: 'qbittorrent_status',
     examples: ['qbittorrent', 'qbit status', 'add torrent <magnet link>'],
     category: 'integrations',
-  },
-  {
-    id: 'homelab.deploy_gluetun',
-    patterns: [/^(?:deploy\s+gluetun|set\s+up\s+vpn\s+for\s+downloads|gluetun\s+deploy|install\s+gluetun)$/i],
-    aliases: [],
-    action: 'deploy_gluetun_stack',
-    examples: ['deploy gluetun', 'set up vpn for downloads', 'gluetun deploy'],
-    category: 'homelab',
   },
   {
     id: 'integrations.home_assistant',
@@ -667,6 +679,79 @@ export const COMMAND_REGISTRY: Command[] = [
     extract: (match, msg) => ({ target: match[1]?.trim() || msg.trim() }),
     examples: ['indoor temperature', 'lights off', 'ha status'],
     category: 'integrations',
+  },
+
+  // --- DEVELOPMENT (dev.status and dev.changelog before dev.task so "dev status"/"dev changelog" match first) ---
+  {
+    id: 'dev.status',
+    patterns: [
+      /^dev(?:elop(?:ment)?)?\s+status$/i,
+      /^what(?:'s| is) (?:being )?(?:developed|coded|built)$/i,
+      /^coding status$/i,
+    ],
+    aliases: [],
+    action: 'dev_recent',
+    examples: ['dev status', 'what\'s being developed', 'coding status'],
+    category: 'development',
+  },
+  {
+    id: 'dev.changelog',
+    patterns: [
+      /^dev(?:elop(?:ment)?)?\s+(?:change)?log$/i,
+      /^what(?:'s| has)\s+(?:been\s+)?changed$/i,
+      /^show\s+(?:recent\s+)?(?:code\s+)?changes$/i,
+    ],
+    aliases: [],
+    action: 'dev_changelog',
+    examples: ['dev changelog', "what's been changed", 'show recent changes'],
+    category: 'development',
+  },
+  {
+    id: 'dev.rollback',
+    patterns: [
+      /^rollback\s*(last|recent)?$/i,
+      /^undo\s+(?:last\s+)?(?:change|code|dev)$/i,
+      /^revert\s+(?:last\s+)?(?:change|code|dev)$/i,
+    ],
+    aliases: [],
+    action: 'dev_rollback',
+    requiresConfirmation: true,
+    examples: ['rollback last', 'undo last change', 'revert last change'],
+    category: 'development',
+  },
+  {
+    id: 'dev.task',
+    patterns: [
+      /^(?:jeeves\s*,\s*)?dev\s+typecheck-only\s*:?\s*(.+)/i,
+      /^(?:jeeves\s*,\s*)?develop\s+typecheck-only\s*:?\s*(.+)/i,
+      /^(?:jeeves\s*,\s*)?dev\s+smoke-test\s*:?\s*(.+)/i,
+      /^(?:jeeves\s*,\s*)?develop\s+smoke-test\s*:?\s*(.+)/i,
+      /^(?:jeeves\s*,\s*)?dev\s+full-test\s*:?\s*(.+)/i,
+      /^(?:jeeves\s*,\s*)?develop\s+full-test\s*:?\s*(.+)/i,
+      /^(?:jeeves\s*,\s*)?develop\s*:?\s*(.+)/i,
+      /^(?:jeeves\s+)?(?:implement|build|add|create|fix|refactor|update|improve)\s+(.+)/i,
+      /^(?:jeeves\s*,\s*)?dev(?:elop)?\s*:?\s*(.+)/i,
+      /^dev(?:elop)?\s+(.+)/i,
+      /^code\s+(.+)/i,
+    ],
+    aliases: [],
+    action: 'dev_task',
+    extract: (match, msg) => {
+      const target = (match[1] || '').trim();
+      const lower = msg.trim().toLowerCase();
+      let mode: 'typecheck-only' | 'smoke-test' | 'full-test' | undefined;
+      if (/dev\s+typecheck-only|develop\s+typecheck-only/.test(lower)) mode = 'typecheck-only';
+      else if (/dev\s+smoke-test|develop\s+smoke-test/.test(lower)) mode = 'smoke-test';
+      else if (/dev\s+full-test|develop\s+full-test/.test(lower)) mode = 'full-test';
+      return mode != null ? { target, mode } : { target };
+    },
+    examples: [
+      'implement rate limiting on voice endpoint',
+      'add error handling to media search',
+      'fix the notification quiet hours bug',
+      'refactor the command parser',
+    ],
+    category: 'development',
   },
 
   // --- FILE SHARE ---

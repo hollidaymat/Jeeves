@@ -251,7 +251,12 @@ export async function executeTerminalCommand(cmd: TerminalCommand): Promise<Term
         const { text, truncated } = truncateOutput(fullOutput);
 
         const success = code === 0 && !timedOut;
-        
+        const errorMsg = timedOut
+          ? 'Command timed out'
+          : !success
+            ? (stderr.trim() || `Exit code: ${code}`)
+            : undefined;
+
         logger.info('Terminal command completed', {
           exitCode: code,
           timedOut,
@@ -261,8 +266,8 @@ export async function executeTerminalCommand(cmd: TerminalCommand): Promise<Term
 
         resolve({
           success,
-          output: text || (success ? 'Command completed successfully' : 'Command failed'),
-          error: !success && !timedOut ? `Exit code: ${code}` : undefined,
+          output: text || (success ? 'Command ran but returned no output' : ''),
+          error: errorMsg,
           exitCode: code,
           timedOut,
           truncated,

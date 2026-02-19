@@ -77,7 +77,7 @@ export function setExecutionResults(description: string, results: string[]): voi
     results,
     timestamp: new Date()
   };
-  logger.info('Stored execution results for context', { 
+  logger.debug('Stored execution results for context', { 
     description, 
     resultsCount: results.length 
   });

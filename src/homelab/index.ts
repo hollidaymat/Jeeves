@@ -366,9 +366,10 @@ export async function executeHomelabAction(
       }
 
       case 'nextcloud_status': {
-        const { getStorageInfo, formatStorageInfo } = await import('./integrations/nextcloud.js');
+        const { getStorageInfo, formatStorageInfo, getLastNextcloudError } = await import('./integrations/nextcloud.js');
         const info = await getStorageInfo();
-        return { success: true, output: formatStorageInfo(info), duration_ms: Date.now() - startTime };
+        const err = getLastNextcloudError();
+        return { success: true, output: formatStorageInfo(info, err), duration_ms: Date.now() - startTime };
       }
 
       case 'nextcloud_upload': {
@@ -740,19 +741,26 @@ async function handleSystemReview(): Promise<ExecutionResult> {
 async function handleContainers(): Promise<ExecutionResult> {
   const startTime = Date.now();
   const containerMon = await getContainerMonitor();
-  const containers = await containerMon.listContainers();
+  const [containers, statsList] = await Promise.all([
+    containerMon.listContainers(),
+    containerMon.getContainerStats().catch(() => [] as Array<{ name: string; memUsage?: string }>),
+  ]);
 
   if (containers.length === 0) {
     return { success: true, output: 'No containers found.', duration_ms: Date.now() - startTime };
   }
 
-  let output = '## Containers\n\n';
-  output += '| Name | State | Status | Ports |\n';
-  output += '|------|-------|--------|-------|\n';
-  for (const c of containers) {
+  const statsByName = new Map((statsList || []).map(s => [s.name, s.memUsage || '-']));
+
+  let output = '## Homelab containers\n\n';
+  output += `**${containers.filter((c: { state: string }) => c.state === 'running').length}** running / **${containers.length}** total\n\n`;
+  output += '| Name | State | Status | Memory | Ports |\n';
+  output += '|------|-------|--------|--------|-------|\n';
+  for (const c of containers.sort((a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name))) {
     const stateIcon = c.state === 'running' ? '🟢' : c.state === 'exited' ? '🔴' : '🟡';
     const portsStr = c.ports || '-';
-    output += `| ${stateIcon} ${c.name} | ${c.state} | ${c.status} | ${portsStr} |\n`;
+    const mem = statsByName.get(c.name) ?? '-';
+    output += `| ${stateIcon} ${c.name} | ${c.state} | ${c.status} | ${mem} | ${portsStr} |\n`;
   }
 
   return { success: true, output, duration_ms: Date.now() - startTime };
@@ -1446,17 +1454,28 @@ export async function getDashboardStatus(): Promise<Record<string, unknown>> {
       containerMon.listContainers().catch(() => [])
     ]);
 
-    // Map containers to service statuses
+    // Map containers to service statuses; resolve system-service states (e.g. Tailscale has no container)
     const allServices = registry.getAllServices();
+    const systemServiceStates: Record<string, string> = {};
+    const tailscaleSvc = allServices.find(s => (s as { type?: string }).type === 'system-service' && s.name === 'tailscale');
+    if (tailscaleSvc) {
+      const { getTailscaleStatus } = await import('./integrations/tailscale.js');
+      const ts = await getTailscaleStatus().catch(() => null);
+      systemServiceStates['tailscale'] = ts?.connected ? 'running' : 'stopped';
+    }
+
     const services = allServices.map(svc => {
+      const asSvc = svc as { name: string; tier: string; priority: string; image: string; ramMB: number; ports: (number|string)[]; purpose: string; type?: string };
+      const systemState = asSvc.type === 'system-service' ? systemServiceStates[asSvc.name] : undefined;
       const container = containers.find((c: { name: string }) =>
         c.name === svc.name || c.name === svc.name.replace(/_/g, '-')
       );
+      const state = systemState ?? (container ? (container.state === 'running' ? 'running' : container.state) : 'stopped');
       return {
         name: svc.name,
         tier: svc.tier,
         priority: svc.priority,
-        state: container ? (container.state === 'running' ? 'running' : container.state) : 'stopped',
+        state,
         image: svc.image,
         ramMB: svc.ramMB,
         ports: svc.ports,
@@ -1477,6 +1496,33 @@ export async function getDashboardStatus(): Promise<Record<string, unknown>> {
         }
       }
     } catch { /* skip stats on error */ }
+
+    // Integration status: don't show green unless API is configured and reachable (for services with collectors)
+    const { getCollectorConfigStatus, getAvailableCollectors, collectServiceDetail, normalizeServiceNameForCollector } = await import('./services/collectors.js');
+    const collectorNames = new Set(getAvailableCollectors());
+    const REACH_TIMEOUT_MS = 12000;
+    for (const svc of services) {
+      const norm = normalizeServiceNameForCollector(svc.name);
+      const hasCollector = collectorNames.has(norm);
+      const apiConfigured = getCollectorConfigStatus(svc.name) === 'configured';
+      (svc as Record<string, unknown>).hasCollector = hasCollector;
+      (svc as Record<string, unknown>).apiConfigured = apiConfigured;
+      (svc as Record<string, unknown>).apiReachable = true; // default; set below for collector services
+    }
+    const withCollector = services.filter(s => (s as Record<string, unknown>).hasCollector && (s as Record<string, unknown>).apiConfigured);
+    if (withCollector.length > 0) {
+      const results = await Promise.all(
+        withCollector.map(s =>
+          Promise.race([
+            collectServiceDetail(s.name),
+            new Promise<null>(r => setTimeout(() => r(null), REACH_TIMEOUT_MS))
+          ])
+        )
+      );
+      withCollector.forEach((s, i) => {
+        (s as Record<string, unknown>).apiReachable = results[i] !== null;
+      });
+    }
 
     // Build resources
     let resources = null;

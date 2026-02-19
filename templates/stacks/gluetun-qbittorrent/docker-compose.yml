@@ -1,10 +1,4 @@
-# Gluetun + qBittorrent — all torrent traffic goes through VPN
-# Stack path: /opt/stacks/gluetun-qbittorrent/docker-compose.yml
-# Uses main env: signal-cursor-controller/.env (add VPN_* vars there; see README).
-# Deploy: copy this dir to /opt/stacks/gluetun-qbittorrent/, then:
-#   docker compose -f /opt/stacks/gluetun-qbittorrent/docker-compose.yml up -d
-#
-# Required in project .env: VPN_* (e.g. VPN_SERVICE_PROVIDER, VPN_TYPE, OPENVPN_* or WIREGUARD_*).
+version: '3.8'
 
 services:
   gluetun:
@@ -14,42 +8,51 @@ services:
       - NET_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
-    ports:
-      - "8085:8085"       # qBittorrent Web UI
-      - "6881:6881"       # qBittorrent torrent (TCP)
-      - "6881:6881/udp"   # qBittorrent torrent (UDP)
     env_file:
       - /home/jeeves/signal-cursor-controller/.env
     environment:
       - TZ=America/New_York
-      # VPN_* from signal-cursor-controller/.env
+    ports:
+      - "8085:8080"   # qBittorrent Web UI (host 8085; Traefik uses 8080)
+      - "6881:6881"   # BitTorrent TCP
+      - "6881:6881/udp"   # BitTorrent UDP
     volumes:
       - gluetun_config:/gluetun
       - /data/downloads:/data/downloads
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9999/"]
+      test: ["CMD", "sh", "-c", "nc -z 127.0.0.1 9999 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
+    networks:
+      - vpn
 
   qbittorrent:
-    image: lscr.io/linuxserver/qbittorrent:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.qbittorrent
+    image: gluetun-qbittorrent-qbittorrent:local
     container_name: qbittorrent
-    network_mode: "service:gluetun"
     depends_on:
       - gluetun
+    network_mode: service:gluetun
     environment:
       - PUID=1000
       - PGID=1000
       - TZ=America/New_York
-      - WEBUI_PORT=8085
+      - WEBUI_PORT=8080
     volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /data/downloads:/downloads
       - qbittorrent_config:/config
-      - /data/downloads:/data/downloads
     restart: unless-stopped
 
+networks:
+  vpn:
+    driver: bridge
+
 volumes:
-  gluetun_config: {}
-  qbittorrent_config: {}
+  gluetun_config:
+  qbittorrent_config:

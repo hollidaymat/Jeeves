@@ -6,6 +6,7 @@
 
 import { config, validateConfig, getOwnerNumber } from './config.js';
 import { logger } from './utils/logger.js';
+import { generateUUID } from './utils/uuid.js';
 import { scanProjects } from './core/project-scanner.js';
 import { registerInterface, handleMessage, sendResponse } from './core/handler.js';
 import { webInterface } from './interfaces/web.js';
@@ -292,10 +293,41 @@ async function main() {
     });
     addSchedule('Quiet hours flush', 300000, 'quiet_hours_flush'); // Every 5 minutes
 
+    // Performance profiler: bottleneck detection every 5 min, optimizer daily, cleanup daily
+    registerHandler('bottleneck_detection', async () => {
+      try {
+        const { runBottleneckDetection } = await import('./core/profiler/bottleneck-detector.js');
+        await runBottleneckDetection();
+      } catch { /* ignore */ }
+    });
+    addSchedule('Bottleneck detection', 5 * 60 * 1000, 'bottleneck_detection');
+    registerHandler('performance_optimizer', async () => {
+      try {
+        const { runOptimizer } = await import('./core/profiler/optimizer.js');
+        await runOptimizer();
+      } catch { /* ignore */ }
+    });
+    addSchedule('Performance optimizer', '03:00', 'performance_optimizer');
+    registerHandler('performance_cleanup', async () => {
+      try {
+        const { runPerformanceCleanup } = await import('./core/profiler/cleanup.js');
+        runPerformanceCleanup();
+      } catch { /* ignore */ }
+    });
+    addSchedule('Performance cleanup', '04:00', 'performance_cleanup');
+
     startScheduler();
     logger.info('Scheduler started with default schedules');
   } catch (err) {
     logger.debug('Scheduler not started', { error: String(err) });
+  }
+
+  // Performance profiler: system monitor (60s snapshots)
+  try {
+    const { startSystemMonitor } = await import('./core/profiler/system-monitor.js');
+    startSystemMonitor();
+  } catch (err) {
+    logger.debug('Performance system monitor not started', { error: String(err) });
   }
 
   // Initialize Download Watcher callbacks
@@ -454,6 +486,10 @@ async function main() {
       try {
         const { stopUpdateChecker } = await import('./capabilities/self/updater.js');
         stopUpdateChecker();
+      } catch {}
+      try {
+        const { stopSystemMonitor } = await import('./core/profiler/system-monitor.js');
+        stopSystemMonitor();
       } catch {}
       try {
         const { stopScheduler } = await import('./capabilities/scheduler/engine.js');

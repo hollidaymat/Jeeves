@@ -11,7 +11,7 @@
 // ============================================================================
 
 export interface SecurityThresholds {
-  /** Percentage of requests returning 5xx (default: 5) */
+  /** Unused for alerts: deploy failure rate was here; we only alert on consecutive deploy failures now. */
   errorRate: number;
   /** p95 response time in milliseconds (default: 3000) */
   responseTime: number;

@@ -20,7 +20,9 @@ import { getPendingChanges, setStreamCallback } from '../core/cursor-agent.js';
 import { exportConversations, clearGeneralConversations, addGeneralMessage } from '../core/memory.js';
 import { onCheckpoint, getExecutionStatus } from '../core/prd-executor.js';
 import { getLastTrace, getTraceById, getTraceStats } from '../core/ooda-logger.js';
-import { recordScenarioRun, getGrowthStats, recordRunSummary, getGrowthTrend } from '../core/growth-tracker.js';
+import { recordScenarioRun, getGrowthStats, getRecentOodaJournal, recordRunSummary, getGrowthTrend } from '../core/growth-tracker.js';
+import { applyScenarioFailure, applyScenarioSuccess } from '../core/context/layers/learnings.js';
+import { getLastExecutionOutcome, getExecutionLog } from '../core/execution-logger.js';
 import { getScenarioRunCounts } from '../core/novel-scenario-generator.js';
 import { detectGamingSignals } from '../core/anti-gaming.js';
 import { isHomelabEnabled, getDashboardStatus } from '../homelab/index.js';
@@ -124,6 +126,17 @@ export class WebInterface implements MessageInterface {
     
     // Parse JSON bodies
     this.app.use(express.json());
+
+    // Performance profiler: request timing for API routes (excludes static)
+    this.app.use((req: Request, res: Response, next) => {
+      const start = Date.now();
+      res.on('finish', () => {
+        Promise.resolve().then(() => import('../core/profiler/performance-collector.js')).then(({ recordMetric }) => {
+          recordMetric({ category: 'response_time', source: 'web_server', metric_name: 'response_time_ms', value: Date.now() - start, metadata: { method: req.method, path: req.path, statusCode: res.statusCode } });
+        }).catch(() => {});
+      });
+      next();
+    });
     
     // API: Get status
     this.app.get('/api/status', (_req: Request, res: Response) => {
@@ -470,6 +483,122 @@ export class WebInterface implements MessageInterface {
       }
     });
 
+    // API: Reasoning evaluation (REASONING tab)
+    this.app.get('/api/reasoning/metrics', async (req: Request, res: Response) => {
+      try {
+        const { getReasoningMetrics } = await import('../core/reasoning-metrics.js');
+        const days = req.query.days as string | undefined;
+        const since = days ? parseInt(days, 10) : null;
+        res.json(getReasoningMetrics(Number.isNaN(since) ? null : since));
+      } catch (error) {
+        res.json({ successRate: 0, testPassRate: 0, avgConfidence: 0, learningApplied: 0, totalTasks: 0 });
+      }
+    });
+    this.app.get('/api/reasoning/tasks', async (req: Request, res: Response) => {
+      try {
+        const { getReasoningTasks } = await import('../core/reasoning-metrics.js');
+        const days = req.query.days as string | undefined;
+        const since = days ? parseInt(days, 10) : null;
+        res.json(getReasoningTasks(Number.isNaN(since) ? null : since));
+      } catch (error) {
+        res.json([]);
+      }
+    });
+    this.app.get('/api/reasoning/confidence', async (req: Request, res: Response) => {
+      try {
+        const { getReasoningConfidence } = await import('../core/reasoning-metrics.js');
+        const days = req.query.days as string | undefined;
+        const since = days ? parseInt(days, 10) : null;
+        res.json(getReasoningConfidence(Number.isNaN(since) ? null : since));
+      } catch (error) {
+        res.json([]);
+      }
+    });
+    this.app.get('/api/reasoning/errors', async (req: Request, res: Response) => {
+      try {
+        const { getReasoningErrors } = await import('../core/reasoning-metrics.js');
+        const days = req.query.days as string | undefined;
+        const since = days ? parseInt(days, 10) : null;
+        res.json(getReasoningErrors(Number.isNaN(since) ? null : since));
+      } catch (error) {
+        res.json([]);
+      }
+    });
+    this.app.get('/api/reasoning/timeline', async (req: Request, res: Response) => {
+      try {
+        const { getReasoningTimeline } = await import('../core/reasoning-metrics.js');
+        const days = req.query.days as string | undefined;
+        const since = days ? parseInt(days, 10) : null;
+        res.json(getReasoningTimeline(Number.isNaN(since) ? null : since));
+      } catch (error) {
+        res.json([]);
+      }
+    });
+
+    // API: Performance profiler
+    this.app.get('/api/performance/summary', async (req: Request, res: Response) => {
+      try {
+        const { getPerformanceSummary } = await import('../core/profiler/performance-api.js');
+        const days = parseInt((req.query.days as string) || '7', 10);
+        res.json(getPerformanceSummary(Number.isNaN(days) ? 7 : days));
+      } catch (error) {
+        res.json({ avgResponseMs: 0, systemLoad: 0, totalCores: 4, memoryUsedMb: 0, memoryTotalMb: 0, containersRunning: 0, containersUnhealthy: 0, responseTimeTrend: 0 });
+      }
+    });
+    this.app.get('/api/performance/bottlenecks', async (req: Request, res: Response) => {
+      try {
+        const { getBottlenecks } = await import('../core/profiler/performance-api.js');
+        const days = parseInt((req.query.days as string) || '7', 10);
+        res.json(getBottlenecks(Number.isNaN(days) ? 7 : days));
+      } catch (error) {
+        res.json([]);
+      }
+    });
+    this.app.get('/api/performance/response-times', async (req: Request, res: Response) => {
+      try {
+        const { getResponseTimes } = await import('../core/profiler/performance-api.js');
+        const days = parseInt((req.query.days as string) || '7', 10);
+        res.json(getResponseTimes(Number.isNaN(days) ? 7 : days));
+      } catch (error) {
+        res.json([]);
+      }
+    });
+    this.app.get('/api/performance/snapshots', async (req: Request, res: Response) => {
+      try {
+        const { getSnapshots } = await import('../core/profiler/performance-api.js');
+        const days = parseInt((req.query.days as string) || '1', 10);
+        res.json(getSnapshots(Number.isNaN(days) ? 1 : days));
+      } catch (error) {
+        res.json([]);
+      }
+    });
+    this.app.get('/api/performance/recommendations', async (_req: Request, res: Response) => {
+      try {
+        const { getRecommendations } = await import('../core/profiler/performance-api.js');
+        res.json(getRecommendations());
+      } catch (error) {
+        res.json([]);
+      }
+    });
+    this.app.post('/api/performance/recommendations/:id/dismiss', async (req: Request, res: Response) => {
+      try {
+        const { dismissRecommendation } = await import('../core/profiler/performance-api.js');
+        dismissRecommendation(req.params.id);
+        res.json({ ok: true });
+      } catch (error) {
+        res.status(400).json({ error: String(error) });
+      }
+    });
+    this.app.post('/api/performance/recommendations/:id/apply', async (req: Request, res: Response) => {
+      try {
+        const { applyRecommendation } = await import('../core/profiler/performance-api.js');
+        applyRecommendation(req.params.id);
+        res.json({ ok: true });
+      } catch (error) {
+        res.status(400).json({ error: String(error) });
+      }
+    });
+
     // API: Security dashboard
     this.app.get('/api/security/dashboard', async (_req: Request, res: Response) => {
       try {
@@ -758,6 +887,31 @@ export class WebInterface implements MessageInterface {
     this.app.get('/api/debug/ooda/stats', (_req: Request, res: Response) => {
       res.json(getTraceStats());
     });
+    /** Journal: last N OODA traces from DB (persisted across restarts). */
+    this.app.get('/api/debug/journal', (req: Request, res: Response) => {
+      const limit = Math.min(parseInt(String(req.query.limit), 10) || 50, 200);
+      res.json({ entries: getRecentOodaJournal(limit) });
+    });
+    /** Last execution outcome: did the last plan or dev_task succeed? (paths, steps, outcome) */
+    this.app.get('/api/debug/last-execution-outcome', (req: Request, res: Response) => {
+      try {
+        const full = req.query.full === '1' || req.query.full === 'true';
+        const out = getLastExecutionOutcome(full);
+        if (!out) {
+          res.json({ error: 'No execution recorded yet.', succeeded: false });
+          return;
+        }
+        res.json(out);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        res.status(500).json({ error: msg, succeeded: false });
+      }
+    });
+    /** Execution log: last N plan/dev_task runs for audit. */
+    this.app.get('/api/debug/execution-log', (req: Request, res: Response) => {
+      const limit = Math.min(parseInt(String(req.query.limit), 10) || 50, 200);
+      res.json({ entries: getExecutionLog(limit) });
+    });
 
     // API: Cognitive debug (Brain 2)
     this.app.get('/api/debug/last-trace', (_req: Request, res: Response) => {
@@ -822,12 +976,22 @@ export class WebInterface implements MessageInterface {
     });
 
     this.app.post('/api/debug/growth/scenario-run', (req: Request, res: Response) => {
-      const { scenarioId, passed, responseMs, oodaRequestId } = req.body ?? {};
+      const { scenarioId, passed, responseMs, oodaRequestId, failureDetail } = req.body ?? {};
       if (!scenarioId || typeof passed !== 'boolean') {
         res.status(400).json({ error: 'Missing scenarioId or passed' });
         return;
       }
       recordScenarioRun(scenarioId, passed, { responseMs, oodaRequestId });
+      if (passed) {
+        applyScenarioSuccess(scenarioId);
+      } else if (
+        failureDetail &&
+        typeof failureDetail.trigger === 'string' &&
+        typeof failureDetail.check === 'string' &&
+        typeof failureDetail.detail === 'string'
+      ) {
+        applyScenarioFailure(scenarioId, failureDetail);
+      }
       res.json({ ok: true });
     });
     this.app.get('/api/debug/growth/stats', (_req: Request, res: Response) => {
@@ -870,10 +1034,8 @@ export class WebInterface implements MessageInterface {
     this.app.post('/api/self-test', async (_req: Request, res: Response) => {
       try {
         this.broadcast({ type: 'self_test_started', payload: {} });
-        const apiBase = `http://127.0.0.1:${config.server.port}`;
         const results = await runSelfTest({
           onProgress: (msg) => this.broadcast({ type: 'self_test_progress', payload: { message: msg } }),
-          apiBase,
         });
         const report = formatSelfTestReport(results);
         this.broadcast({ type: 'self_test_complete', payload: { report, results } });

@@ -5,5 +5,33 @@
     "tags": [],
     "createdAt": "2026-02-08T03:23:23.330Z",
     "updatedAt": "2026-02-08T03:23:23.330Z"
+  },
+  {
+    "id": "note-1771356477801",
+    "content": "Matt prefers TypeScript over JavaScript",
+    "tags": [],
+    "createdAt": "2026-02-17T19:27:57.801Z",
+    "updatedAt": "2026-02-17T19:27:57.801Z"
+  },
+  {
+    "id": "note-1771357970078",
+    "content": "Matt prefers TypeScript over JavaScript",
+    "tags": [],
+    "createdAt": "2026-02-17T19:52:50.078Z",
+    "updatedAt": "2026-02-17T19:52:50.078Z"
+  },
+  {
+    "id": "note-1771358637513",
+    "content": "Matt prefers TypeScript over JavaScript",
+    "tags": [],
+    "createdAt": "2026-02-17T20:03:57.513Z",
+    "updatedAt": "2026-02-17T20:03:57.513Z"
+  },
+  {
+    "id": "note-1771359722953",
+    "content": "Matt prefers TypeScript over JavaScript",
+    "tags": [],
+    "createdAt": "2026-02-17T20:22:02.953Z",
+    "updatedAt": "2026-02-17T20:22:02.953Z"
   }
 ]

@@ -291,7 +291,7 @@ export async function assembleContext(task: TaskContext): Promise<ContextResult>
     }
 
     if (project) {
-      const parts = [project.files, project.dependencies, project.recentChanges].filter(Boolean);
+      const parts = [project.files, project.dependencies, project.recentChanges, project.workingTree].filter(Boolean);
       const projectText = parts.join('\n\n');
       const projTokens = estimateTokens(projectText);
       if (tokensUsed + projTokens <= tokenBudget) {
@@ -358,7 +358,7 @@ export function formatContextForPrompt(result: ContextResult): string {
 
   if (result.layers.project) {
     const p = result.layers.project;
-    const projectParts = [p.files, p.dependencies, p.recentChanges].filter(Boolean);
+    const projectParts = [p.files, p.dependencies, p.recentChanges, p.workingTree].filter(Boolean);
     if (projectParts.length > 0) {
       parts.push(`## Project Context\n${projectParts.join('\n\n')}`);
     }

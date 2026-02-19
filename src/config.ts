@@ -1,3 +1,4 @@
+// smoke test
 /**
  * Configuration Loader
  * Loads config from .env and config.json with sensible defaults
@@ -33,10 +34,10 @@ const defaultConfig: Config = {
     max_tokens: 500
   },
   projects: {
-    directories: [],
+    directories: [process.env.HOME || '/home/jeeves'],
     scan_depth: 2,
     markers: ['.git', 'package.json', 'Cargo.toml', 'go.mod', 'pyproject.toml'],
-    exclude: ['node_modules', '.git', 'dist', 'build', '.next']
+    exclude: ['node_modules', '.git', 'dist', 'build', '.next', '.cache', 'cache']
   },
   commands: {
     cursor: process.platform === 'win32'
@@ -174,7 +175,11 @@ function loadConfig(): Config {
       signal: { ...defaultConfig.signal, ...fileConfig.signal },
       security: { ...defaultConfig.security, ...fileConfig.security },
       claude: { ...defaultConfig.claude, ...fileConfig.claude },
-      projects: { ...defaultConfig.projects, ...fileConfig.projects },
+      projects: (() => {
+        const merged = { ...defaultConfig.projects, ...fileConfig.projects };
+        if (!merged.directories?.length) merged.directories = defaultConfig.projects.directories;
+        return merged;
+      })(),
       commands: { ...defaultConfig.commands, ...fileConfig.commands },
       terminal: { ...defaultConfig.terminal, ...fileConfig.terminal },
       memory: { ...defaultConfig.memory, ...fileConfig.memory },
@@ -229,8 +234,8 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
     errors.push('ANTHROPIC_API_KEY environment variable is required');
   }
 
-  if (config.projects.directories.length === 0) {
-    errors.push('No project directories configured');
+  if (!config.projects.directories?.length) {
+    errors.push('No project directories configured (set projects.directories in config.json or HOME)');
   }
 
   if (!existsSync(config.commands.cursor)) {

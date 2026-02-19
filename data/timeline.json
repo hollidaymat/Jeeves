@@ -966,5 +966,821 @@
     "category": "system",
     "message": "Jeeves started",
     "severity": "info"
+  },
+  {
+    "id": "evt-1771084403282-oaqa",
+    "timestamp": "2026-02-14T15:53:23.282Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771085988275-inz6",
+    "timestamp": "2026-02-14T16:19:48.275Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771086144669-cv4s",
+    "timestamp": "2026-02-14T16:22:24.669Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771086229067-fkr3",
+    "timestamp": "2026-02-14T16:23:49.067Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771086334671-7gse",
+    "timestamp": "2026-02-14T16:25:34.671Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771086405331-w78i",
+    "timestamp": "2026-02-14T16:26:45.331Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771086506177-pccw",
+    "timestamp": "2026-02-14T16:28:26.177Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771086587391-8yzq",
+    "timestamp": "2026-02-14T16:29:47.391Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771086766232-8kzs",
+    "timestamp": "2026-02-14T16:32:46.232Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771086856115-vkuq",
+    "timestamp": "2026-02-14T16:34:16.115Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771087245847-cx31",
+    "timestamp": "2026-02-14T16:40:45.847Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771087463732-ien1",
+    "timestamp": "2026-02-14T16:44:23.732Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771087590644-yh8h",
+    "timestamp": "2026-02-14T16:46:30.644Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771087804870-d5vu",
+    "timestamp": "2026-02-14T16:50:04.870Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771088090305-4spd",
+    "timestamp": "2026-02-14T16:54:50.305Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771088302221-oun4",
+    "timestamp": "2026-02-14T16:58:22.221Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771088954939-2hfe",
+    "timestamp": "2026-02-14T17:09:14.939Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771089409970-llka",
+    "timestamp": "2026-02-14T17:16:49.970Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771090334660-9ybo",
+    "timestamp": "2026-02-14T17:32:14.660Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771094124160-b6h8",
+    "timestamp": "2026-02-14T18:35:24.160Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771094635699-i2bn",
+    "timestamp": "2026-02-14T18:43:55.699Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771095146816-5pcz",
+    "timestamp": "2026-02-14T18:52:26.816Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771095495989-o79v",
+    "timestamp": "2026-02-14T18:58:15.989Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771095942025-0knq",
+    "timestamp": "2026-02-14T19:05:42.025Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771096202496-cc7x",
+    "timestamp": "2026-02-14T19:10:02.496Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771098031855-6e91",
+    "timestamp": "2026-02-14T19:40:31.855Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771098411918-ur82",
+    "timestamp": "2026-02-14T19:46:51.918Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771098554973-qv2i",
+    "timestamp": "2026-02-14T19:49:14.973Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771098863875-sudd",
+    "timestamp": "2026-02-14T19:54:23.875Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771099750315-s4g1",
+    "timestamp": "2026-02-14T20:09:10.315Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771100219195-0uhz",
+    "timestamp": "2026-02-14T20:16:59.195Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771103519236-taa1",
+    "timestamp": "2026-02-14T21:11:59.236Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771137161636-ggoi",
+    "timestamp": "2026-02-15T06:32:41.636Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771142444465-ohlm",
+    "timestamp": "2026-02-15T08:00:44.465Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Docker cleanup: Docker cleanup complete. Reclaimed 88.76MB.",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771153247383-dzq0",
+    "timestamp": "2026-02-15T11:00:47.383Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Disk health check: 0 warning(s) across 2 disk(s)",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771156849259-pmkw",
+    "timestamp": "2026-02-15T12:00:49.259Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Log scan: 307 errors across 27 containers",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771164067055-0vtw",
+    "timestamp": "2026-02-15T14:01:07.055Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Image update check: 27 of 27 containers have updates available",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771209663306-mm15",
+    "timestamp": "2026-02-16T02:41:03.306Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Completed: IT Welcome to Derry S01E08 Winter Fire 1080p AMZN WEB-DL DDP5 1 H 264-Kitsune",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771209663307-ifg7",
+    "timestamp": "2026-02-16T02:41:03.307Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Completed: Casino 1995 Remastered 720p BluRay HEVC H265 BONE",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771239608818-xuwx",
+    "timestamp": "2026-02-16T11:00:08.818Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Disk health check: 0 warning(s) across 2 disk(s)",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771243211229-khuj",
+    "timestamp": "2026-02-16T12:00:11.229Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Log scan: 284 errors across 27 containers",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771250476556-hnka",
+    "timestamp": "2026-02-16T14:01:16.556Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Image update check: 27 of 27 containers have updates available",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771250951622-f20q",
+    "timestamp": "2026-02-16T14:09:11.622Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771326031105-sd9g",
+    "timestamp": "2026-02-17T11:00:31.105Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Disk health check: 0 warning(s) across 2 disk(s)",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771329633074-dchd",
+    "timestamp": "2026-02-17T12:00:33.074Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Log scan: 272 errors across 27 containers",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771336877559-5i0l",
+    "timestamp": "2026-02-17T14:01:17.559Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Image update check: 27 of 27 containers have updates available",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771353066458-ries",
+    "timestamp": "2026-02-17T18:31:06.458Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771353105758-6dwt",
+    "timestamp": "2026-02-17T18:31:45.758Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771353901972-z71e",
+    "timestamp": "2026-02-17T18:45:01.972Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Stall: Vanilla Sky 2001 1080p BluRay REMUX 4K Remaster AVC DTS-HD MA 5 1 incl Comm — Restarted download for \"Vanilla Sky 2001 1080p BluRay REMUX 4K Remaster AVC DTS-HD MA 5 1 incl Comm\" after 10min stall (attempt 1/2)",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771353931716-3vd0",
+    "timestamp": "2026-02-17T18:45:31.716Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Completed: Vanilla Sky 2001 1080p BluRay REMUX 4K Remaster AVC DTS-HD MA 5 1 incl Comm",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771354021768-n8ct",
+    "timestamp": "2026-02-17T18:47:01.768Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Stall: Event.Horizon.1997.1080p.BD.AV1.Opus.MULTi4.V3-dAV1nci.mkv — Restarted download for \"Event.Horizon.1997.1080p.BD.AV1.Opus.MULTi4.V3-dAV1nci.mkv\" after 10min stall (attempt 1/2)",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771354051760-esh3",
+    "timestamp": "2026-02-17T18:47:31.760Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Completed: Event.Horizon.1997.1080p.BD.AV1.Opus.MULTi4.V3-dAV1nci.mkv",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771355082149-iy66",
+    "timestamp": "2026-02-17T19:04:42.149Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771355375642-yr5b",
+    "timestamp": "2026-02-17T19:09:35.642Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771355631643-w572",
+    "timestamp": "2026-02-17T19:13:51.643Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771356048495-1enz",
+    "timestamp": "2026-02-17T19:20:48.495Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771356158324-4my4",
+    "timestamp": "2026-02-17T19:22:38.324Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771357642876-6icv",
+    "timestamp": "2026-02-17T19:47:22.876Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771361509768-uc53",
+    "timestamp": "2026-02-17T20:51:49.768Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771361774721-f6vg",
+    "timestamp": "2026-02-17T20:56:14.721Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771361851578-wiw8",
+    "timestamp": "2026-02-17T20:57:31.578Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771361892549-dhk1",
+    "timestamp": "2026-02-17T20:58:12.549Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771366794102-itaz",
+    "timestamp": "2026-02-17T22:19:54.102Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771366842740-b928",
+    "timestamp": "2026-02-17T22:20:42.740Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771367290651-uh5q",
+    "timestamp": "2026-02-17T22:28:10.651Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771367801984-ddtz",
+    "timestamp": "2026-02-17T22:36:41.984Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771368155494-y0e0",
+    "timestamp": "2026-02-17T22:42:35.494Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771412452859-clde",
+    "timestamp": "2026-02-18T11:00:52.859Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Disk health check: 0 warning(s) across 2 disk(s)",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771414256694-d7fi",
+    "timestamp": "2026-02-18T11:30:56.694Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Stall: Manon.of.the.Spring.1986.2160p.UHD.Blu-ray.Remux.SDR.HEVC.DTS-HD.MA.5.1-CiNEPHiLES — Restarted download for \"Manon.of.the.Spring.1986.2160p.UHD.Blu-ray.Remux.SDR.HEVC.DTS-HD.MA.5.1-CiNEPHiLES\" after 10min stall (attempt 1/2)",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771414256795-x9mv",
+    "timestamp": "2026-02-18T11:30:56.795Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Stall: Jean.de.Florette.1986.2160p.UHD.Blu-ray.Remux.SDR.HEVC.DTS-HD.MA.5.1-CiNEPHiLES — Restarted download for \"Jean.de.Florette.1986.2160p.UHD.Blu-ray.Remux.SDR.HEVC.DTS-HD.MA.5.1-CiNEPHiLES\" after 10min stall (attempt 1/2)",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771414286657-7f8v",
+    "timestamp": "2026-02-18T11:31:26.657Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Completed: Jean.de.Florette.1986.2160p.UHD.Blu-ray.Remux.SDR.HEVC.DTS-HD.MA.5.1-CiNEPHiLES",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771414286658-42r6",
+    "timestamp": "2026-02-18T11:31:26.658Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Completed: Manon.of.the.Spring.1986.2160p.UHD.Blu-ray.Remux.SDR.HEVC.DTS-HD.MA.5.1-CiNEPHiLES",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771416055747-z99e",
+    "timestamp": "2026-02-18T12:00:55.747Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Log scan: 276 errors across 27 containers",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771416363612-te1i",
+    "timestamp": "2026-02-18T12:06:03.612Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771416823761-idhx",
+    "timestamp": "2026-02-18T12:13:43.761Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771416967518-xiz5",
+    "timestamp": "2026-02-18T12:16:07.518Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771417089046-bexh",
+    "timestamp": "2026-02-18T12:18:09.046Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771417218302-jm6y",
+    "timestamp": "2026-02-18T12:20:18.302Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771417722145-e6gg",
+    "timestamp": "2026-02-18T12:28:42.145Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771423265254-6w35",
+    "timestamp": "2026-02-18T14:01:05.254Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Image update check: 27 of 27 containers have updates available",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771436467419-61jh",
+    "timestamp": "2026-02-18T17:41:07.419Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Stall: [bitsearch.to] Manon.of.the.Spring.1986.2160p.UHD.Blu-ray.Remux.SDR.HEVC.DTS-HD.MA.5.1-CiNEPHiLES — Restarted download for \"[bitsearch.to] Manon.of.the.Spring.1986.2160p.UHD.Blu-ray.Remux.SDR.HEVC.DTS-HD.MA.5.1-CiNEPHiLES\" after 10min stall (attempt 1/2)",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771436497393-n3hh",
+    "timestamp": "2026-02-18T17:41:37.393Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Completed: [bitsearch.to] Manon.of.the.Spring.1986.2160p.UHD.Blu-ray.Remux.SDR.HEVC.DTS-HD.MA.5.1-CiNEPHiLES",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771436527421-zkr3",
+    "timestamp": "2026-02-18T17:42:07.421Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Stall: Dune.Part.Two.2024.REPACK.4K.HDR.DV.2160p.BDRemux Ita Eng x265-NAHOMkv — Restarted download for \"Dune.Part.Two.2024.REPACK.4K.HDR.DV.2160p.BDRemux Ita Eng x265-NAHOMkv\" after 10min stall (attempt 1/2)",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771436557408-oxty",
+    "timestamp": "2026-02-18T17:42:37.408Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Completed: Dune.Part.Two.2024.REPACK.4K.HDR.DV.2160p.BDRemux Ita Eng x265-NAHOMkv",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771438147777-gz3o",
+    "timestamp": "2026-02-18T18:09:07.777Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Stall: Dune.Part.Two.2024.UHD.BluRay.2160p.TrueHD.Atmos.7.1.DV.HEVC.REMUX-FraMeSToR.mkv — Restarted download for \"Dune.Part.Two.2024.UHD.BluRay.2160p.TrueHD.Atmos.7.1.DV.HEVC.REMUX-FraMeSToR.mkv\" after 10min stall (attempt 1/2)",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771438177742-dc33",
+    "timestamp": "2026-02-18T18:09:37.742Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Completed: Dune.Part.Two.2024.UHD.BluRay.2160p.TrueHD.Atmos.7.1.DV.HEVC.REMUX-FraMeSToR.mkv",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771438687875-8vyh",
+    "timestamp": "2026-02-18T18:18:07.875Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Completed: Greenland.2.Migration.2026.REPACK.2160p.AMZN.WEB-DL.DDP5.1.Atmos.H.265-BYNDR",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771439318025-eqkf",
+    "timestamp": "2026-02-18T18:28:38.025Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Completed: Anaconda.2025.REPACK.2160p.MA.WEB-DL.DDP5.1.Atmos.H.265.TRIAL.YG⭐",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771440848413-9tp0",
+    "timestamp": "2026-02-18T18:54:08.413Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Stall: Manon of the Spring 1986 UHD BluRay 2160p SDR HEVC DTS-HD MA x265-E — Restarted download for \"Manon of the Spring 1986 UHD BluRay 2160p SDR HEVC DTS-HD MA x265-E\" after 10min stall (attempt 1/2)",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771440878376-zbsn",
+    "timestamp": "2026-02-18T18:54:38.376Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Completed: Manon of the Spring 1986 UHD BluRay 2160p SDR HEVC DTS-HD MA x265-E",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771442588816-hecs",
+    "timestamp": "2026-02-18T19:23:08.816Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Stall: [bitsearch.to] Manon.des.Sources.1986.VOF.2160p.10bit.4KLight.SDR.BluRay.DTS-HD.MA.5.1.x265-QTZ.mkv — Restarted download for \"[bitsearch.to] Manon.des.Sources.1986.VOF.2160p.10bit.4KLight.SDR.BluRay.DTS-HD.MA.5.1.x265-QTZ.mkv\" after 10min stall (attempt 1/2)",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771442618737-90gr",
+    "timestamp": "2026-02-18T19:23:38.737Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Completed: [bitsearch.to] Manon.des.Sources.1986.VOF.2160p.10bit.4KLight.SDR.BluRay.DTS-HD.MA.5.1.x265-QTZ.mkv",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771445649523-wd8v",
+    "timestamp": "2026-02-18T20:14:09.523Z",
+    "source": "download-watcher",
+    "category": "download",
+    "message": "Completed: Manon Of The Spring (1986) [1080p] [BluRay] [5.1] [YTS.MX]",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771446999708-reuw",
+    "timestamp": "2026-02-18T20:36:39.708Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771449315404-bps0",
+    "timestamp": "2026-02-18T21:15:15.404Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771451448952-slhw",
+    "timestamp": "2026-02-18T21:50:48.952Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771452357490-10qh",
+    "timestamp": "2026-02-18T22:05:57.490Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771453127654-2e40",
+    "timestamp": "2026-02-18T22:18:47.654Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771454047119-4m3d",
+    "timestamp": "2026-02-18T22:34:07.119Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771454672506-unfn",
+    "timestamp": "2026-02-18T22:44:32.506Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771498851343-efum",
+    "timestamp": "2026-02-19T11:00:51.343Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Disk health check: 0 warning(s) across 2 disk(s)",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771502453397-bzkg",
+    "timestamp": "2026-02-19T12:00:53.397Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Log scan: 266 errors across 27 containers",
+    "severity": "warning"
   }
 ]

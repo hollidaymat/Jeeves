@@ -156,7 +156,7 @@ async function synthesizeWyoming(text: string): Promise<Buffer> {
       const readNext = (): Promise<void> => {
         return readWyomingMessage(socket, readState).then((msg) => {
           if (msg.type === 'audio-start') {
-            logger.info('Piper Wyoming audio-start', { rate: msg.data?.rate, channels: msg.data?.channels });
+            logger.debug('Piper Wyoming audio-start', { rate: msg.data?.rate, channels: msg.data?.channels });
             rate = (msg.data?.rate as number) ?? 22050;
             width = (msg.data?.width as number) ?? 2;
             channels = (msg.data?.channels as number) ?? 1;
@@ -172,7 +172,7 @@ async function synthesizeWyoming(text: string): Promise<Buffer> {
           if (msg.type === 'audio-stop') {
             socket.destroy();
             const pcm = Buffer.concat(chunks);
-            logger.info('Piper Wyoming audio-stop', { chunks: chunks.length, pcmBytes: pcm.length });
+            logger.debug('Piper Wyoming audio-stop', { chunks: chunks.length, pcmBytes: pcm.length });
             if (pcm.length === 0) {
               reject(new Error('Piper returned no audio'));
               return;

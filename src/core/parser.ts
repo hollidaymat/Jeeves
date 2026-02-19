@@ -357,9 +357,9 @@ const PATTERNS = {
   remember: /^(?:remember|remember that|jeeves remember|note that)[:\s]+(.+)$/i,
   // Preference statements: "my favorite X is Y", "I like X", etc.
   preferenceStatement: /^(?:my\s+favorite\s+.+\s+is\s+.+|I\s+(?:really\s+)?(?:like|love)\s+.+)$/i,
-  // "you are" pattern for role assignment - exclude negative feedback patterns
-  // Must NOT match: "you are wrong", "you are hallucinating", "you are broken", etc.
-  youAre: /^(?:you are|you're|your role is)[:\s]+(?!(?:wrong|bad|broken|hallucinating|stupid|incorrect|not|an idiot|dumb|useless|terrible|awful|horrible|failing|confused|mistaken|lying)\b)(.+)$/i,
+  // "you are" pattern for role assignment - exclude feedback and negative patterns
+  // Must NOT match: "you are wrong", "you are supposed to", "you are programmed to", etc.
+  youAre: /^(?:you are|you're|your role is)[:\s]+(?!(?:wrong|bad|broken|hallucinating|stupid|incorrect|not|an idiot|dumb|useless|terrible|awful|horrible|failing|confused|mistaken|lying|supposed|programmed|expected|meant)\b)(.+)$/i,
   beMore: /^(?:be more|be|act more|act)[:\s]+(.+)$/i,
   dontBe: /^(?:don'?t be|stop being|never be)[:\s]+(.+)$/i,
   
@@ -1357,7 +1357,20 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
   
   // NOTE: apply_last pattern is now checked at the TOP of handleSimpleCommand
   // to ensure it runs before reference resolution can transform "that"
-  
+
+  // Write content into the 3 prd.md files (~/projects/*/prd.md) — must run before generic PRD/agent
+  const writePrdMatch = trimmed.match(/write\s+(?:into|to)\s+(?:the\s+)?(?:3\s+)?prd\.md\s+files?(?:\s+in\s+each\s+(?:folder|category))?\s*[:\s]*(.+)/is);
+  if (writePrdMatch) {
+    const content = writePrdMatch[1].trim();
+    if (content.length > 0) {
+      return {
+        action: 'write_projects_prd_content',
+        prompt: content,
+        confidence: 0.95
+      };
+    }
+  }
+
   // Check if this is a PRD submission (long text with PRD triggers)
   if (isPrdTrigger(trimmed) || (trimmed.length > 200 && isPrdTrigger(trimmed))) {
     return {
@@ -1484,21 +1497,25 @@ function handleSimpleCommand(message: string): ParsedIntent | null {
     };
   }
   
-  // Browser: Browse URL
+  // Browser: Browse URL (require target to look like a URL, not "it"/"that"/"again")
   const browseMatch = trimmed.match(PATTERNS.browse);
   if (browseMatch) {
-    let url = browseMatch[1].trim();
-    // Normalize URL - add https:// if missing
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      url = 'https://' + url;
+    const raw = browseMatch[1].trim();
+    const isUrlLike = raw.startsWith('http') || raw.includes('.') || raw.length >= 8;
+    const isPronounOrPlaceholder = /^(it|that|this|them|again|here|there)$/i.test(raw);
+    if (isUrlLike && !isPronounOrPlaceholder) {
+      let url = raw;
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        url = 'https://' + url;
+      }
+      logger.info('Browse command matched', { url, original: trimmed });
+      return {
+        action: 'browse',
+        confidence: 1.0,
+        target: url,
+        requiresAsync: true
+      };
     }
-    logger.info('Browse command matched', { url, original: trimmed });
-    return {
-      action: 'browse',
-      confidence: 1.0,
-      target: url,
-      requiresAsync: true
-    };
   }
   
   // Browser: Screenshot current page

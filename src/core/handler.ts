@@ -30,6 +30,7 @@ import { addGeneralMessage, getGeneralConversations } from './memory.js';
 import { recordTrace } from './ooda-logger.js';
 import { assembleContext, formatContextForPrompt } from './context/index.js';
 import { checkForLoop } from './behavior-tracker.js';
+import { handleConversation, isClearQuestionOrStatement } from './conversation-handler.js';
 import { PERSONALITY_RULES, sanitizeResponse, getMaxChars, truncateToMaxChars } from './personality.js';
 
 // Brain 2 whitelist: intents that always trigger context assembly (skip status, greeting, feedback, registry)
@@ -129,16 +130,32 @@ export function getSystemStatus(): SystemStatus {
 function formatResponse(intent: ParsedIntent, result: ExecutionResult): string {
   if (result.success) {
     return result.output || `✓ ${intent.action} completed`;
-  } else {
-    return `✗ ${result.error || result.output || 'Unknown error'}`;
   }
+  const err = result.error || result.output || 'Unknown error';
+  return `Failed to execute: ${err}`;
+}
+
+/** When response is chained (contains Results section), strip leftover status lines. */
+function stripStatusLinesIfChained(response: string): string {
+  if (!/\*\*Results:\*\*|Results:\s*\n/i.test(response)) return response;
+  return response
+    .split('\n')
+    .filter((line) => !/^(Executing|Pending plan|Standby|Done executing|Extracted plan)[^\n]*$/i.test(line.trim()))
+    .join('\n');
 }
 
 /**
  * Handle an incoming message
  */
 export async function handleMessage(message: IncomingMessage): Promise<OutgoingMessage | null> {
-  const { sender, content, interface: iface } = message;
+  const handlerStart = Date.now();
+  let handlerSuccess = true;
+  const { sender, content: rawContent, interface: iface } = message;
+  // Normalize once: strip leading/trailing quotes (voice, paste, or UI may add them) so routing sees "Jeeves, develop: ..."
+  let content = rawContent.trim();
+  while (content.length > 0 && /^["'\u201c\u2018\u201d\u2019`]/.test(content)) {
+    content = content.replace(/^["'\u201c\u2018\u201d\u2019`]+/, '').trim();
+  }
   
   logger.debug('Received message', { sender, interface: iface, content: content.substring(0, 50) });
   
@@ -147,6 +164,7 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
     logger.security.unauthorized(sender);
     
     if (config.security.silent_deny) {
+      handlerSuccess = false;
       return null;  // Silent drop
     }
     
@@ -161,7 +179,7 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
   stats.messagesToday++;
 
   // Use first line for command matching (avoids attachment suffixes breaking patterns)
-  const primaryCommand = content.trim().split(/\n\n/)[0].trim();
+  const primaryCommand = content.split(/\n\n/)[0].trim();
   const isSelfTest = /^(?:(?:run\s+)?self\s*test|selftest|test\s+yourself|run\s+diagnostic|check\s+yourself)$/i.test(primaryCommand);
   const selfTestCmd = COMMAND_REGISTRY.find(c => c.id === 'system.jeeves_self_test');
   const registryMatch = isSelfTest && selfTestCmd
@@ -170,10 +188,23 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
 
   // Learn from every message (non-blocking)
   import('../capabilities/self/memory-learner.js')
-    .then(({ learnFromMessage }) => learnFromMessage(content))
+    .then(({ learnFromMessage }) => learnFromMessage(rawContent))
     .catch(() => {});
   
   try {
+    // Conversation mode FIRST: meta-questions and capability discussion bypass task routing and loop detection
+    const conversationResponse = await handleConversation(primaryCommand, content, sender, message.id);
+    if (conversationResponse) {
+      recordTrace({ routingPath: 'conversational', rawInput: content, action: 'conversation' });
+      return conversationResponse;
+    }
+
+    // Fast path: "try again" / "let's try" — no LLM, no meta self-reflection
+    if (/^(?:(?:let'?s?\s+)?try(?:\s+again)?|try\s+again|made\s+some\s+changes)\s*[,.]?\s*(?:made\s+some\s+changes)?$/i.test(primaryCommand.trim())) {
+      recordTrace({ routingPath: 'registry', rawInput: content, action: 'try_again', success: true });
+      return { recipient: sender, content: 'What would you like me to do?', replyTo: message.id };
+    }
+
     // Try workflow engine first (deterministic, token-efficient)
     const activeProject = getActiveProject();
     const workflowResult = await tryExecuteWorkflow(content, activeProject?.workingDir);
@@ -194,6 +225,54 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
         content: workflowResult.output,
         replyTo: message.id
       };
+    }
+
+    // Fast path: check/list/show what's in a directory — run ls and report (no LLM, no fabrication)
+    const listDirMatch = primaryCommand.match(
+      /(?:check|list|show|what'?s?)\s+(?:what'?s?\s+)?(?:me\s+)?(?:in|at)?\s*(\/[a-zA-Z0-9_./-]+)|^ls\s+(\/[a-zA-Z0-9_./-]+)|^list\s+(\/[a-zA-Z0-9_./-]+)/i
+    );
+    const dirPath = listDirMatch ? (listDirMatch[1] || listDirMatch[2] || listDirMatch[3] || '').trim() : '';
+    if (dirPath) {
+      const home = process.env.HOME || '/home/jeeves';
+      const { existsSync } = await import('fs');
+      const { resolve } = await import('path');
+      const abs = resolve(dirPath);
+      if (abs === home || abs.startsWith(home + '/')) {
+        if (!existsSync(abs)) {
+          return { recipient: sender, content: `Error: Path not found: ${abs}`, replyTo: message.id };
+        }
+        const cmd = `ls -la ${JSON.stringify(abs)}`;
+        try {
+          const { execSync } = await import('child_process');
+          const out = execSync(cmd, { encoding: 'utf8', timeout: 5000 });
+          const trimmed = (out ?? '').trim();
+          logger.info('[list_dir] Shell command ran', { command: cmd, stdoutBytes: trimmed.length, preview: trimmed.slice(0, 200) });
+          recordTrace({ routingPath: 'registry', rawInput: content, action: 'list_dir', success: true });
+          stats.lastCommand = { action: 'list_dir', timestamp: new Date().toISOString(), success: true };
+          return { recipient: sender, content: trimmed || 'Command ran but returned no output', replyTo: message.id };
+        } catch (e: unknown) {
+          const err = e as NodeJS.ErrnoException & { stderr?: string; killed?: boolean };
+          const code = err?.code ?? '';
+          const msg = err instanceof Error ? err.message : String(e);
+          const stderr = err?.stderr ?? '';
+          const combined = `${msg} ${stderr}`.trim();
+          let userMsg: string;
+          if (code === 'ETIMEDOUT' || err?.killed === true || /timed out/i.test(msg)) {
+            userMsg = 'Error: Command timed out';
+          } else if (code === 'ENOENT' && /spawn|not found|enoent/i.test(msg)) {
+            userMsg = 'Error: Command not found: ls';
+          } else if (code === 'EACCES' || /permission denied/i.test(combined)) {
+            userMsg = `Error: Permission denied accessing ${abs}`;
+          } else if (code === 'ENOENT' || /no such file|not found/i.test(combined)) {
+            userMsg = `Error: Path not found: ${abs}`;
+          } else {
+            userMsg = `Error: Failed to list directory — ${msg}`;
+          }
+          logger.warn('[list_dir] ls failed', { command: cmd, code, msg });
+          recordTrace({ routingPath: 'registry', rawInput: content, action: 'list_dir', success: false });
+          return { recipient: sender, content: userMsg, replyTo: message.id };
+        }
+      }
     }
 
     // Homelab report — run real report (getDashboardStatus + collectors), not LLM
@@ -750,6 +829,46 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
     if (registryMatch && registryMatch.confidence >= 0.9 && !LLM_ROUTED_ACTIONS.includes(registryMatch.action as (typeof LLM_ROUTED_ACTIONS)[number])) {
       logger.info('Registry match — executing', { commandId: registryMatch.commandId, action: registryMatch.action });
       const intent = matchResultToParsedIntent(registryMatch);
+      // Override: "find features" (etc.) with active project → agent_ask (codebase search), not media search
+      const CODEBASE_SEARCH_TERMS = new Set(['features', 'bugs', 'todos', 'api', 'config', 'handlers', 'routes', 'tests', 'hooks', 'utils', 'types']);
+      if (registryMatch.action === 'media_search' && activeProject) {
+        const target = String((intent as ParsedIntent).target ?? (registryMatch as { params?: { target?: string } }).params?.target ?? '').trim().toLowerCase();
+        const singleWord = target.split(/\s+/)[0];
+        if (singleWord && CODEBASE_SEARCH_TERMS.has(singleWord)) {
+          logger.info('Media search overridden to agent_ask (active project + codebase term)', { target: singleWord });
+          const agentIntent: ParsedIntent = {
+            action: 'agent_ask',
+            prompt: content,
+            confidence: 0.95,
+            resolutionMethod: 'pattern',
+            estimatedCost: 0,
+          };
+          if (BRAIN2_WHITELIST.has('agent_ask')) {
+            try {
+              const ctxResult = await assembleContext({
+                message: content,
+                action: 'agent_ask',
+                target: singleWord,
+                projectPath: activeProject.workingDir,
+                model: 'sonnet',
+              });
+              if (ctxResult.layersIncluded.length > 0) {
+                agentIntent.assembledContext = formatContextForPrompt(ctxResult);
+              }
+            } catch {
+              /* optional */
+            }
+          }
+          const result = await executeCommand(agentIntent as ParsedIntent);
+          stats.lastCommand = { action: 'agent_ask', timestamp: new Date().toISOString(), success: result.success };
+          recordTrace({ routingPath: 'registry', rawInput: content, classification: 'media_search→agent_ask', confidenceScore: 0.95, action: 'agent_ask', success: result.success });
+          let response = formatResponse(agentIntent as ParsedIntent, result);
+          response = sanitizeResponse(response);
+          const maxChars = getMaxChars('agent_ask', false);
+          response = truncateToMaxChars(response, maxChars);
+          return { recipient: sender, content: response, replyTo: message.id, attachments: result.attachments };
+        }
+      }
       // Redirect: "download these" / "download this" + image → use list from image, not search for "these"
       const downloadTarget = String((intent as ParsedIntent).target || (registryMatch as { params?: { target?: string } }).params?.target || '').trim();
       const isDemonstrative = /^(these|this|that|them)$/i.test(downloadTarget);
@@ -788,19 +907,22 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
       return { recipient: sender, content: formatResponse(intent as ParsedIntent, result), replyTo: message.id, attachments: result.attachments };
     }
 
-    // 2e. Layer 3: Fuzzy match — "Did you mean: X?" for near-misses
+    // 2e. Layer 3: Fuzzy match — only for genuinely ambiguous input; clear questions get direct answers (no "Did you mean?")
     if (!registryMatch) {
-      const fuzzy = fuzzyMatch(primaryCommand);
-      if (fuzzy) {
-        pendingFuzzyConfirm.set(sender, {
-          originalPhrase: primaryCommand,
-          suggestion: fuzzy.suggestion,
-          commandId: fuzzy.commandId,
-          timestamp: Date.now(),
-        });
-        logger.info('Fuzzy match — awaiting confirmation', { phrase: primaryCommand.substring(0, 40), suggestion: fuzzy.suggestion });
-        recordTrace({ routingPath: 'fuzzy_pending', rawInput: content, classification: fuzzy.commandId, confidenceScore: fuzzy.confidence, action: 'fuzzy_suggest' });
-        return { recipient: sender, content: `Did you mean: ${fuzzy.suggestion}? Reply yes to run.`, replyTo: message.id };
+      const skipFuzzy = isClearQuestionOrStatement(primaryCommand);
+      if (!skipFuzzy) {
+        const fuzzy = fuzzyMatch(primaryCommand);
+        if (fuzzy) {
+          pendingFuzzyConfirm.set(sender, {
+            originalPhrase: primaryCommand,
+            suggestion: fuzzy.suggestion,
+            commandId: fuzzy.commandId,
+            timestamp: Date.now(),
+          });
+          logger.info('Fuzzy match — awaiting confirmation', { phrase: primaryCommand.substring(0, 40), suggestion: fuzzy.suggestion });
+          recordTrace({ routingPath: 'fuzzy_pending', rawInput: content, classification: fuzzy.commandId, confidenceScore: fuzzy.confidence, action: 'fuzzy_suggest' });
+          return { recipient: sender, content: `Did you mean: ${fuzzy.suggestion}? Reply yes to run.`, replyTo: message.id };
+        }
       }
     }
 
@@ -831,6 +953,7 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
           const { createAnthropic } = await import('@ai-sdk/anthropic');
           const provider = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
 
+          const llmStart = Date.now();
           const { text } = await generateText({
             model: provider(config.claude.haiku_model),
             system: `${PERSONALITY_RULES}
@@ -854,6 +977,9 @@ Matt's actual setup (ONLY reference these, never invent others):
             ],
             maxTokens: getFeatureMaxTokens('conversation'),
           });
+          Promise.resolve().then(() => import('./profiler/performance-collector.js')).then(({ recordMetric }) => {
+            recordMetric({ category: 'response_time', source: 'llm_call', metric_name: 'response_time_ms', value: Date.now() - llmStart, metadata: { model: 'haiku', call: 'conversational' } });
+          }).catch(() => {});
 
           recordFeatureUsage('conversation', 0.001); // ~200 tokens Haiku ≈ $0.001
           recordTrace({ routingPath: 'conversational', rawInput: trimmed, action: 'chat', success: true, modelUsed: 'haiku' });
@@ -1044,6 +1170,7 @@ Matt's actual setup (ONLY reference these, never invent others):
     
     // Format and return response
     let response = formatResponse(intent, result);
+    response = stripStatusLinesIfChained(response);
 
     // Sanitize: log banned phrases (personality injection check)
     response = sanitizeResponse(response);
@@ -1100,6 +1227,10 @@ Matt's actual setup (ONLY reference these, never invent others):
       content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
       replyTo: message.id
     };
+  } finally {
+    Promise.resolve().then(() => import('./profiler/performance-collector.js')).then(({ recordMetric }) => {
+      recordMetric({ category: 'response_time', source: 'signal_handler', metric_name: 'response_time_ms', value: Date.now() - handlerStart, metadata: { success: handlerSuccess } });
+    }).catch(() => {});
   }
 }
 

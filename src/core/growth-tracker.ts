@@ -53,6 +53,8 @@ export function persistTrace(trace: OODATrace): void {
       trace.decide.modelUsed ?? null,
       trace.loop.loopCount ?? 1
     );
+    // Also record for REASONING tab metrics (reasoning_tasks)
+    import('./reasoning-recorder.js').then(({ recordReasoningTaskFromTrace }) => recordReasoningTaskFromTrace(trace)).catch(() => {});
   } catch (err) {
     // Growth persistence is non-critical; log and continue
     import('../utils/logger.js').then(({ logger }) => logger.debug('GrowthTracker: persist trace failed', { error: String(err) })).catch(() => {});
@@ -78,6 +80,12 @@ export function recordScenarioRun(
       options?.responseMs ?? null,
       options?.oodaRequestId ?? null
     );
+    // Wire test result into REASONING tab (reasoning_tasks.test_passed)
+    if (options?.oodaRequestId) {
+      import('./reasoning-recorder.js').then(({ updateReasoningTaskTestResult }) => {
+        updateReasoningTaskTestResult(options.oodaRequestId!, passed);
+      }).catch(() => {});
+    }
   } catch (err) {
     import('../utils/logger.js').then(({ logger }) => logger.debug('GrowthTracker: record scenario run failed', { error: String(err) })).catch(() => {});
   }
@@ -89,6 +97,50 @@ export interface GrowthStats {
   byPath: Record<string, number>;
   scenarioPassRate: number;
   recentScenarioRuns: Array<{ scenario_id: string; run_at: number; passed: number }>;
+}
+
+/**
+ * Get recent OODA journal entries (for "check his journal" / debug).
+ * Returns last N persisted traces with human-readable fields.
+ */
+export function getRecentOodaJournal(limit: number = 50): Array<{
+  requestId: string;
+  timestamp: number;
+  time: string;
+  routingPath: string;
+  rawInput: string;
+  action: string;
+  success: boolean;
+  totalTimeMs: number;
+  loopCount: number;
+}> {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT request_id, timestamp, routing_path, raw_input, action, success, total_time_ms, loop_count
+    FROM growth_ooda_traces
+    ORDER BY timestamp DESC
+    LIMIT ?
+  `).all(limit) as Array<{
+    request_id: string;
+    timestamp: number;
+    routing_path: string;
+    raw_input: string;
+    action: string;
+    success: number;
+    total_time_ms: number;
+    loop_count: number;
+  }>;
+  return rows.map((r) => ({
+    requestId: r.request_id,
+    timestamp: r.timestamp,
+    time: new Date(r.timestamp).toISOString(),
+    routingPath: r.routing_path,
+    rawInput: r.raw_input,
+    action: r.action,
+    success: r.success === 1,
+    totalTimeMs: r.total_time_ms ?? 0,
+    loopCount: r.loop_count ?? 1,
+  }));
 }
 
 /**

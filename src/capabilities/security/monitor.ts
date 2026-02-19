@@ -69,7 +69,7 @@ let broadcastFn: ((type: string, payload: unknown) => void) | null = null;
 
 // Map<"projectId:eventType", timestamp>
 const alertCooldowns = new Map<string, number>();
-const ALERT_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes between repeated alerts for same condition
+const ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours between repeated alerts for same project+condition
 
 function isOnCooldown(projectId: string, eventType: string): boolean {
   const key = `${projectId}:${eventType}`;
@@ -261,7 +261,8 @@ async function checkProject(projectId: string, projectName: string): Promise<voi
       // Domain from the latest deployment
       domain = (deployRecords[0]?.url as string) || '';
 
-      // Error rate = failed / total
+      // Deploy failure rate = share of last N deploys that failed (build ERROR). Not runtime 5xx.
+      // We do not treat this as a security threat or send alerts — use consecutiveFailures for that.
       const failed = deployRecords.filter(d => d.readyState === 'ERROR').length;
       errorRate = (failed / deployRecords.length) * 100;
 
@@ -302,28 +303,8 @@ async function checkProject(projectId: string, projectName: string): Promise<voi
   let status: SecurityStatus = 'secure';
   const threats: string[] = [];
 
-  // Check error-rate threshold
-  if (errorRate >= thresholds.errorRate) {
-    status = errorRate >= thresholds.errorRate * 2 ? 'critical' : 'warning';
-    threats.push(`error_rate:${errorRate.toFixed(1)}%`);
-
-    // Only create event + fire playbook if not on cooldown and user hasn't acknowledged
-    if (!isOnCooldown(projectId, 'error_spike') && !hasResolvedEventFor(projectId, 'error_spike')) {
-      const severity: EventSeverity = errorRate >= thresholds.errorRate * 2 ? 'high' : 'medium';
-      const event = createEvent(
-        projectId,
-        projectName,
-        'error_spike',
-        severity,
-        `Error rate at ${errorRate.toFixed(1)}% (threshold: ${thresholds.errorRate}%)`,
-      );
-      executePlaybook(event)
-        .then((summary) => sendSecurityAlertToSignal(projectName, event.message, summary, severity))
-        .catch(err => logger.error('[security-monitor] Playbook failed', { error: String(err) }));
-      setCooldown(projectId, 'error_spike');
-      newEventsCreated = true;
-    }
-  }
+  // Deploy failure rate (share of last 10 builds that failed) is not treated as a security alert.
+  // Failed builds are CI/deploy health, not security. We only alert on consecutive deploy failures below.
 
   // Check consecutive deploy failures
   if (consecutiveFailures >= thresholds.failedDeploys) {

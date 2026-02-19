@@ -4,7 +4,8 @@
  */
 
 import { spawn } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import { join } from 'path';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import type { ParsedIntent, ExecutionResult } from '../types/index.js';
@@ -643,6 +644,120 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     };
   }
 
+  // --- DEVELOPMENT (autonomous dev loop) ---
+  if (intent.action === 'dev_task') {
+    const startTimeDev = Date.now();
+    const description = (intent.target || intent.message || '').trim();
+    if (!description) {
+      return {
+        success: false,
+        error: 'No task description. Say e.g. "add rate limiting to the voice endpoint".',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    const { executeDevTask } = await import('../devtools/dev-loop.js');
+    const { recordLearning } = await import('./context/layers/learnings.js');
+    type DevRes = Awaited<ReturnType<typeof executeDevTask>>;
+    const formatDevResult = (r: DevRes): string => {
+      const lines = [`**${r.status.toUpperCase()}** (${r.iterations} iteration${r.iterations !== 1 ? 's' : ''})`, r.summary];
+      if (r.phase) lines.push(`Phase: ${r.phase}`);
+      if (r.error && (r.status === 'failed' || r.status === 'blocked')) lines.push(`Error: ${r.error}`);
+      if (r.filesChanged.length) lines.push(`Files: ${r.filesChanged.join(', ')}`);
+      if (r.testResults.length) {
+        const last = r.testResults[r.testResults.length - 1];
+        lines.push(`Tests: ${last.passed} passed, ${last.failed} failed`);
+      }
+      if (r.rollbackAvailable) lines.push('Rollback available: say "rollback last" to undo.');
+      return lines.join('\n');
+    };
+    const testMode = (intent as { mode?: 'typecheck-only' | 'smoke-test' | 'full-test' }).mode ?? 'smoke-test';
+    const task = {
+      id: `dev-${Date.now()}`,
+      description,
+      requestedBy: 'user',
+      priority: 'medium' as const,
+      createdAt: new Date().toISOString(),
+      testMode,
+    };
+    const result = await executeDevTask(task);
+    const output = formatDevResult(result);
+    const { recordDevTaskExecution, getCanonicalProjectRoot } = await import('./execution-logger.js');
+    const devOutcome = result.status === 'blocked' ? 'failed' : result.status;
+    recordDevTaskExecution(
+      task.description,
+      getCanonicalProjectRoot(),
+      devOutcome,
+      [{ command: task.description, success: devOutcome === 'success' || devOutcome === 'partial', error: result.error, outputSnippet: result.summary }],
+      result.summary
+    );
+    if (result.status === 'success' || result.status === 'partial') {
+      recordLearning({
+        category: 'development',
+        trigger: task.description,
+        rootCause: 'development_task',
+        fix: result.summary,
+        lesson: `Task completed in ${result.iterations} iterations. Files: ${result.filesChanged.join(', ') || 'none'}`,
+        appliesTo: result.filesChanged.length ? result.filesChanged.join(',') : undefined,
+      });
+    } else {
+      recordLearning({
+        category: 'development_failure',
+        trigger: task.description,
+        rootCause: result.summary,
+        fix: 'Task requires manual intervention or different approach.',
+        lesson: result.testResults.length
+          ? result.testResults.map((t) => t.failures.map((f) => f.error).join('; ')).join('; ')
+          : result.summary,
+        appliesTo: result.filesChanged.length ? result.filesChanged.join(',') : undefined,
+      });
+    }
+    return {
+      success: result.status === 'success' || result.status === 'partial',
+      output,
+      error: result.status === 'failed' || result.status === 'blocked' ? result.summary : undefined,
+      duration_ms: Date.now() - startTimeDev,
+    };
+  }
+  if (intent.action === 'dev_recent') {
+    const { getRecentChanges } = await import('../devtools/file-writer.js');
+    const changes = await getRecentChanges(5);
+    if (changes.length === 0) {
+      return { success: true, output: 'No recent development activity.', duration_ms: Date.now() - startTime };
+    }
+    const output = changes.map((c) => `${c.timestamp}: ${c.action} ${c.path} - ${c.description}`).join('\n');
+    return { success: true, output, duration_ms: Date.now() - startTime };
+  }
+  if (intent.action === 'dev_rollback') {
+    const { getRecentChanges, rollbackFile } = await import('../devtools/file-writer.js');
+    const changes = await getRecentChanges(1);
+    if (changes.length === 0 || !changes[0].backupPath) {
+      return {
+        success: false,
+        output: 'No rollback available (last change may have been a new file).',
+        duration_ms: Date.now() - startTime,
+      };
+    }
+    const ok = await rollbackFile(changes[0].backupPath);
+    const output = ok ? `Rolled back ${changes[0].path}` : 'Rollback failed.';
+    return { success: ok, output, duration_ms: Date.now() - startTime };
+  }
+  if (intent.action === 'dev_changelog') {
+    const { getRecentChanges } = await import('../devtools/file-writer.js');
+    const changes = await getRecentChanges(20);
+    if (changes.length === 0) {
+      return { success: true, output: 'No changes recorded.', duration_ms: Date.now() - startTime };
+    }
+    const output =
+      `Last ${changes.length} changes:\n` +
+      changes
+        .map(
+          (c) =>
+            `[${c.timestamp}] ${c.action.toUpperCase()} ${c.path}\n  ${c.description} (${c.linesChanged} lines)`
+        )
+        .join('\n\n');
+    return { success: true, output, duration_ms: Date.now() - startTime };
+  }
+
   if (intent.action === 'unknown') {
     return {
       success: false,
@@ -976,6 +1091,51 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     };
   }
   
+  // Write content into each ~/projects/*/prd.md (actual file write, not LLM reply)
+  if (intent.action === 'write_projects_prd_content') {
+    const content = (intent.prompt || '').trim();
+    if (!content) {
+      return {
+        success: false,
+        error: 'No content to write. Say e.g. "write into the 3 prd.md files: This will be the base for future PRDs."',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    const projectsDir = process.env.HOME ? join(process.env.HOME, 'projects') : '/home/jeeves/projects';
+    if (!existsSync(projectsDir)) {
+      return {
+        success: false,
+        error: `Projects directory not found: ${projectsDir}`,
+        duration_ms: Date.now() - startTime
+      };
+    }
+    try {
+      const subdirs = readdirSync(projectsDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name);
+      const written: string[] = [];
+      const block = '\n\n' + content + '\n';
+      for (const name of subdirs) {
+        const file = join(projectsDir, name, 'prd.md');
+        const existing = existsSync(file) ? readFileSync(file, 'utf8') : '# PRD\n\n';
+        writeFileSync(file, existing.trimEnd() + block, 'utf8');
+        written.push(`${name}/prd.md`);
+      }
+      return {
+        success: true,
+        output: `Wrote content into ${written.length} file(s): ${written.join(', ')}.`,
+        duration_ms: Date.now() - startTime
+      };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return {
+        success: false,
+        error: `Failed to write to prd.md files: ${msg}`,
+        duration_ms: Date.now() - startTime
+      };
+    }
+  }
+
   // Handle PRD execution commands
   if (intent.action === 'prd_submit') {
     if (!intent.prompt) {
@@ -985,9 +1145,41 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
         duration_ms: Date.now() - startTime
       };
     }
-    
-    // Check if we have an active project session
+
+    const prompt = (intent.prompt || '').trim().toLowerCase();
+    const createPrdInFoldersMatch = prompt.match(/create\s+prd\.md\s+in\s+each\s+(?:of\s+)?(?:those\s+)?folders?/i);
+    const projectsDir = process.env.HOME ? join(process.env.HOME, 'projects') : '/home/jeeves/projects';
+
+    // No active project: allow "create prd.md in each of those folders" by writing stub into each subfolder of ~/projects
     const agentStatus = getAgentStatus();
+    if ((!agentStatus.active || !agentStatus.workingDir) && createPrdInFoldersMatch && existsSync(projectsDir)) {
+      try {
+        const subdirs = readdirSync(projectsDir, { withFileTypes: true })
+          .filter((d) => d.isDirectory())
+          .map((d) => d.name);
+        const stub = '# PRD\n\n';
+        const created: string[] = [];
+        for (const name of subdirs) {
+          const dir = join(projectsDir, name);
+          const file = join(dir, 'prd.md');
+          writeFileSync(file, stub, 'utf8');
+          created.push(join(name, 'prd.md'));
+        }
+        return {
+          success: true,
+          output: `Created prd.md in ${created.length} folder(s): ${created.join(', ')}.`,
+          duration_ms: Date.now() - startTime
+        };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return {
+          success: false,
+          error: `Could not create prd.md in folders: ${msg}`,
+          duration_ms: Date.now() - startTime
+        };
+      }
+    }
+
     if (!agentStatus.active || !agentStatus.workingDir) {
       return {
         success: false,
@@ -995,7 +1187,7 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
         duration_ms: Date.now() - startTime
       };
     }
-    
+
     const result = await submitPrd(intent.prompt, agentStatus.workingDir);
     return {
       success: result.success,

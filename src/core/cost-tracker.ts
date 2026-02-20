@@ -17,13 +17,21 @@ const __dirname = dirname(__filename);
 const COST_LOG_PATH = join(__dirname, '../../data/cost-log.json');
 
 // Pricing per 1M tokens (as of 2026)
-const PRICING = {
+const PRICING: Record<string, { input: number; output: number }> = {
   'claude-3-5-haiku-20241022': { input: 1.00, output: 5.00 },
+  'claude-haiku-4-5-20251001': { input: 1.00, output: 5.00 },
+  'claude-haiku-4-5': { input: 1.00, output: 5.00 },
   'claude-sonnet-4-20250514': { input: 3.00, output: 15.00 },
+  'claude-sonnet-4-5-20250929': { input: 3.00, output: 15.00 },
+  'claude-sonnet-4-5': { input: 3.00, output: 15.00 },
+  'claude-sonnet-4-6': { input: 3.00, output: 15.00 },
   'claude-opus-4-20250514': { input: 15.00, output: 75.00 },
+  'claude-opus-4-6': { input: 15.00, output: 75.00 },
   // Cached pricing (90% discount on input)
   'claude-3-5-haiku-20241022-cached': { input: 0.10, output: 5.00 },
+  'claude-haiku-4-5-20251001-cached': { input: 0.10, output: 5.00 },
   'claude-sonnet-4-20250514-cached': { input: 0.30, output: 15.00 },
+  'claude-sonnet-4-6-cached': { input: 0.30, output: 15.00 },
   'claude-opus-4-20250514-cached': { input: 1.50, output: 75.00 }
 };
 
@@ -72,7 +80,7 @@ let sessionStartTime = Date.now();
  */
 function calculateCost(model: string, inputTokens: number, outputTokens: number, cached: boolean): number {
   const modelKey = cached ? `${model}-cached` : model;
-  const pricing = PRICING[modelKey as keyof typeof PRICING] || PRICING['claude-sonnet-4-20250514'];
+  const pricing = PRICING[modelKey] ?? PRICING['claude-sonnet-4-6'] ?? { input: 3.00, output: 15.00 };
   
   const inputCost = (inputTokens / 1_000_000) * pricing.input;
   const outputCost = (outputTokens / 1_000_000) * pricing.output;

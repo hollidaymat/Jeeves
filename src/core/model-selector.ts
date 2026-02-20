@@ -19,21 +19,21 @@ export interface ModelInfo {
   description: string;
 }
 
-// Model definitions (prices as of 2024)
+// Model definitions (Haiku 4.5, Sonnet 4.6, Opus 4.6 – 2026)
 export const MODELS: Record<ModelTier, ModelInfo> = {
   haiku: {
     tier: 'haiku',
-    modelId: 'claude-3-5-haiku-20241022',
+    modelId: 'claude-haiku-4-5-20251001',
     costPer1kInput: 0.001,
     costPer1kOutput: 0.005,
-    description: 'Fast & cheap - simple questions, status, quick answers'
+    description: 'Fast & cheap - Haiku 4.5, Sonnet-level quality at 1/3 cost'
   },
   sonnet: {
     tier: 'sonnet',
-    modelId: 'claude-sonnet-4-5-20250929',
+    modelId: 'claude-sonnet-4-6',
     costPer1kInput: 0.003,
     costPer1kOutput: 0.015,
-    description: 'Balanced - coding, explanations, normal work'
+    description: 'Balanced - Sonnet 4.6, coding, design, agentic workflows'
   },
   opus: {
     tier: 'opus',

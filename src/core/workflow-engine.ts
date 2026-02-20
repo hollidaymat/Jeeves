@@ -13,6 +13,7 @@ import { logger } from '../utils/logger.js';
 import { generateText } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { trackLLMUsage } from './cost-tracker.js';
+import { config } from '../config.js';
 
 const execAsync = promisify(exec);
 
@@ -54,11 +55,11 @@ interface WorkflowResult {
   cost: number;
 }
 
-// Model ID mapping
+// Model ID mapping (uses config for haiku/sonnet; opus fallback)
 const MODEL_IDS: Record<string, string> = {
-  'haiku': 'claude-3-5-haiku-20241022',
-  'sonnet': 'claude-sonnet-4-20250514',
-  'opus': 'claude-opus-4-20250514'
+  'haiku': config.claude.haiku_model,
+  'sonnet': config.claude.model,
+  'opus': 'claude-opus-4-6'
 };
 
 // Loaded workflows cache

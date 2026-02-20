@@ -10,6 +10,7 @@
 
 import { generateText } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
 import { trackLLMUsage } from '../cost-tracker.js';
 import { 
@@ -230,13 +231,13 @@ Respond with ONLY JSON:
 }`;
 
     const result = await generateText({
-      model: anthropic('claude-3-5-haiku-20241022'),
+      model: anthropic(config.claude.haiku_model),
       prompt,
       maxTokens: 250
     });
     
     if (result.usage) {
-      trackLLMUsage('reasoning_observe', 'claude-3-5-haiku-20241022', 
+      trackLLMUsage('reasoning_observe', config.claude.haiku_model, 
         result.usage.promptTokens, result.usage.completionTokens, false);
     }
     
@@ -316,13 +317,13 @@ Respond with ONLY JSON:
 }`;
 
     const result = await generateText({
-      model: anthropic('claude-3-5-haiku-20241022'),
+      model: anthropic(config.claude.haiku_model),
       prompt,
       maxTokens: 250
     });
     
     if (result.usage) {
-      trackLLMUsage('reasoning_orient', 'claude-3-5-haiku-20241022',
+      trackLLMUsage('reasoning_orient', config.claude.haiku_model,
         result.usage.promptTokens, result.usage.completionTokens, false);
     }
     
@@ -501,13 +502,13 @@ Respond with ONLY JSON:
 }`;
 
     const result = await generateText({
-      model: anthropic('claude-3-5-haiku-20241022'),
+      model: anthropic(config.claude.haiku_model),
       prompt,
       maxTokens: 300
     });
     
     if (result.usage) {
-      trackLLMUsage('reasoning_plan', 'claude-3-5-haiku-20241022',
+      trackLLMUsage('reasoning_plan', config.claude.haiku_model,
         result.usage.promptTokens, result.usage.completionTokens, false);
     }
     

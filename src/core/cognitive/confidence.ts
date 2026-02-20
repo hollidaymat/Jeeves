@@ -16,6 +16,7 @@
 
 import { generateText } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
 import { trackLLMUsage } from '../cost-tracker.js';
 
@@ -378,7 +379,7 @@ Respond with ONLY valid JSON:
 }`;
 
     const result = await generateText({
-      model: anthropic('claude-3-5-haiku-20241022'),
+      model: anthropic(config.claude.haiku_model),
       prompt,
       maxTokens: 300
     });
@@ -387,7 +388,7 @@ Respond with ONLY valid JSON:
     if (result.usage) {
       trackLLMUsage(
         'confidence_scoring',
-        'claude-3-5-haiku-20241022',
+        config.claude.haiku_model,
         result.usage.promptTokens,
         result.usage.completionTokens,
         false

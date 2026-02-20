@@ -323,6 +323,15 @@ async function main() {
     });
     addSchedule('Performance cleanup', '04:00', 'performance_cleanup');
 
+    const playbookIntervalMs = parseInt(process.env.PLAYBOOK_UPDATE_INTERVAL_MS || '300000', 10) || 300000;
+    registerHandler('playbook_update', async () => {
+      try {
+        const { runPlaybookGenerator } = await import('./core/observer/playbook-generator.js');
+        runPlaybookGenerator();
+      } catch { /* ignore */ }
+    });
+    addSchedule('Playbook update', playbookIntervalMs, 'playbook_update');
+
     startScheduler();
     logger.info('Scheduler started with default schedules');
   } catch (err) {

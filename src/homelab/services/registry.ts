@@ -30,6 +30,7 @@ export interface ServiceDefinition {
   type?: string;                // e.g., 'system-service' for Tailscale
   environment?: Record<string, string>;  // Default env vars for the service
   volumes?: string[];           // Volume mounts (e.g., 'config:/config')
+  command?: string[];           // Override container CMD (e.g. ['--metrics.prometheus=true'])
   state: ServiceState;
   lastChecked?: string;
   lastStateChange?: string;
@@ -98,6 +99,14 @@ function initRegistry(): void {
       purpose: 'Reverse proxy, SSL termination',
       priority: 'critical',
       dependencies: [],
+      command: [
+        '--api.dashboard=true',
+        '--providers.docker=true',
+        '--metrics.prometheus=true',
+        '--entrypoints.web.address=:80',
+        '--entrypoints.websecure.address=:443',
+        '--entrypoints.traefik.address=:8080',
+      ],
     },
     {
       name: 'pihole',
@@ -380,6 +389,7 @@ function initRegistry(): void {
       purpose: 'Metrics collection',
       priority: 'medium',
       dependencies: [],
+      volumes: ['./config:/etc/prometheus'],
     },
     {
       name: 'grafana',
@@ -390,6 +400,12 @@ function initRegistry(): void {
       purpose: 'Metrics dashboards',
       priority: 'medium',
       dependencies: ['prometheus'],
+      volumes: ['./provisioning:/etc/grafana/provisioning'],
+      environment: {
+        GF_SECURITY_ADMIN_USER: 'admin',
+        GF_SECURITY_ADMIN_PASSWORD: 'whyaskjeeves',
+        GF_USERS_ALLOW_SIGN_UP: 'false',
+      },
     },
     {
       name: 'node_exporter',
@@ -400,6 +416,24 @@ function initRegistry(): void {
       purpose: 'Hardware metrics export',
       priority: 'medium',
       dependencies: [],
+    },
+    {
+      name: 'cadvisor',
+      tier: 'monitoring',
+      image: 'gcr.io/cadvisor/cadvisor:latest',
+      ports: ['8081:8080'],  // host 8081 (Traefik uses 8080); container listens on 8080
+      ramMB: parseRAM('256MB'),
+      purpose: 'Container metrics (all Dockers)',
+      priority: 'medium',
+      dependencies: [],
+      volumes: [
+        '/var/run/docker.sock:/var/run/docker.sock',
+        '/:/rootfs:ro',
+        '/var/run:/var/run:ro',
+        '/sys:/sys:ro',
+        '/var/lib/docker/:/var/lib/docker:ro',
+        '/dev/disk/:/dev/disk:ro',
+      ],
     },
   ];
 

@@ -8,6 +8,8 @@
  * Integrates with the service registry, health checker, Traefik proxy, and Pi-hole DNS.
  */
 
+import { mkdir, writeFile } from 'fs/promises';
+import { join } from 'path';
 import {
   generateCompose,
   writeComposeToDisk,
@@ -27,6 +29,8 @@ import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
 import { generateTraefikLabels, getDefaultDomain } from '../network/reverse-proxy.js';
 import { addLocalDNS, removeLocalDNS } from '../network/dns.js';
+import { generatePrometheusYml } from '../monitoring/prometheus-config.js';
+import { generateGrafanaDatasourcesYml } from '../monitoring/grafana-datasources.js';
 
 // ============================================================================
 // Types
@@ -160,12 +164,38 @@ export async function installService(name: string): Promise<InstallResult> {
     labels: Object.keys(traefikLabels).length > 0 ? traefikLabels : undefined,
     environment: svc.environment,
     volumes: svc.volumes,
+    command: svc.command,
   };
 
   const composeYaml = generateCompose(name, [composeDef]);
 
   // ---- h. Write compose to disk ----
   await writeComposeToDisk(name, composeYaml);
+
+  // ---- h2. Prometheus: write scrape config so it scrapes all Dockers (node_exporter, cadvisor, traefik) ----
+  if (name === 'prometheus') {
+    const prometheusConfigDir = join(stackDir, 'config');
+    try {
+      await mkdir(prometheusConfigDir, { recursive: true });
+      await writeFile(join(prometheusConfigDir, 'prometheus.yml'), generatePrometheusYml(), 'utf-8');
+      logger.info('Wrote prometheus.yml (scrape: self, node_exporter, cadvisor, traefik)');
+    } catch (err) {
+      logger.warn('Could not write prometheus.yml', { error: String(err) });
+      warnings.push('Prometheus config not written; container may use default (empty) config.');
+    }
+  }
+
+  // ---- h3. Grafana: provision Prometheus datasource so dashboards have data ----
+  if (name === 'grafana') {
+    const provisioningDir = join(stackDir, 'provisioning', 'datasources');
+    try {
+      await mkdir(provisioningDir, { recursive: true });
+      await writeFile(join(provisioningDir, 'datasources.yml'), generateGrafanaDatasourcesYml(), 'utf-8');
+      logger.info('Wrote Grafana provisioning/datasources (Prometheus default)');
+    } catch (err) {
+      logger.warn('Could not write Grafana provisioning', { error: String(err) });
+    }
+  }
 
   // ---- i. Deploy stack ----
   const deployResult = await deployStack(name);
@@ -177,6 +207,17 @@ export async function installService(name: string): Promise<InstallResult> {
       warnings,
       duration_ms: Date.now() - startTime,
     };
+  }
+
+  // ---- i2. Prometheus: restart container so it reloads prometheus.yml (compose up -d does not restart when only mounted file changes) ----
+  if (name === 'prometheus') {
+    const composePath = join(config.homelab.stacksDir, name, 'docker-compose.yml');
+    const restartResult = await execHomelab('docker', ['compose', '-f', composePath, 'restart', 'prometheus']);
+    if (!restartResult.success) {
+      logger.warn('Prometheus restart after config write failed', { stderr: restartResult.stderr });
+    } else {
+      logger.info('Prometheus restarted to load new config');
+    }
   }
 
   // ---- j. Wait, then health check ----

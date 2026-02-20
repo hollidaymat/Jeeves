@@ -435,6 +435,21 @@ export class WebInterface implements MessageInterface {
       }
     });
 
+    // API: Antigravity orchestration (active task + recent tasks + QA browser URL)
+    this.app.get('/api/orchestration', async (_req: Request, res: Response) => {
+      try {
+        const { getActiveOrchestrationTask } = await import('../core/orchestrator/index.js');
+        const { listRecentTasks } = await import('../core/observer/interaction-recorder.js');
+        const { getServeWebUrl } = await import('../core/orchestrator/antigravity-executor.js');
+        const active = getActiveOrchestrationTask();
+        const recent = listRecentTasks(20);
+        const serve_web_url = getServeWebUrl();
+        res.json({ active, recent, serve_web_url: serve_web_url ?? undefined });
+      } catch (error) {
+        res.json({ active: null, recent: [], serve_web_url: undefined });
+      }
+    });
+
     // API: Vercel status
     this.app.get('/api/vercel/status', async (_req: Request, res: Response) => {
       try {

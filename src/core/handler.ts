@@ -563,10 +563,12 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
       }
     }
 
-    // "security status" / "security overview"
-    const secStatusMatch = /^(?:security\s+(?:status|overview|dashboard|report)|vercel\s+security)/i.test(content.trim());
-    if (secStatusMatch) {
-      logger.info('Security status fast path');
+    // Security routing: homelab infrastructure vs Vercel projects
+    const trimmedCmd = content.trim();
+    const vercelSecurityMatch = /^vercel\s+security$/i.test(trimmedCmd);
+    const homelabSecurityMatch = /^(?:homelab\s+security\s*(?:status|report)?|infrastructure\s+security|machine\s+security|jeeves\s+security|security\s+(?:status|overview|dashboard|report))$/i.test(trimmedCmd);
+    if (vercelSecurityMatch) {
+      logger.info('Vercel security fast path');
       try {
         const { getSecurityDashboard } = await import('../capabilities/security/monitor.js');
         const dashboard = getSecurityDashboard();
@@ -588,6 +590,14 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
       } catch (err) {
         return { recipient: sender, content: `Security monitor not available: ${err}`, replyTo: message.id };
       }
+    }
+    if (homelabSecurityMatch) {
+      logger.info('Homelab infrastructure security fast path');
+      const intent: ParsedIntent = { action: 'homelab_security_status', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
+      const result = await executeCommand(intent);
+      recordTrace({ routingPath: 'registry', rawInput: content, action: 'homelab_security_status', success: result.success });
+      stats.lastCommand = { action: 'homelab_security_status', timestamp: new Date().toISOString(), success: result.success };
+      return { recipient: sender, content: formatResponse(intent, result), replyTo: message.id, attachments: result.attachments };
     }
 
     // ==========================================

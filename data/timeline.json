@@ -1830,5 +1830,85 @@
     "category": "system",
     "message": "Jeeves started",
     "severity": "info"
+  },
+  {
+    "id": "evt-1771544882768-ndkt",
+    "timestamp": "2026-02-19T23:48:02.768Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771544947132-ytkd",
+    "timestamp": "2026-02-19T23:49:07.132Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771585222804-ru5i",
+    "timestamp": "2026-02-20T11:00:22.804Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Disk health check: 0 warning(s) across 2 disk(s)",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771588825408-t205",
+    "timestamp": "2026-02-20T12:00:25.408Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Log scan: 425 errors across 28 containers",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771593575525-vosb",
+    "timestamp": "2026-02-20T13:19:35.525Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771594694329-h2tw",
+    "timestamp": "2026-02-20T13:38:14.329Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771594830578-yv9d",
+    "timestamp": "2026-02-20T13:40:30.578Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771596057811-wvto",
+    "timestamp": "2026-02-20T14:00:57.811Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Image update check: 28 of 28 containers have updates available",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771596156898-zwc5",
+    "timestamp": "2026-02-20T14:02:36.898Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771596354877-yin0",
+    "timestamp": "2026-02-20T14:05:54.877Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
   }
 ]

@@ -495,6 +495,126 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     };
   }
 
+  // ===== ANTIGRAVITY (test connection, handoff, or full orchestrate) =====
+
+  if (intent.action === 'antigravity_test') {
+    trackPatternMatch('antigravity_test');
+    try {
+      const { testAntigravityConnection } = await import('../core/orchestrator/antigravity-executor.js');
+      const t = testAntigravityConnection();
+      return {
+        success: t.ok,
+        output: t.ok ? `Antigravity: ${t.message} ${t.details ?? ''}`.trim() : `Antigravity: ${t.message}. ${t.details ?? ''}`.trim(),
+        error: t.ok ? undefined : t.message,
+        duration_ms: Date.now() - startTime
+      };
+    } catch (err) {
+      return {
+        success: false,
+        error: `Test failed: ${err instanceof Error ? err.message : String(err)}`,
+        duration_ms: Date.now() - startTime
+      };
+    }
+  }
+
+  if (intent.action === 'antigravity_serve_web') {
+    trackPatternMatch('antigravity_serve_web');
+    try {
+      const { startAntigravityServeWeb } = await import('../core/orchestrator/antigravity-executor.js');
+      const r = startAntigravityServeWeb();
+      return {
+        success: r.ok,
+        output: r.message + (r.url ? ` (Orchestration tab has the link.)` : ''),
+        error: r.ok ? undefined : r.message,
+        duration_ms: Date.now() - startTime
+      };
+    } catch (err) {
+      return {
+        success: false,
+        error: `Failed: ${err instanceof Error ? err.message : String(err)}`,
+        duration_ms: Date.now() - startTime
+      };
+    }
+  }
+
+  if (intent.action === 'antigravity_handoff') {
+    trackPatternMatch('antigravity_handoff');
+    const description = (intent.target ?? intent.prompt ?? '').trim();
+    if (!description) {
+      return {
+        success: false,
+        error: 'Say what to hand off (e.g. "send to antigravity: add login" or "antigravity notes: JWT auth").',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    try {
+      const { orchestrate } = await import('../core/orchestrator/index.js');
+      const result = await orchestrate(
+        { title: description.slice(0, 80), description },
+        { handoffOnly: true }
+      );
+      if (result.needsClarification && result.questions?.length) {
+        return {
+          success: true,
+          output: `Clarifying:\n${result.questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n\nSpec not written yet—reply with answers or rephrase.`,
+          duration_ms: Date.now() - startTime
+        };
+      }
+      return {
+        success: result.success,
+        output: result.message + (result.spec_path ? `\n\nYou can open this in Antigravity when ready to build.` : ''),
+        error: result.success ? undefined : result.message,
+        duration_ms: Date.now() - startTime
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        error: `Handoff failed: ${msg}`,
+        duration_ms: Date.now() - startTime
+      };
+    }
+  }
+
+  if (intent.action === 'antigravity_orchestrate') {
+    trackPatternMatch('antigravity_orchestrate');
+    const description = (intent.target ?? intent.prompt ?? '').trim();
+    if (!description) {
+      return {
+        success: false,
+        error: 'Please specify what to build (e.g. "build add JWT auth" or "antigravity build add login").',
+        duration_ms: Date.now() - startTime
+      };
+    }
+    try {
+      const { orchestrate } = await import('../core/orchestrator/index.js');
+      const result = await orchestrate({
+        title: description.slice(0, 80),
+        description,
+      });
+      if (result.needsClarification && result.questions?.length) {
+        return {
+          success: true,
+          output: `Need clarification:\n${result.questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}`,
+          duration_ms: Date.now() - startTime
+        };
+      }
+      return {
+        success: result.success,
+        output: result.message,
+        error: result.success ? undefined : result.message,
+        duration_ms: Date.now() - startTime
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        error: `Orchestration failed: ${msg}`,
+        duration_ms: Date.now() - startTime
+      };
+    }
+  }
+
   // ===== CURSOR BACKGROUND AGENT ACTIONS =====
 
   if (intent.action === 'cursor_launch') {

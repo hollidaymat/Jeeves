@@ -540,6 +540,11 @@ class CommandCenter {
           this.cursorPanel.handleEvent(message.type, message.payload);
         }
         break;
+      case 'orchestration_phase':
+        if (this.orchestrationPanel) {
+          this.orchestrationPanel.handleEvent(message.payload);
+        }
+        break;
     }
   }
   
@@ -2540,6 +2545,69 @@ class CursorPanel {
 }
 
 // ============================================================================
+// Orchestration Panel (Antigravity)
+// ============================================================================
+class OrchestrationPanel {
+  constructor(commandCenter) {
+    this.commandCenter = commandCenter;
+    this.qaBrowserEl = document.getElementById('orchestration-qa-browser');
+    this.activeEl = document.getElementById('orchestration-active');
+    this.recentListEl = document.getElementById('orchestration-recent-list');
+    this.serveWebUrl = null;
+  }
+
+  async init() {
+    try {
+      const res = await fetch('/api/orchestration');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.serve_web_url) this.serveWebUrl = data.serve_web_url;
+        this.render(data.active, data.recent || []);
+      }
+    } catch { this.render(null, []); }
+  }
+
+  handleEvent(payload) {
+    if (payload && payload.serve_web_url) this.serveWebUrl = payload.serve_web_url;
+    if (payload && payload.phase) {
+      if (this.activeEl) {
+        this.activeEl.innerHTML = `<div class="orchestration-phase"><strong>Phase:</strong> ${payload.phase}${payload.task_id ? ' | Task: ' + payload.task_id : ''}${payload.iteration ? ' | Iteration ' + payload.iteration : ''}</div>`;
+      }
+      this.init();
+    }
+  }
+
+  render(active, recent) {
+    if (this.qaBrowserEl) {
+      if (this.serveWebUrl) {
+        this.qaBrowserEl.style.display = 'block';
+        this.qaBrowserEl.innerHTML = `<a href="${this.serveWebUrl}" target="_blank" rel="noopener" class="orchestration-qa-link">Open QA browser (Antigravity)</a>`;
+      } else {
+        this.qaBrowserEl.style.display = 'none';
+        this.qaBrowserEl.innerHTML = '';
+      }
+    }
+    if (this.activeEl) {
+      if (active) {
+        this.activeEl.innerHTML = `<div class="orchestration-active-task"><strong>Active:</strong> ${active.prd_title || active.task_id || '—'} | ${active.phase}${active.iteration ? ' (iteration ' + active.iteration + ')' : ''}</div>`;
+      } else {
+        this.activeEl.innerHTML = '<div class="orchestration-idle">No active orchestration. Use the console: e.g. "build add JWT auth" or "orchestrate add rate limiting".</div>';
+      }
+    }
+    if (this.recentListEl) {
+      if (!recent.length) {
+        this.recentListEl.innerHTML = '<li class="orchestration-empty">No tasks yet.</li>';
+        return;
+      }
+      this.recentListEl.innerHTML = recent.map(t => {
+        const date = t.created_at ? new Date(t.created_at * 1000).toLocaleString() : '—';
+        return `<li><span class="orchestration-status ${t.status}">${t.status}</span> ${(t.prd || '').slice(0, 60)}… — ${date}</li>`;
+      }).join('');
+    }
+  }
+}
+
+// ============================================================================
 // Scout Panel
 // ============================================================================
 class ScoutPanel {
@@ -3117,6 +3185,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Cursor panel
   window.commandCenter.cursorPanel = new CursorPanel(window.commandCenter);
+  window.commandCenter.orchestrationPanel = new OrchestrationPanel(window.commandCenter);
 
   // Scout panel
   window.scoutPanel = new ScoutPanel();
@@ -3152,6 +3221,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   window.tabController.onActivate('scout', () => {
     if (!loaded.scout) { loaded.scout = true; window.scoutPanel.init(); }
+  });
+  window.tabController.onActivate('orchestration', () => {
+    if (!loaded.orchestration) { loaded.orchestration = true; window.commandCenter.orchestrationPanel.init(); }
   });
   window.tabController.onActivate('reasoning', () => {
     if (!loaded.reasoning) { loaded.reasoning = true; window.reasoningPanel.init(); }

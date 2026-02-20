@@ -9,6 +9,7 @@
  * - Reversibility Assessment
  */
 
+import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
 import { generateText } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
@@ -358,13 +359,13 @@ Respond with JSON:
 }`;
 
       const result = await generateText({
-        model: anthropic('claude-3-5-haiku-20241022'),
+        model: anthropic(config.claude.haiku_model),
         prompt,
         maxTokens: 400
       });
       
       if (result.usage) {
-        trackLLMUsage('principled-reasoning', 'claude-3-5-haiku-20241022',
+        trackLLMUsage('principled-reasoning', config.claude.haiku_model,
           result.usage.promptTokens, result.usage.completionTokens, false);
       }
       

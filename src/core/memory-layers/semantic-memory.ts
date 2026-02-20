@@ -9,6 +9,7 @@
  * - Best practices learned
  */
 
+import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -401,7 +402,7 @@ export class SemanticMemory {
       });
       
       const result = await generateText({
-        model: anthropic('claude-3-5-haiku-20241022'),
+        model: anthropic(config.claude.haiku_model),
         prompt: `Analyze these observations and extract general patterns or best practices:
 
 OBSERVATIONS:
@@ -413,7 +414,7 @@ Respond with JSON: { "insights": ["insight 1", "insight 2"] }`,
       });
       
       if (result.usage) {
-        trackLLMUsage('semantic-synthesis', 'claude-3-5-haiku-20241022',
+        trackLLMUsage('semantic-synthesis', config.claude.haiku_model,
           result.usage.promptTokens, result.usage.completionTokens, false);
       }
       

@@ -10,6 +10,7 @@
 
 import { generateText } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { trackLLMUsage } from './cost-tracker.js';
 
@@ -87,7 +88,7 @@ export async function classifyIntent(message: string): Promise<ClassificationRes
     const prompt = CLASSIFICATION_PROMPT.replace('{input}', message.replace(/"/g, '\\"'));
     
     const { text, usage } = await generateText({
-      model: anthropic('claude-3-5-haiku-latest'),
+      model: anthropic(config.claude.haiku_model),
       prompt,
       maxTokens: 200,
       temperature: 0
@@ -96,7 +97,7 @@ export async function classifyIntent(message: string): Promise<ClassificationRes
     // Track cost
     trackLLMUsage(
       'classification',
-      'claude-3-5-haiku-latest',
+      config.claude.haiku_model,
       usage?.promptTokens || 0,
       usage?.completionTokens || 0
     );

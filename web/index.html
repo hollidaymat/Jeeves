@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Jeeves - AI Code Assistant</title>
+  <link rel="icon" type="image/png" href="favicon.png">
   <link rel="stylesheet" href="styles.css">
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
@@ -37,6 +38,7 @@
       <button class="tab-btn" data-tab="clients">CLIENTS</button>
       <button class="tab-btn" data-tab="security">SECURITY</button>
       <button class="tab-btn" data-tab="scout">SCOUT</button>
+      <button class="tab-btn" data-tab="orchestration">ORCHESTRATION</button>
       <button class="tab-btn" data-tab="reasoning">REASONING</button>
       <button class="tab-btn" data-tab="performance">PERFORMANCE</button>
       <button class="tab-btn" data-tab="notes">NOTES</button>
@@ -486,6 +488,21 @@
     <!-- ============================================================ -->
     <!-- TAB: REASONING -->
     <!-- ============================================================ -->
+    <div class="tab-content" data-tab="orchestration">
+      <div class="orchestration-page" id="orchestration-page">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>ORCHESTRATION</h2>
+          </div>
+          <div id="orchestration-qa-browser" class="orchestration-qa-browser" style="display:none;"></div>
+          <div id="orchestration-active" class="orchestration-active"></div>
+          <div id="orchestration-recent" class="orchestration-recent">
+            <h3>Recent tasks</h3>
+            <ul id="orchestration-recent-list"></ul>
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="tab-content" data-tab="reasoning">
       <div class="reasoning-page" id="reasoning-page">
         <div class="reasoning-top-bar">

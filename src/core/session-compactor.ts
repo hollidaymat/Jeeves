@@ -17,6 +17,7 @@ import {
   compactGeneralConversations,
   getGeneralConversationTokenCount
 } from './memory.js';
+import { config } from '../config.js';
 import { trackLLMUsage } from './cost-tracker.js';
 
 // Compaction settings
@@ -60,7 +61,7 @@ export async function checkAndCompact(): Promise<{
     });
     
     const result = await generateText({
-      model: anthropic('claude-3-5-haiku-20241022'),
+      model: anthropic(config.claude.haiku_model),
       maxTokens: 500,
       prompt: `Summarize this conversation in bullet points. Focus on:
 - Key decisions made
@@ -80,7 +81,7 @@ ${conversationText.slice(-20000)}  // Limit to last 20k chars to avoid token lim
     if (usage) {
       trackLLMUsage(
         'compaction',
-        'claude-3-5-haiku-20241022',
+        config.claude.haiku_model,
         usage.promptTokens,
         usage.completionTokens,
         false

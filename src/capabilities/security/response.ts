@@ -11,6 +11,7 @@
  * string is used instead.
  */
 
+import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
 import { enforceBudget, recordFeatureUsage, getFeatureMaxTokens } from '../../core/cost-tracker.js';
 import { setAttackMode, getDeployments } from './vercel-security.js';
@@ -215,7 +216,7 @@ async function generateTriageMessage(event: SecurityEvent): Promise<string | nul
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-3-5-haiku-20241022',
+        model: config.claude.haiku_model,
         max_tokens: maxTokens,
         messages: [{ role: 'user', content: prompt }],
       }),

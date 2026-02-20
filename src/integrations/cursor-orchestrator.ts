@@ -100,6 +100,11 @@ function broadcast(type: string, payload: unknown): void {
   if (broadcastFn) broadcastFn(type, payload);
 }
 
+/** Allow other modules (e.g. Antigravity orchestrator) to send events to the same WebSocket. */
+export function broadcastToWeb(type: string, payload: unknown): void {
+  broadcast(type, payload);
+}
+
 // ============================================================================
 // New Project Creation
 // ============================================================================

@@ -10,6 +10,7 @@
  * Stores learnings for future reference and pattern improvement.
  */
 
+import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
 import { generateText } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
@@ -342,13 +343,13 @@ Respond with JSON:
 }`;
 
       const result = await generateText({
-        model: anthropic('claude-3-5-haiku-20241022'),
+        model: anthropic(config.claude.haiku_model),
         prompt,
         maxTokens: 300
       });
       
       if (result.usage) {
-        trackLLMUsage('post-mortem', 'claude-3-5-haiku-20241022',
+        trackLLMUsage('post-mortem', config.claude.haiku_model,
           result.usage.promptTokens, result.usage.completionTokens, false);
       }
       

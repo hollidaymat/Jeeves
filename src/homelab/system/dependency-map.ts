@@ -25,8 +25,9 @@ const DEPENDENCIES: Record<string, string[]> = {
   jellyfin: [],
   // Monitoring stack
   grafana: ['prometheus'],
-  prometheus: ['node_exporter'],
+  prometheus: ['node_exporter', 'cadvisor'],
   node_exporter: [],
+  cadvisor: [],
   uptime_kuma: [],
   // Core services
   traefik: [],

@@ -144,7 +144,7 @@ export function startCacheHeartbeat(): void {
       
       // Minimal request - just ping with system prompt
       await generateText({
-        model: anthropic('claude-3-5-haiku-20241022'),
+        model: anthropic(config.claude.haiku_model),
         system: 'You are Jeeves, a helpful assistant.', // Minimal cached prompt
         prompt: 'ping',
         maxTokens: 1

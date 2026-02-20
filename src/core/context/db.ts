@@ -360,6 +360,43 @@ function runMigrations(database: Database.Database): void {
           status TEXT NOT NULL DEFAULT 'pending'
         );
       `
+    },
+    {
+      name: '008_orchestrator_tables',
+      sql: `
+        CREATE TABLE IF NOT EXISTS orchestrator_tasks (
+          task_id TEXT PRIMARY KEY,
+          prd TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+          completed_at INTEGER,
+          final_code TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_orchestrator_tasks_status ON orchestrator_tasks(status);
+        CREATE INDEX IF NOT EXISTS idx_orchestrator_tasks_created_at ON orchestrator_tasks(created_at);
+
+        CREATE TABLE IF NOT EXISTS orchestrator_task_iterations (
+          task_id TEXT NOT NULL,
+          iteration INTEGER NOT NULL,
+          spec TEXT NOT NULL,
+          antigravity_output TEXT,
+          test_result TEXT,
+          error TEXT,
+          jeeves_action TEXT,
+          duration_ms INTEGER,
+          PRIMARY KEY (task_id, iteration)
+        );
+        CREATE INDEX IF NOT EXISTS idx_orchestrator_iterations_task ON orchestrator_task_iterations(task_id);
+
+        CREATE TABLE IF NOT EXISTS orchestrator_playbooks (
+          pattern TEXT PRIMARY KEY,
+          success_rate REAL NOT NULL DEFAULT 0,
+          avg_iterations REAL NOT NULL DEFAULT 0,
+          common_errors TEXT NOT NULL DEFAULT '[]',
+          winning_spec_template TEXT,
+          last_updated INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+        );
+      `
     }
   ];
 

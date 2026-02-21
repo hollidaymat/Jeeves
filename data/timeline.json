@@ -1910,5 +1910,101 @@
     "category": "system",
     "message": "Jeeves started",
     "severity": "info"
+  },
+  {
+    "id": "evt-1771671624885-pvwk",
+    "timestamp": "2026-02-21T11:00:24.885Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Disk health check: 0 warning(s) across 2 disk(s)",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771675234478-man5",
+    "timestamp": "2026-02-21T12:00:34.478Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Log scan: 415 errors across 28 containers",
+    "severity": "warning"
+  },
+  {
+    "id": "evt-1771682445781-qbf2",
+    "timestamp": "2026-02-21T14:00:45.781Z",
+    "source": "scheduler",
+    "category": "system",
+    "message": "Image update check: 28 of 28 containers have updates available",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771691276834-eagd",
+    "timestamp": "2026-02-21T16:27:56.834Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771691550661-jr4l",
+    "timestamp": "2026-02-21T16:32:30.661Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771692036713-e97d",
+    "timestamp": "2026-02-21T16:40:36.713Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771692209964-00by",
+    "timestamp": "2026-02-21T16:43:29.964Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771692576842-ewfv",
+    "timestamp": "2026-02-21T16:49:36.842Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771692760759-348w",
+    "timestamp": "2026-02-21T16:52:40.759Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771692995408-f6j0",
+    "timestamp": "2026-02-21T16:56:35.408Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771693426139-9wly",
+    "timestamp": "2026-02-21T17:03:46.139Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
+  },
+  {
+    "id": "evt-1771694349744-bf79",
+    "timestamp": "2026-02-21T17:19:09.744Z",
+    "source": "system",
+    "category": "system",
+    "message": "Jeeves started",
+    "severity": "info"
   }
 ]

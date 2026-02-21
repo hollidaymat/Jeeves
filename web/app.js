@@ -2556,6 +2556,8 @@ class OrchestrationPanel {
     this.serveWebUrl = null;
   }
 
+  esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+
   async init() {
     try {
       const res = await fetch('/api/orchestration');
@@ -2577,6 +2579,16 @@ class OrchestrationPanel {
     }
   }
 
+  formatTaskTitle(prd) {
+    if (!prd) return '—';
+    try {
+      const o = typeof prd === 'string' ? JSON.parse(prd) : prd;
+      return o.title || o.description?.slice(0, 60) || prd.slice(0, 80);
+    } catch {
+      return prd.slice(0, 80) + (prd.length > 80 ? '…' : '');
+    }
+  }
+
   render(active, recent) {
     if (this.qaBrowserEl) {
       if (this.serveWebUrl) {
@@ -2589,9 +2601,11 @@ class OrchestrationPanel {
     }
     if (this.activeEl) {
       if (active) {
-        this.activeEl.innerHTML = `<div class="orchestration-active-task"><strong>Active:</strong> ${active.prd_title || active.task_id || '—'} | ${active.phase}${active.iteration ? ' (iteration ' + active.iteration + ')' : ''}</div>`;
+        const title = active.prd_title || this.formatTaskTitle(active.prd) || active.task_id || '—';
+        const phase = active.phase ? `${active.phase}${active.iteration ? ` (iteration ${active.iteration})` : ''}` : '';
+        this.activeEl.innerHTML = `<div class="orchestration-active-task"><div class="orchestration-active-title">${this.esc(title)}</div>${phase ? `<div class="orchestration-active-phase">${phase}</div>` : ''}</div>`;
       } else {
-        this.activeEl.innerHTML = '<div class="orchestration-idle">No active orchestration. Use the console: e.g. "build add JWT auth" or "orchestrate add rate limiting".</div>';
+        this.activeEl.innerHTML = '<div class="orchestration-idle">No active orchestration. Use the console: e.g. "build add hello endpoint" or "orchestrate add rate limiting".</div>';
       }
     }
     if (this.recentListEl) {
@@ -2601,7 +2615,8 @@ class OrchestrationPanel {
       }
       this.recentListEl.innerHTML = recent.map(t => {
         const date = t.created_at ? new Date(t.created_at * 1000).toLocaleString() : '—';
-        return `<li><span class="orchestration-status ${t.status}">${t.status}</span> ${(t.prd || '').slice(0, 60)}… — ${date}</li>`;
+        const title = this.formatTaskTitle(t.prd);
+        return `<li class="orchestration-recent-item"><span class="orchestration-status ${t.status}">${t.status}</span> <span class="orchestration-recent-title">${this.esc(title)}</span> <span class="orchestration-recent-date">${date}</span></li>`;
       }).join('');
     }
   }

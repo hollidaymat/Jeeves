@@ -1890,9 +1890,20 @@ export async function parseIntent(message: string): Promise<ParsedIntent> {
     return { action: 'agent_ask', prompt: message, confidence: 1.0 };
   }
   
-  // BUILD COMMANDS - Must check BEFORE reference resolution because "it" would be resolved
-  // to a file, breaking the pattern match
-  if (/^(?:build it|finish it|continue|build|just build|build everything|build to completion|finish building|complete the build|keep building)$/i.test(originalLower)) {
+  // "Just build it" / "go ahead" → Aider orchestrator (proceed with defaults), not Cursor autonomous build
+  if (/^(?:just\s+build\s+it|just\s+do\s+it|go\s+ahead|proceed|use\s+defaults|skip\s+questions)$/i.test(originalLower)) {
+    logger.info('Orchestration continuation (proceed with defaults)', { input: originalLower });
+    return {
+      action: 'aider_orchestrate',
+      target: 'proceed with defaults',
+      prompt: 'proceed with defaults',
+      confidence: 1.0,
+      resolutionMethod: 'pattern',
+      estimatedCost: 0,
+    };
+  }
+  // Other build commands → autonomous build (requires open project)
+  if (/^(?:build it|finish it|continue|build|build everything|build to completion|finish building|complete the build|keep building)$/i.test(originalLower)) {
     logger.info('Autonomous build command detected (pre-resolution)', { input: originalLower });
     return { action: 'autonomous_build', confidence: 1.0, resolutionMethod: 'pattern', estimatedCost: 0 };
   }

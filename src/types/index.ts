@@ -147,11 +147,10 @@ export type ActionType =
   | 'qbittorrent_add'         // Add torrent via magnet or URL
   | 'deploy_gluetun_stack'   // Copy Gluetun+qBittorrent stack to /opt/stacks and deploy (never overwrites .env)
   | 'feedback'              // User is giving feedback/preference, not requesting action
-  // Antigravity Orchestrator (build / orchestrate flow)
-  | 'antigravity_orchestrate'
-  | 'antigravity_handoff'   // Write spec only, no build (test handoff)
-  | 'antigravity_test'     // Test Jeeves–Antigravity connection
-  | 'antigravity_serve_web' // Start Antigravity serve-web for QA browser
+  // Aider Orchestrator (build / orchestrate flow)
+  | 'aider_orchestrate'
+  | 'aider_handoff'   // Write spec only, no build (test handoff)
+  | 'aider_test'     // Test Jeeves–Aider connection
   // Cursor Background Agent commands
   | 'cursor_launch'          // Launch a Cursor agent for a coding task
   | 'cursor_status'          // Check active Cursor tasks

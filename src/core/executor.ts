@@ -495,16 +495,16 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     };
   }
 
-  // ===== ANTIGRAVITY (test connection, handoff, or full orchestrate) =====
+  // ===== AIDER ORCHESTRATOR (test connection, handoff, or full orchestrate) =====
 
-  if (intent.action === 'antigravity_test') {
-    trackPatternMatch('antigravity_test');
+  if (intent.action === 'aider_test') {
+    trackPatternMatch('aider_test');
     try {
-      const { testAntigravityConnection } = await import('../core/orchestrator/antigravity-executor.js');
-      const t = testAntigravityConnection();
+      const { testAiderConnection } = await import('../core/orchestrator/aider-executor.js');
+      const t = testAiderConnection();
       return {
         success: t.ok,
-        output: t.ok ? `Antigravity: ${t.message} ${t.details ?? ''}`.trim() : `Antigravity: ${t.message}. ${t.details ?? ''}`.trim(),
+        output: t.ok ? `Aider: ${t.message} ${t.details ?? ''}`.trim() : `Aider: ${t.message}. ${t.details ?? ''}`.trim(),
         error: t.ok ? undefined : t.message,
         duration_ms: Date.now() - startTime
       };
@@ -517,33 +517,13 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     }
   }
 
-  if (intent.action === 'antigravity_serve_web') {
-    trackPatternMatch('antigravity_serve_web');
-    try {
-      const { startAntigravityServeWeb } = await import('../core/orchestrator/antigravity-executor.js');
-      const r = startAntigravityServeWeb();
-      return {
-        success: r.ok,
-        output: r.message + (r.url ? ` (Orchestration tab has the link.)` : ''),
-        error: r.ok ? undefined : r.message,
-        duration_ms: Date.now() - startTime
-      };
-    } catch (err) {
-      return {
-        success: false,
-        error: `Failed: ${err instanceof Error ? err.message : String(err)}`,
-        duration_ms: Date.now() - startTime
-      };
-    }
-  }
-
-  if (intent.action === 'antigravity_handoff') {
-    trackPatternMatch('antigravity_handoff');
+  if (intent.action === 'aider_handoff') {
+    trackPatternMatch('aider_handoff');
     const description = (intent.target ?? intent.prompt ?? '').trim();
     if (!description) {
       return {
         success: false,
-        error: 'Say what to hand off (e.g. "send to antigravity: add login" or "antigravity notes: JWT auth").',
+        error: 'Say what to hand off (e.g. "send to aider: add login" or "aider notes: JWT auth").',
         duration_ms: Date.now() - startTime
       };
     }
@@ -562,7 +542,7 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
       }
       return {
         success: result.success,
-        output: result.message + (result.spec_path ? `\n\nYou can open this in Antigravity when ready to build.` : ''),
+        output: result.message + (result.spec_path ? `\n\nUse "build ..." when ready to run Aider.` : ''),
         error: result.success ? undefined : result.message,
         duration_ms: Date.now() - startTime
       };
@@ -576,13 +556,13 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
     }
   }
 
-  if (intent.action === 'antigravity_orchestrate') {
-    trackPatternMatch('antigravity_orchestrate');
+  if (intent.action === 'aider_orchestrate') {
+    trackPatternMatch('aider_orchestrate');
     const description = (intent.target ?? intent.prompt ?? '').trim();
     if (!description) {
       return {
         success: false,
-        error: 'Please specify what to build (e.g. "build add JWT auth" or "antigravity build add login").',
+        error: 'Please specify what to build (e.g. "build add JWT auth" or "aider build add login").',
         duration_ms: Date.now() - startTime
       };
     }

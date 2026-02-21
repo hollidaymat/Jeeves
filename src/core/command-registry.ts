@@ -163,53 +163,43 @@ export const COMMAND_REGISTRY: Command[] = [
     category: 'cursor',
   },
   {
-    id: 'antigravity.test',
+    id: 'aider.test',
     patterns: [
-      /^test\s+antigravity$/i,
-      /^antigravity\s+test$/i,
-      /^antigravity\s+connection$/i,
+      /^test\s+aider$/i,
+      /^aider\s+test$/i,
+      /^aider\s+connection$/i,
     ],
     aliases: [],
-    action: 'antigravity_test',
-    examples: ['test antigravity', 'antigravity test'],
+    action: 'aider_test',
+    examples: ['test aider', 'aider test'],
     category: 'cursor',
   },
   {
-    id: 'antigravity.serve_web',
+    id: 'aider.handoff',
     patterns: [
-      /^start\s+antigravity\s+(?:browser|serve-web|qa)$/i,
-      /^antigravity\s+serve-web$/i,
-      /^antigravity\s+(?:open\s+)?(?:browser|qa)$/i,
-    ],
-    aliases: [],
-    action: 'antigravity_serve_web',
-    examples: ['start antigravity browser', 'antigravity serve-web'],
-    category: 'cursor',
-  },
-  {
-    id: 'antigravity.handoff',
-    patterns: [
-      /^(?:send\s+to\s+antigravity|antigravity\s+handoff|hand\s*off\s+to\s+antigravity|antigravity\s+notes?):?\s*(.+)$/i,
+      /^(?:send\s+to\s+aider|aider\s+handoff|hand\s*off\s+to\s+aider|aider\s+notes?):?\s*(.+)$/i,
+      /^(?:send\s+to\s+antigravity|antigravity\s+handoff|antigravity\s+notes?):?\s*(.+)$/i,
       /^draft\s+(?:prd|spec)\s+(?:for|:)\s*(.+)$/i,
     ],
     aliases: [],
-    action: 'antigravity_handoff',
+    action: 'aider_handoff',
     extract: (match) => ({ target: match[1]?.trim() || '' }),
     requiresConfirmation: false,
-    examples: ['send to antigravity: add login', 'antigravity handoff JWT auth', 'draft PRD for rate limiting'],
+    examples: ['send to aider: add login', 'aider handoff JWT auth', 'draft PRD for rate limiting'],
     category: 'cursor',
   },
   {
-    id: 'antigravity.orchestrate',
+    id: 'aider.orchestrate',
     patterns: [
-      /^(?:build|antigravity\s+(?:build|run)|orchestrate|implement|work\s+on)\s+(.+)$/i,
+      /^(?:build|aider\s+(?:build|run)|orchestrate|work\s+on)\s+(.+)$/i,
+      /^(?:send\s+to\s+aider:?\s*|have\s+aider\s+(?:build|implement|work\s+on))\s*(.+)$/i,
       /^(?:send\s+to\s+antigravity:?\s*|have\s+antigravity\s+(?:build|implement|work\s+on))\s*(.+)$/i,
     ],
     aliases: [],
-    action: 'antigravity_orchestrate',
-    extract: (match) => ({ target: (match[1] ?? match[2] ?? '').trim() }),
+    action: 'aider_orchestrate',
+    extract: (match) => ({ target: (match[1] ?? match[2] ?? match[3] ?? '').trim() }),
     requiresConfirmation: false,
-    examples: ['build JWT auth', 'antigravity build add login', 'orchestrate add rate limiting'],
+    examples: ['build JWT auth', 'aider build add login', 'orchestrate add rate limiting'],
     category: 'cursor',
   },
   {
@@ -669,6 +659,10 @@ export const COMMAND_REGISTRY: Command[] = [
       const lower = target.toLowerCase();
       if (lower.startsWith('torrent')) return { _skip: true };
       if (/error\s+handling\s+to\s+/i.test(target)) return { _skip: true };
+      // Skip when content looks like orchestration/dev clarification (endpoint, API, stack, etc.)
+      if (/endpoint|express|node\.?js|get\s+\/|post\s+\/|api\/|json|tech\s+stack|no\s+auth|public,?\s*no\s+auth/i.test(target)) return { _skip: true };
+      if (/jeeves\s+(?:web\s+)?server|signal-cursor-controller/i.test(target)) return { _skip: true };
+      if (/^(?:no\s+)?auth\.?$/i.test(target)) return { _skip: true };
       return { target };
     },
     examples: ['download inception', 'get breaking bad season 2'],

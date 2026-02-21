@@ -1,5 +1,5 @@
 /**
- * Spec generator: converts PRD + context into Antigravity-readable spec file.
+ * Spec generator: converts PRD + context into Aider-readable spec file.
  */
 
 import { generateText } from 'ai';
@@ -9,9 +9,10 @@ import { join } from 'path';
 import { config } from '../../config.js';
 import { generateId } from '../context/db.js';
 import type { PRDRequest, AntigravitySpec, Playbook } from './types.js';
+import { extractJsonFromText } from './json-utils.js';
 import { logger } from '../../utils/logger.js';
 
-const TASK_TEMP_DIR = process.env.TASK_TEMP_DIR || '/tmp/antigravity_tasks';
+const TASK_TEMP_DIR = process.env.TASK_TEMP_DIR || '/tmp/jeeves_tasks';
 
 function getTaskDir(): string {
   if (!existsSync(TASK_TEMP_DIR)) mkdirSync(TASK_TEMP_DIR, { recursive: true });
@@ -51,10 +52,10 @@ Output a single JSON object with these exact keys (all strings except arrays):
 - title: short title
 - description: 2-4 sentence summary
 - acceptance_criteria: array of strings (checkable items)
-- files_to_modify: array of file paths likely to change
+- files_to_modify: array of file paths. For Jeeves web server (Express): src/interfaces/web.ts. Add API routes in setupRoutes().
 - files_to_create: array of new files to create
 - dependencies: array of libs/services
-- test_command: e.g. "npm test" or "npm run test -- auth"
+- test_command: For API/endpoint tasks use "npm test" (server must restart to load new routes; do NOT use curl). Otherwise "npm test" or "npm run test -- <suite>".
 - estimated_complexity: "low" | "medium" | "high"
 - context: object with architecture_notes (string), existing_patterns (array of strings), gotchas (array of strings)
 
@@ -70,7 +71,7 @@ Be concrete: real paths, real test commands.`;
       prompt,
       maxTokens: 2000,
     });
-    const trimmed = text.trim().replace(/^```json?\s*|\s*```$/g, '');
+    const trimmed = extractJsonFromText(text);
     const raw = JSON.parse(trimmed) as Record<string, unknown>;
     const spec: AntigravitySpec = {
       task_id: String(raw.task_id ?? task_id),
@@ -119,11 +120,11 @@ Be concrete: real paths, real test commands.`;
 }
 
 /**
- * Write spec to markdown file for Antigravity CLI.
+ * Write spec to markdown file for Aider CLI.
  */
 export function writeSpecFile(spec: AntigravitySpec): string {
   const dir = getTaskDir();
-  const path = join(dir, `antigravity_task_${spec.task_id}.md`);
+  const path = join(dir, `jeeves_task_${spec.task_id}.md`);
   const body = `# Task: ${spec.title}
 
 ## Description

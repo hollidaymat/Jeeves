@@ -37,6 +37,11 @@ export async function analyzePRD(prd: PRDRequest): Promise<PRDIntakeResult> {
     ? prd.acceptance_criteria.map((c) => `- ${c}`).join('\n')
     : '(none provided)';
 
+  // Short continuation phrases = user wants to proceed without more questions
+  if (/^(?:just\s+build\s+it|just\s+do\s+it|go\s+ahead|proceed|use\s+defaults|skip\s+questions|make\s+it\s+work)$/i.test(prd.description?.trim() || '')) {
+    return { ready: true, questions: [] };
+  }
+
   const prompt = `You are analyzing a Product Requirements Document (PRD) before implementation.
 
 PRD TITLE: ${prd.title}
@@ -49,9 +54,9 @@ ${criteriaBlock}
 
 ${contextBlock ? `CODEBASE CONTEXT (for reference):\n${contextBlock}\n` : ''}
 
-If this PRD is clear enough to implement (we have enough detail on what to build, which files might change, and how to test), respond with exactly: {"questions": []}
+BIAS TOWARD READY. If the user has specified: target service/app, endpoint path (or similar), HTTP method, and response format, respond with exactly: {"questions": []}. Do NOT ask about: error handling, logging, code conventions, edge cases, or "existing vs new" when it's obvious. Assume reasonable defaults.
 
-If important details are missing (e.g. which endpoints, auth approach, response format, error handling), list 2-5 specific clarifying questions as a JSON array. Example: {"questions": ["Should this be a new /api/xyz or extend existing /api/foo?", "Store API key in env or secrets manager?"]}
+Only ask questions when the PRD is genuinely ambiguous (e.g. conflicting requirements, missing which of 2+ services, no idea what to build). Prefer 0-2 questions max. If in doubt, respond with {"questions": []}.
 
 Respond with ONLY valid JSON: {"questions": ["..."]}`;
 

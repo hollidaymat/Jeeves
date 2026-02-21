@@ -2563,3 +2563,21 @@ body::before {
 .note-date { color: var(--text-dim); }
 .note-card .note-actions { grid-column: 2; grid-row: 1 / -1; align-self: start; }
 .note-delete-btn { font-size: 0.7rem; padding: 4px 8px; }
+
+/* ============================================================================
+   Orchestration Tab
+   ============================================================================ */
+.orchestration-page { padding: 16px; }
+.orchestration-active, .orchestration-recent { margin-bottom: 16px; }
+.orchestration-active-title { font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
+.orchestration-active-phase { font-size: 0.85rem; color: var(--accent-cyan); }
+.orchestration-idle { color: var(--text-secondary); font-size: 0.9rem; }
+.orchestration-recent h3 { font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 8px; letter-spacing: 1px; }
+.orchestration-recent-list { list-style: none; }
+.orchestration-recent-item { padding: 8px 0; border-bottom: 1px solid var(--border-color); font-size: 0.85rem; display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.orchestration-status { font-size: 0.7rem; padding: 2px 6px; border-radius: 3px; font-weight: 600; text-transform: uppercase; }
+.orchestration-status.success { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+.orchestration-status.escalated { background: rgba(239, 68, 68, 0.2); color: var(--error); }
+.orchestration-status.in_progress { background: rgba(34, 211, 238, 0.2); color: var(--accent-cyan); }
+.orchestration-recent-title { flex: 1; min-width: 0; color: var(--text-primary); }
+.orchestration-recent-date { font-size: 0.75rem; color: var(--text-dim); }

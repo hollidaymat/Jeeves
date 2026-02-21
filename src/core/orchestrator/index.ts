@@ -1,11 +1,11 @@
 /**
- * Antigravity Orchestrator: main entrypoint.
- * PRD -> intake -> spec -> execute (Antigravity) -> validate -> iterate or escalate -> record.
+ * Aider Orchestrator: main entrypoint.
+ * PRD -> intake -> spec -> execute (Aider) -> validate -> iterate or escalate -> record.
  */
 
 import { analyzePRD } from './prd-intake.js';
 import { generateSpec, writeSpecFile } from './spec-generator.js';
-import { executeWithAntigravity } from './antigravity-executor.js';
+import { executeWithAider, runTestsAfterAider } from './aider-executor.js';
 import { validateAndIterate } from './validator.js';
 import { getRelevantPlaybooks } from './learnings-applier.js';
 import { recordIteration, recordTask } from '../observer/interaction-recorder.js';
@@ -15,6 +15,8 @@ import { logger } from '../../utils/logger.js';
 const MAX_ITERATIONS = parseInt(process.env.MAX_ITERATIONS || '3', 10) || 3;
 
 let currentTask: { task_id: string; phase: string; iteration?: number; prd_title?: string } | null = null;
+/** When we return needsClarification, store PRD so "just build it" can reuse it. */
+let lastClarificationPRD: PRDRequest | null = null;
 
 export function getActiveOrchestrationTask(): typeof currentTask {
   return currentTask;
@@ -30,8 +32,17 @@ export interface OrchestrateOptions {
  * With handoffOnly (or ANTIGRAVITY_HANDOFF_ONLY): stop after writing spec, return spec_path.
  */
 export async function orchestrate(prd: PRDRequest, options?: OrchestrateOptions): Promise<OrchestrationResult> {
-  const handoffOnly = options?.handoffOnly ?? (process.env.ANTIGRAVITY_HANDOFF_ONLY === 'true');
+  const handoffOnly = options?.handoffOnly ?? (process.env.AIDER_HANDOFF_ONLY === 'true');
   const { broadcastToWeb } = await import('../../integrations/cursor-orchestrator.js').catch(() => ({ broadcastToWeb: () => {} }));
+
+  // "proceed with defaults" = reuse PRD from last clarification (user said "just build it")
+  if (/^proceed with defaults$/i.test(prd.description?.trim() || '')) {
+    if (lastClarificationPRD) {
+      prd = lastClarificationPRD;
+      lastClarificationPRD = null;
+      logger.debug('[orchestrator] Reusing last clarification PRD', { title: prd.title });
+    }
+  }
   const emit = (phase: string, data: unknown) => {
     try {
       broadcastToWeb('orchestration_phase', { phase, ...(typeof data === 'object' && data !== null ? data : { data }) });
@@ -42,6 +53,7 @@ export async function orchestrate(prd: PRDRequest, options?: OrchestrateOptions)
 
   const intake = await analyzePRD(prd);
   if (!intake.ready && intake.questions.length > 0) {
+    lastClarificationPRD = prd;
     return {
       success: false,
       needsClarification: true,
@@ -65,22 +77,30 @@ export async function orchestrate(prd: PRDRequest, options?: OrchestrateOptions)
       success: true,
       task_id: spec.task_id,
       status: 'handoff',
-      message: `Spec ready. No build run. Open in Antigravity when you want to build.\nSpec: ${specPath}`,
+      message: `Spec ready. No build run. Use "build ..." when you want to run Aider.\nSpec: ${specPath}`,
       spec_path: specPath,
     };
   }
 
   let iteration = 1;
   let lastSpec = spec;
-  let totalDuration = 0;
-  let serveWebUrl: string | undefined;
 
   while (iteration <= MAX_ITERATIONS) {
-    currentTask = { task_id: spec.task_id, phase: 'antigravity_run', iteration, prd_title: prd.title };
-    emit('antigravity_run', { iteration, task_id: spec.task_id });
-    const execution = await executeWithAntigravity(lastSpec);
-    if (execution.serve_web_url) serveWebUrl = execution.serve_web_url;
-    totalDuration += execution.duration_ms;
+    currentTask = { task_id: spec.task_id, phase: 'aider_run', iteration, prd_title: prd.title };
+    emit('aider_run', { iteration, task_id: spec.task_id });
+    let execution = await executeWithAider(lastSpec);
+    if (execution.test_results?.output !== 'stub' && (execution.status === 'completed' || !execution.test_results?.error)) {
+      const realTests = runTestsAfterAider(lastSpec);
+      execution = {
+        ...execution,
+        status: realTests.passed ? 'completed' : 'failed',
+        test_results: {
+          passed: realTests.passed,
+          error: realTests.error,
+          output: realTests.output,
+        },
+      };
+    }
     recordIteration({
       task_id: spec.task_id,
       iteration,
@@ -90,7 +110,7 @@ export async function orchestrate(prd: PRDRequest, options?: OrchestrateOptions)
       error: execution.test_results.error,
       duration_ms: execution.duration_ms,
     });
-    emit('validation', { iteration, passed: execution.test_results.passed, serve_web_url: serveWebUrl });
+    emit('validation', { iteration, passed: execution.test_results.passed });
 
     const validation = await validateAndIterate(lastSpec, execution, iteration);
     if (validation.status === 'success') {
@@ -105,7 +125,7 @@ export async function orchestrate(prd: PRDRequest, options?: OrchestrateOptions)
         success: true,
         task_id: spec.task_id,
         status: 'success',
-        message: serveWebUrl ? `${successMsg}\n\nWatch in browser: ${serveWebUrl}` : successMsg,
+        message: successMsg,
         iteration_count: iteration,
         final_code: execution.stdout?.slice(-4000),
       };
@@ -121,11 +141,11 @@ export async function orchestrate(prd: PRDRequest, options?: OrchestrateOptions)
         success: false,
         task_id: spec.task_id,
         status: 'escalated',
-        message: serveWebUrl ? `${escalateMsg}\n\nWatch in browser: ${serveWebUrl}` : escalateMsg,
+        message: escalateMsg,
         iteration_count: iteration,
       };
     }
-    if (validation.action === 'antigravity_retry' && validation.feedback) {
+    if (validation.action === 'aider_retry' && validation.feedback) {
       lastSpec = { ...lastSpec, context: { ...lastSpec.context, gotchas: [...lastSpec.context.gotchas, validation.feedback] } };
       writeSpecFile(lastSpec);
     }
@@ -139,7 +159,7 @@ export async function orchestrate(prd: PRDRequest, options?: OrchestrateOptions)
     success: false,
     task_id: spec.task_id,
     status: 'escalated',
-    message: serveWebUrl ? `${finalMsg}\n\nWatch in browser: ${serveWebUrl}` : finalMsg,
+    message: finalMsg,
     iteration_count: MAX_ITERATIONS,
   };
 }

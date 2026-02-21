@@ -6,12 +6,13 @@ import { generateText } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { config } from '../../config.js';
 import type { AntigravitySpec, ExecutionResult, IterationResult } from './types.js';
+import { extractJsonFromText } from './json-utils.js';
 import { logger } from '../../utils/logger.js';
 
 const MAX_ITERATIONS = parseInt(process.env.MAX_ITERATIONS || '3', 10) || 3;
 
 /**
- * Validate execution and decide next step: success, retry (Jeeves fix or Antigravity retry), or escalate.
+ * Validate execution and decide next step: success, retry (Jeeves fix or Aider retry), or escalate.
  */
 export async function validateAndIterate(
   spec: AntigravitySpec,
@@ -48,15 +49,15 @@ export async function validateAndIterate(
   return {
     status: 'retry',
     iteration: iteration + 1,
-    action: 'antigravity_retry',
-    feedback: errorAnalysis.feedback_for_antigravity,
+    action: 'aider_retry',
+    feedback: errorAnalysis.feedback_for_aider,
   };
 }
 
 async function analyzeTestFailure(errorOutput: string): Promise<{
   type: 'simple_fix' | 'complex';
   suggested_fix?: string;
-  feedback_for_antigravity?: string;
+  feedback_for_aider?: string;
 }> {
   const prompt = `Test failure output from a code generation run:
 
@@ -66,7 +67,7 @@ ${errorOutput.slice(-3000)}
 
 If this looks like a small fix (single typo, wrong import, one-line logic error), respond with JSON: {"type":"simple_fix","suggested_fix":"concrete one-line or short fix description"}
 
-If it needs design or multi-file changes, respond with JSON: {"type":"complex","feedback_for_antigravity":"Clear instructions for the code generator on what went wrong and what to do differently"}`;
+If it needs design or multi-file changes, respond with JSON: {"type":"complex","feedback_for_aider":"Clear instructions for the code generator on what went wrong and what to do differently"}`;
 
   try {
     const anthropic = createAnthropic({
@@ -78,14 +79,14 @@ If it needs design or multi-file changes, respond with JSON: {"type":"complex","
       prompt,
       maxTokens: 400,
     });
-    const trimmed = text.trim().replace(/^```json?\s*|\s*```$/g, '');
-    const parsed = JSON.parse(trimmed) as { type?: string; suggested_fix?: string; feedback_for_antigravity?: string };
+    const trimmed = extractJsonFromText(text);
+    const parsed = JSON.parse(trimmed) as { type?: string; suggested_fix?: string; feedback_for_aider?: string };
     if (parsed.type === 'simple_fix' && parsed.suggested_fix) {
       return { type: 'simple_fix', suggested_fix: parsed.suggested_fix };
     }
-    return { type: 'complex', feedback_for_antigravity: parsed.feedback_for_antigravity ?? errorOutput.slice(-500) };
+    return { type: 'complex', feedback_for_aider: parsed.feedback_for_aider ?? errorOutput.slice(-500) };
   } catch (e) {
     logger.warn('[orchestrator] Validator LLM failed', { error: String(e) });
-    return { type: 'complex', feedback_for_antigravity: `Previous run failed: ${errorOutput.slice(-500)}` };
+    return { type: 'complex', feedback_for_aider: `Previous run failed: ${errorOutput.slice(-500)}` };
   }
 }

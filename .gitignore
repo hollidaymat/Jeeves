@@ -56,3 +56,4 @@ data/capabilities.md
 # Jeeves backup files
 .jeeves-backup/
 *.jeeves-tmp
+.aider*

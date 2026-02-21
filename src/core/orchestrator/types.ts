@@ -1,5 +1,5 @@
 /**
- * Antigravity Orchestrator types
+ * Aider Orchestrator types
  * Shared across PRD intake, spec generator, executor, validator, observer.
  */
 
@@ -42,7 +42,7 @@ export interface ExecutionResult {
   duration_ms: number;
   stdout?: string;
   stderr?: string;
-  /** When ANTIGRAVITY_SERVE_WEB=true, URL to open in browser for QA. */
+  /** Deprecated: legacy serve-web URL (Aider has no browser QA). */
   serve_web_url?: string;
 }
 
@@ -54,7 +54,7 @@ export interface IterationResult {
   error?: string;
   message?: string;
   iteration?: number;
-  action?: 'jeeves_fixes' | 'antigravity_retry';
+  action?: 'jeeves_fixes' | 'aider_retry';
   fix?: string;
   feedback?: string;
 }
@@ -68,7 +68,7 @@ export interface OrchestrationResult {
   message: string;
   iteration_count?: number;
   final_code?: string;
-  /** Set when handoffOnly: spec file path for Antigravity. */
+  /** Set when handoffOnly: spec file path for Aider. */
   spec_path?: string;
 }
 

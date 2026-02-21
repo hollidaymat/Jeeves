@@ -435,18 +435,32 @@ export class WebInterface implements MessageInterface {
       }
     });
 
-    // API: Antigravity orchestration (active task + recent tasks + QA browser URL)
+    // API: Aider orchestration task detail (includes Aider chat/output per iteration) — must be before /api/orchestration
+    this.app.get('/api/orchestration/:taskId', async (req: Request, res: Response) => {
+      try {
+        const { getInteractionRecord } = await import('../core/observer/interaction-recorder.js');
+        const record = getInteractionRecord(req.params.taskId);
+        if (!record) {
+          res.status(404).json({ error: 'Task not found' });
+          return;
+        }
+        res.json(record);
+      } catch (error) {
+        logger.error('Orchestration task detail failed', { taskId: req.params.taskId, error: String(error) });
+        res.status(500).json({ error: String(error) });
+      }
+    });
+
+    // API: Aider orchestration (active task + recent tasks)
     this.app.get('/api/orchestration', async (_req: Request, res: Response) => {
       try {
         const { getActiveOrchestrationTask } = await import('../core/orchestrator/index.js');
         const { listRecentTasks } = await import('../core/observer/interaction-recorder.js');
-        const { getServeWebUrl } = await import('../core/orchestrator/antigravity-executor.js');
         const active = getActiveOrchestrationTask();
         const recent = listRecentTasks(20);
-        const serve_web_url = getServeWebUrl();
-        res.json({ active, recent, serve_web_url: serve_web_url ?? undefined });
+        res.json({ active, recent });
       } catch (error) {
-        res.json({ active: null, recent: [], serve_web_url: undefined });
+        res.json({ active: null, recent: [] });
       }
     });
 

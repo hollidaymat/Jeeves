@@ -3,7 +3,7 @@
  * Analyzes PRD against codebase context and returns clarifying questions if needed.
  */
 
-import { generateText } from 'ai';
+import { generateText } from '../llm/traced-llm.js';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { config } from '../../config.js';
 import { assembleContextWithFallback, formatContextForPrompt, agenticRetrieve } from '../context/index.js';

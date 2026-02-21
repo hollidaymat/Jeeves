@@ -5,7 +5,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { createAnthropic } from '@ai-sdk/anthropic';
-import { generateText } from 'ai';
+import { generateText } from '../../core/llm/traced-llm.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
 

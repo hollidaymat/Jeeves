@@ -1,13 +1,14 @@
 /**
  * Agentic RAG Context Retriever
  *
- * Iterative retrieval with confidence scoring. Adapted from ai-engineering-hub/agentic_rag.
+ * Iterative retrieval with confidence scoring. Uses ai-engineering-hub patterns.
  * Input: PRD/task description. Output: structured context for planner.
- * Uses existing assembleContext; adds "is context sufficient?" validation loop.
+ * Uses assembleContext + Firecrawl web fallback (@mendable/firecrawl-js) when context insufficient.
  */
 
-import { generateText } from 'ai';
+import { generateText } from '../llm/traced-llm.js';
 import { createAnthropic } from '@ai-sdk/anthropic';
+import Firecrawl from '@mendable/firecrawl-js';
 import { config } from '../../config.js';
 import { assembleContext, formatContextForPrompt } from './index.js';
 import { getDb, generateId } from './db.js';
@@ -62,6 +63,17 @@ export async function agenticRetrieve(input: AgenticRetrieveInput): Promise<Agen
       break;
     }
     if (validation.missing && round < MAX_ROUNDS) {
+      const webContext = await firecrawlWebFallback(input.taskDescription, validation.missing);
+      if (webContext) {
+        lastContext = lastContext + '\n\n## Web Search Results\n' + webContext;
+        sources.push('firecrawl');
+        const revalidate = await validateContextSufficiency(lastContext, input.taskDescription, round + 1);
+        finalConfidence = revalidate.confidence;
+        if (revalidate.sufficient || revalidate.confidence >= CONFIDENCE_THRESHOLD) {
+          round = round + 1;
+          break;
+        }
+      }
       input.taskDescription = `${input.taskDescription}\n\nAdditional context needed: ${validation.missing}`;
     }
   }
@@ -132,6 +144,32 @@ Bias: If context has project files, schema, or patterns, confidence should be >=
   } catch (e) {
     logger.warn('[agentic-retriever] Validation LLM failed, assuming sufficient', { error: String(e) });
     return { sufficient: true, confidence: 0.7 };
+  }
+}
+
+async function firecrawlWebFallback(taskDescription: string, missing: string): Promise<string | null> {
+  if (!process.env.FIRECRAWL_API_KEY) return null;
+  try {
+    const firecrawl = new Firecrawl({ apiKey: process.env.FIRECRAWL_API_KEY });
+    const query = `${taskDescription.slice(0, 100)} ${missing}`.trim();
+    const data = await firecrawl.search(query, {
+      limit: 3,
+      sources: ['web'],
+      scrapeOptions: { formats: ['markdown'] },
+    });
+    const web = data?.web ?? [];
+    const chunks: string[] = [];
+    for (const item of web) {
+      const doc = item as { url?: string; markdown?: string; title?: string; description?: string };
+      const text = doc.markdown ?? [doc.title, doc.description].filter(Boolean).join(': ');
+      if (text) chunks.push(`### ${doc.url || 'Source'}\n${text.slice(0, 2000)}`);
+    }
+    if (chunks.length === 0) return null;
+    logger.debug('[agentic-retriever] Firecrawl web fallback', { query: query.slice(0, 60), results: chunks.length });
+    return chunks.join('\n\n');
+  } catch (e) {
+    logger.warn('[agentic-retriever] Firecrawl fallback failed', { error: String(e) });
+    return null;
   }
 }
 

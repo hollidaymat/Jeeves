@@ -10,7 +10,7 @@ import { parse as parseYaml } from 'yaml';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { logger } from '../utils/logger.js';
-import { generateText } from 'ai';
+import { generateText } from './llm/traced-llm.js';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { trackLLMUsage } from './cost-tracker.js';
 import { config } from '../config.js';

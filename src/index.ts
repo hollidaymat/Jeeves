@@ -511,7 +511,10 @@ async function main() {
         const { stopScheduler } = await import('./capabilities/scheduler/engine.js');
         stopScheduler();
       } catch {}
-    
+      try {
+        const { flushOpik } = await import('./core/llm/opik-tracer.js');
+        await Promise.race([flushOpik(), new Promise((r) => setTimeout(r, 1500))]);
+      } catch {}
     process.exit(0);
   };
 

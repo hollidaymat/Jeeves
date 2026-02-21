@@ -6,7 +6,7 @@
  * Rule: Design decisions should be traceable to product requirements.
  */
 
-import { generateText } from 'ai';
+import { generateText } from '../llm/traced-llm.js';
 import { anthropic } from '@ai-sdk/anthropic';
 import type { AestheticName } from './aesthetic-presets.js';
 import type { LayoutPatternName } from './layout-patterns.js';

@@ -3,7 +3,7 @@
  * LLM calls for development tasks: assess, plan, analyze failure.
  */
 
-import { generateText } from 'ai';
+import { generateText } from '../core/llm/traced-llm.js';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';

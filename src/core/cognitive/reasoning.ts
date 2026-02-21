@@ -8,7 +8,7 @@
  * - ACT: Execute with checkpoints
  */
 
-import { generateText } from 'ai';
+import { generateText } from '../llm/traced-llm.js';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';

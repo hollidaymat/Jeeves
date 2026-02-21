@@ -11,7 +11,7 @@
 
 import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
-import { generateText } from 'ai';
+import { generateText } from '../llm/traced-llm.js';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { trackLLMUsage } from '../cost-tracker.js';
 import { exec } from 'child_process';

@@ -4,7 +4,7 @@
  * since `cursor agent` requires interactive terminal
  */
 
-import { generateText, streamText } from 'ai';
+import { generateText, streamText } from './llm/traced-llm.js';
 import { createAnthropic } from '@ai-sdk/anthropic';
 
 // Streaming callback for real-time updates

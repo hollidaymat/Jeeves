@@ -48,6 +48,8 @@ export interface AssembledContext {
   learnings?: Learning[];
   runtime?: RuntimeSnapshot;
   project?: ProjectContext;
+  /** Zep long-horizon memory (when ZEP_API_URL set) */
+  zep?: string;
 }
 
 export interface ContextResult {
@@ -356,6 +358,28 @@ export async function assembleContext(task: TaskContext): Promise<ContextResult>
         layersIncluded.push('project');
       }
     }
+
+    // Zep long-horizon memory (optional, when ZEP_API_URL + ZEP_API_KEY set)
+    const needsZep = (needsProject || tier === 'full') && task.projectPath;
+    if (needsZep && tokensUsed < tokenBudget * 0.9) {
+      try {
+        const { isZepAvailable, getZepMemoryContext } = await import('../memory/zep-client.js');
+        if (isZepAvailable()) {
+          const sessionId = task.projectPath!.replace(/[/\\]+/g, '_').slice(0, 100) || 'default';
+          const zepCtx = await withTimeout(getZepMemoryContext(sessionId), LAYER_TIMEOUT_MS);
+          if (zepCtx?.recentMessages) {
+            const zepTokens = estimateTokens(zepCtx.recentMessages);
+            if (tokensUsed + zepTokens <= tokenBudget) {
+              context.zep = zepCtx.recentMessages;
+              tokensUsed += zepTokens;
+              layersIncluded.push('zep');
+            }
+          }
+        }
+      } catch (e) {
+        logger.debug('[assembler] Zep layer skipped', { error: String(e) });
+      }
+    }
   } catch (error) {
     logger.error('Context assembly error', { error: String(error) });
   }
@@ -449,6 +473,10 @@ export function formatContextForPrompt(result: ContextResult): string {
     if (projectParts.length > 0) {
       parts.push(`## Project Context\n${projectParts.join('\n\n')}`);
     }
+  }
+
+  if (result.layers.zep) {
+    parts.push(`## Long-Horizon Memory (Zep)\n${result.layers.zep}`);
   }
 
   if (parts.length === 0) return '';

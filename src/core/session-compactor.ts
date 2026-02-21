@@ -8,7 +8,7 @@
  * 3. Keeps recent messages intact
  */
 
-import { generateText } from 'ai';
+import { generateText } from './llm/traced-llm.js';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { logger } from '../utils/logger.js';
 import { 

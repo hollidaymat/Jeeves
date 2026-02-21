@@ -364,7 +364,7 @@ async function analyzeDelivery(context: {
   previousIssues: string[];
 }): Promise<AnalysisResult> {
   try {
-    const { generateText } = await import('ai');
+    const { generateText } = await import('../core/llm/traced-llm.js');
     const { createAnthropic } = await import('@ai-sdk/anthropic');
     const provider = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
 

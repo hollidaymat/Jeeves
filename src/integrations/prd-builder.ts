@@ -8,7 +8,7 @@
  * Flow: concept → discovery questions → research → drafting → refinement → finalize
  */
 
-import { generateText } from 'ai';
+import { generateText } from '../core/llm/traced-llm.js';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { logger } from '../utils/logger.js';
 import { config } from '../config.js';

@@ -2,7 +2,7 @@
  * Validator: check execution result, decide success / retry / escalate.
  */
 
-import { generateText } from 'ai';
+import { generateText } from '../llm/traced-llm.js';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { config } from '../../config.js';
 import type { AntigravitySpec, ExecutionResult, IterationResult } from './types.js';

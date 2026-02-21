@@ -961,7 +961,7 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
         }
 
         try {
-          const { generateText } = await import('ai');
+          const { generateText } = await import('./llm/traced-llm.js');
           const { createAnthropic } = await import('@ai-sdk/anthropic');
           const provider = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
 

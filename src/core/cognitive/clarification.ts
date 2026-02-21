@@ -10,7 +10,7 @@
  * Max 3 questions per clarification. If more needed, ask 1 meta-question.
  */
 
-import { generateText } from 'ai';
+import { generateText } from '../llm/traced-llm.js';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { logger } from '../../utils/logger.js';
 import { trackLLMUsage } from '../cost-tracker.js';

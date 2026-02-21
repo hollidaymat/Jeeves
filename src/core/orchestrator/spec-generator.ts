@@ -2,7 +2,7 @@
  * Spec generator: converts PRD + context into Aider-readable spec file.
  */
 
-import { generateText } from 'ai';
+import { generateText } from '../llm/traced-llm.js';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';

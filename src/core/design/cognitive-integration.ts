@@ -6,7 +6,7 @@
  * Observe -> Orient -> Decide -> Act applied to design tasks.
  */
 
-import { generateText } from 'ai';
+import { generateText } from '../llm/traced-llm.js';
 import { anthropic } from '@ai-sdk/anthropic';
 import type { AestheticName, AestheticPreset } from './aesthetic-presets.js';
 import { getAestheticPreset, recommendAesthetic } from './aesthetic-presets.js';

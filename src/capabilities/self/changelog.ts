@@ -97,7 +97,7 @@ async function generateProjectChangelog(
     const budgetCheck = enforceBudget('changelog');
     if (budgetCheck.allowed) {
       try {
-        const { generateText } = await import('ai');
+        const { generateText } = await import('../../core/llm/traced-llm.js');
         const { createAnthropic } = await import('@ai-sdk/anthropic');
         const provider = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
 

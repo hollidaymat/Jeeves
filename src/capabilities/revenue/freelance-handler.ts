@@ -5,7 +5,7 @@
  * feasibility based on our known stack and templates.
  */
 
-import { generateText } from 'ai';
+import { generateText } from '../../core/llm/traced-llm.js';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';

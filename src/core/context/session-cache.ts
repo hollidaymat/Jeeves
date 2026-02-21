@@ -1,7 +1,11 @@
 /**
  * Context session cache: reuse assembled context for the same topic within TTL.
  * Reduces repeated 6-layer assembly when the user sends follow-up messages.
+ * Supports project-scoped keys and optional disk persistence.
  */
+
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { join } from 'path';
 
 export interface ContextSession {
   id: string;
@@ -12,11 +16,14 @@ export interface ContextSession {
   createdAt: number;
   lastAccessedAt: number;
   hitCount: number;
+  projectPath?: string;
+  action?: string;
 }
 
 const sessions = new Map<string, ContextSession>();
-const SESSION_TTL = 5 * 60 * 1000; // 5 minutes
-const MAX_SESSIONS = 10;
+const SESSION_TTL = parseInt(process.env.CONTEXT_CACHE_TTL_MS || '900000', 10) || 15 * 60 * 1000; // 15 min default
+const MAX_SESSIONS = parseInt(process.env.CONTEXT_CACHE_MAX_SESSIONS || '20', 10) || 20;
+const CACHE_FILE = join(process.cwd(), 'data', 'context-cache.json');
 
 const STOP_WORDS = new Set([
   'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
@@ -37,6 +44,13 @@ export function getTopicFingerprint(message: string): string {
   return words.join('_');
 }
 
+function buildCacheKey(message: string, projectPath?: string, action?: string): string {
+  const fingerprint = getTopicFingerprint(message);
+  const proj = (projectPath || '').replace(/\//g, '_');
+  const act = action || '';
+  return `${proj}|${act}|${fingerprint}`;
+}
+
 function topicSimilarity(a: string, b: string): number {
   const setA = new Set(a.split('_'));
   const setB = new Set(b.split('_'));
@@ -45,18 +59,29 @@ function topicSimilarity(a: string, b: string): number {
   return union.size === 0 ? 0 : intersection.size / union.size;
 }
 
-export function getCachedSession(message: string): ContextSession | null {
-  const fingerprint = getTopicFingerprint(message);
+export interface GetCachedSessionOptions {
+  projectPath?: string;
+  action?: string;
+}
+
+export function getCachedSession(message: string, options?: GetCachedSessionOptions): ContextSession | null {
+  loadFromDisk();
+  const key = buildCacheKey(message, options?.projectPath, options?.action);
   const now = Date.now();
 
-  for (const [key, session] of sessions) {
+  for (const [k, session] of sessions) {
     if (now - session.lastAccessedAt > SESSION_TTL) {
-      sessions.delete(key);
+      sessions.delete(k);
     }
   }
 
-  for (const [key, session] of sessions) {
-    if (key === fingerprint || topicSimilarity(key, fingerprint) > 0.7) {
+  const parts = key.split('|');
+  const fingerprint = parts.slice(2).join('|');
+  for (const [k, session] of sessions) {
+    const kParts = k.split('|');
+    const kFingerprint = kParts.slice(2).join('|');
+    const sameProjAct = kParts[0] === parts[0] && kParts[1] === parts[1];
+    if (sameProjAct && (k === key || topicSimilarity(kFingerprint, fingerprint) > 0.7)) {
       session.lastAccessedAt = now;
       session.hitCount++;
       return session;
@@ -66,13 +91,19 @@ export function getCachedSession(message: string): ContextSession | null {
   return null;
 }
 
+export interface CacheSessionOptions {
+  projectPath?: string;
+  action?: string;
+}
+
 export function cacheSession(
   message: string,
   assembledContext: string,
   layersLoaded: string[],
-  tokensUsed: number
+  tokensUsed: number,
+  options?: CacheSessionOptions
 ): void {
-  const fingerprint = getTopicFingerprint(message);
+  const key = buildCacheKey(message, options?.projectPath, options?.action);
 
   if (sessions.size >= MAX_SESSIONS) {
     let oldest: [string, ContextSession] | null = null;
@@ -84,16 +115,19 @@ export function cacheSession(
     if (oldest) sessions.delete(oldest[0]);
   }
 
-  sessions.set(fingerprint, {
+  sessions.set(key, {
     id: `session_${Date.now()}`,
-    topic: fingerprint,
+    topic: key,
     assembledContext,
     layersLoaded,
     tokensUsed,
     createdAt: Date.now(),
     lastAccessedAt: Date.now(),
     hitCount: 1,
+    projectPath: options?.projectPath,
+    action: options?.action,
   });
+  persistToDisk();
 }
 
 export function invalidateSessionsForFile(filePath: string): void {
@@ -103,5 +137,49 @@ export function invalidateSessionsForFile(filePath: string): void {
     if (key.includes(fileName)) {
       sessions.delete(key);
     }
+  }
+  persistToDisk();
+}
+
+export function invalidateSessionsForProject(projectPath: string): void {
+  const proj = projectPath.replace(/\//g, '_');
+  for (const [key] of sessions) {
+    if (key.startsWith(proj + '|')) {
+      sessions.delete(key);
+    }
+  }
+  persistToDisk();
+}
+
+let loadAttempted = false;
+
+function loadFromDisk(): void {
+  if (loadAttempted || process.env.CONTEXT_CACHE_PERSIST !== 'true') return;
+  loadAttempted = true;
+  try {
+    if (existsSync(CACHE_FILE)) {
+      const raw = readFileSync(CACHE_FILE, 'utf-8');
+      const data = JSON.parse(raw) as Array<{ key: string; session: ContextSession }>;
+      const cutoff = Date.now() - SESSION_TTL;
+      for (const { key, session } of data) {
+        if (session.lastAccessedAt > cutoff && sessions.size < MAX_SESSIONS) {
+          sessions.set(key, session);
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function persistToDisk(): void {
+  if (process.env.CONTEXT_CACHE_PERSIST !== 'true') return;
+  try {
+    const dir = join(process.cwd(), 'data');
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const data = Array.from(sessions.entries()).map(([key, session]) => ({ key, session }));
+    writeFileSync(CACHE_FILE, JSON.stringify(data), 'utf-8');
+  } catch {
+    // ignore
   }
 }

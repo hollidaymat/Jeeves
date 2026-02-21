@@ -19,7 +19,7 @@ import { getProjectIndex, listProjects } from '../core/project-scanner.js';
 import { getPendingChanges, setStreamCallback } from '../core/cursor-agent.js';
 import { exportConversations, clearGeneralConversations, addGeneralMessage } from '../core/memory.js';
 import { onCheckpoint, getExecutionStatus } from '../core/prd-executor.js';
-import { getLastTrace, getTraceById, getTraceStats, getRecentReasoningTraces, getReasoningTraceById, getCurrentReasoningTrace } from '../core/ooda-logger.js';
+import { getLastTrace, getTraceById, getTraceStats, getRecentReasoningTraces, getReasoningTraceById, getCurrentReasoningTrace, getLastTraceUnified, getRecentReasoningTracesUnified } from '../core/ooda-logger.js';
 import { recordScenarioRun, getGrowthStats, getRecentOodaJournal, recordRunSummary, getGrowthTrend } from '../core/growth-tracker.js';
 import { applyScenarioFailure, applyScenarioSuccess } from '../core/context/layers/learnings.js';
 import { getLastExecutionOutcome, getExecutionLog } from '../core/execution-logger.js';
@@ -631,7 +631,9 @@ export class WebInterface implements MessageInterface {
     });
     this.app.get('/api/reasoning/traces', (req: Request, res: Response) => {
       const limit = Math.min(parseInt(String(req.query.limit), 10) || 20, 50);
-      res.json(getRecentReasoningTraces(limit));
+      const unified = req.query.unified === '1' || req.query.unified === 'true';
+      const traces = unified ? getRecentReasoningTracesUnified(limit) : getRecentReasoningTraces(limit);
+      res.json(traces);
     });
     this.app.get('/api/reasoning/traces/:taskId', (req: Request, res: Response) => {
       const trace = getReasoningTraceById(req.params.taskId);
@@ -644,6 +646,11 @@ export class WebInterface implements MessageInterface {
     this.app.get('/api/reasoning/current', (_req: Request, res: Response) => {
       const current = getCurrentReasoningTrace();
       res.json(current ?? { status: 'idle' });
+    });
+    /** Last OODA trace in unified shape (trace, steps, confidence, riskLevel, outcome). */
+    this.app.get('/api/reasoning/last-ooda', (_req: Request, res: Response) => {
+      const unified = getLastTraceUnified();
+      res.json(unified ?? { error: 'No OODA trace recorded' });
     });
 
     // API: Performance profiler
@@ -987,9 +994,15 @@ export class WebInterface implements MessageInterface {
     });
 
     // API: Debug OODA traces
-    this.app.get('/api/debug/last-ooda', (_req: Request, res: Response) => {
-      const trace = getLastTrace();
-      res.json(trace ?? { error: 'No trace recorded' });
+    this.app.get('/api/debug/last-ooda', (req: Request, res: Response) => {
+      const raw = req.query.raw === '1' || req.query.raw === 'true';
+      if (raw) {
+        const trace = getLastTrace();
+        res.json(trace ?? { error: 'No trace recorded' });
+        return;
+      }
+      const unified = getLastTraceUnified();
+      res.json(unified ?? { error: 'No trace recorded' });
     });
     this.app.get('/api/debug/ooda/:requestId', (req: Request, res: Response) => {
       const trace = getTraceById(req.params.requestId);

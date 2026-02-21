@@ -28,7 +28,7 @@ import { getDb } from './context/db.js';
 import { seedAnnotations } from './context/layers/annotations.js';
 import { addGeneralMessage, getGeneralConversations } from './memory.js';
 import { recordTrace } from './ooda-logger.js';
-import { assembleContext, formatContextForPrompt } from './context/index.js';
+import { assembleContextWithFallback, formatContextForPrompt } from './context/index.js';
 import { checkForLoop } from './behavior-tracker.js';
 import { handleConversation, isClearQuestionOrStatement } from './conversation-handler.js';
 import { PERSONALITY_RULES, sanitizeResponse, getMaxChars, truncateToMaxChars } from './personality.js';
@@ -853,15 +853,17 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
             resolutionMethod: 'pattern',
             estimatedCost: 0,
           };
+          let ctxFallbackUsed: string | undefined;
           if (BRAIN2_WHITELIST.has('agent_ask')) {
             try {
-              const ctxResult = await assembleContext({
+              const { result: ctxResult, fallbackUsed } = await assembleContextWithFallback({
                 message: content,
                 action: 'agent_ask',
                 target: singleWord,
                 projectPath: activeProject.workingDir,
                 model: 'sonnet',
               });
+              ctxFallbackUsed = fallbackUsed;
               if (ctxResult.layersIncluded.length > 0 || ctxResult.cachedFormatted) {
                 agentIntent.assembledContext = ctxResult.cachedFormatted ?? formatContextForPrompt(ctxResult);
               }
@@ -871,7 +873,7 @@ export async function handleMessage(message: IncomingMessage): Promise<OutgoingM
           }
           const result = await executeCommand(agentIntent as ParsedIntent);
           stats.lastCommand = { action: 'agent_ask', timestamp: new Date().toISOString(), success: result.success };
-          recordTrace({ routingPath: 'registry', rawInput: content, classification: 'media_search→agent_ask', confidenceScore: 0.95, action: 'agent_ask', success: result.success });
+          recordTrace({ routingPath: 'registry', rawInput: content, classification: 'media_search→agent_ask', confidenceScore: 0.95, action: 'agent_ask', success: result.success, fallbackUsed: ctxFallbackUsed });
           let response = formatResponse(agentIntent as ParsedIntent, result);
           response = sanitizeResponse(response);
           const maxChars = getMaxChars('agent_ask', false);
@@ -1059,6 +1061,8 @@ Matt's actual setup (ONLY reference these, never invent others):
               contextLoaded: cognitiveResult.contextResult?.layersIncluded ?? [],
               tokensUsed: cognitiveResult.tokensUsed,
               confidenceScore: cognitiveResult.confidence.overall,
+              riskLevel: cognitiveResult.riskLevel,
+              uncertaintyReasons: cognitiveResult.uncertaintyReasons,
               action: 'refuse',
               success: false,
               totalTime: cognitiveResult.processingTime,
@@ -1100,15 +1104,17 @@ Matt's actual setup (ONLY reference these, never invent others):
     const intent = await parseIntent(content);
 
     // Brain 2: Assemble context for whitelisted intents (agent_ask, code_review, homelab actions)
+    let contextFallbackUsed: string | undefined;
     if (BRAIN2_WHITELIST.has(intent.action)) {
       try {
-        const ctxResult = await assembleContext({
+        const { result: ctxResult, fallbackUsed } = await assembleContextWithFallback({
           message: content,
           action: intent.action,
           target: intent.target,
           projectPath: activeProject?.workingDir,
           model: 'sonnet', // agent_ask/code_review typically use Sonnet
         });
+        contextFallbackUsed = fallbackUsed;
         if (ctxResult.layersIncluded.length > 0 || ctxResult.cachedFormatted) {
           intent.assembledContext = ctxResult.cachedFormatted ?? formatContextForPrompt(ctxResult);
           logger.debug('Brain 2 context assembled', { layers: ctxResult.layersIncluded });
@@ -1146,6 +1152,8 @@ Matt's actual setup (ONLY reference these, never invent others):
         tokensUsed: cognitiveResult.tokensUsed,
         classification: String(intent.action),
         confidenceScore: cognitiveResult.confidence.overall,
+        riskLevel: cognitiveResult.riskLevel,
+        uncertaintyReasons: cognitiveResult.uncertaintyReasons,
         action: String(intent.action),
         success: result.success,
         totalTime: cognitiveResult.processingTime,
@@ -1160,6 +1168,7 @@ Matt's actual setup (ONLY reference these, never invent others):
         confidenceScore: intent.confidence ?? 0.8,
         action: String(intent.action),
         success: result.success,
+        fallbackUsed: contextFallbackUsed,
       });
     }
 

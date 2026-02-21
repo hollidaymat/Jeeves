@@ -182,6 +182,46 @@ function touchesSystem(task: TaskContext): boolean {
 }
 
 // ==========================================
+// MINIMAL ASSEMBLY (fallback: annotations + patterns only)
+// ==========================================
+
+/**
+ * Assemble minimal context (annotations + patterns only). Used as fallback when full assembly fails.
+ */
+async function assembleMinimalContext(task: TaskContext): Promise<ContextResult> {
+  const context: AssembledContext = {};
+  const layersIncluded: string[] = [];
+  let tokensUsed = 0;
+  const entities = extractEntities(task.message);
+  const service = task.service || entities[0];
+
+  try {
+    const [annMod, patMod] = await Promise.all([getAnnotations(), getPatterns()]);
+    const [annotations, pattern] = await Promise.all([
+      Promise.resolve(annMod.getRelevantAnnotations(task.message, entities)),
+      Promise.resolve(patMod.findMatchingPattern(task.message, task.action)),
+    ]);
+    if (annotations) {
+      context.annotations = annotations;
+      tokensUsed += estimateTokens(annotations);
+      layersIncluded.push('annotations');
+    }
+    if (pattern) {
+      context.pattern = pattern;
+      tokensUsed += estimateTokens(pattern);
+      layersIncluded.push('patterns');
+    }
+  } catch (e) {
+    logger.debug('Minimal context assembly failed', { error: String(e) });
+  }
+
+  const layers: AssembledContext = context;
+  const result: ContextResult = { layers, tokensUsed, tokenBudget: 2000, layersIncluded };
+  const formatted = formatContextForPrompt(result);
+  return { ...result, cachedFormatted: formatted.length > 0 ? formatted : undefined };
+}
+
+// ==========================================
 // MAIN ASSEMBLER
 // ==========================================
 
@@ -192,7 +232,7 @@ function touchesSystem(task: TaskContext): boolean {
  */
 export async function assembleContext(task: TaskContext): Promise<ContextResult> {
   const { getCachedSession, cacheSession } = await import('./session-cache.js');
-  const cached = getCachedSession(task.message);
+  const cached = getCachedSession(task.message, { projectPath: task.projectPath, action: task.action });
   if (cached) {
     logger.debug('Context session cache hit', { hitCount: cached.hitCount, topic: cached.topic.slice(0, 40) });
     return {
@@ -324,7 +364,7 @@ export async function assembleContext(task: TaskContext): Promise<ContextResult>
   const result: ContextResult = { layers: context, tokensUsed, tokenBudget, layersIncluded };
   const formatted = formatContextForPrompt(result);
   if (formatted.length > 0) {
-    cacheSession(task.message, formatted, layersIncluded, tokensUsed);
+    cacheSession(task.message, formatted, layersIncluded, tokensUsed, { projectPath: task.projectPath, action: task.action });
   }
 
   logger.debug('Context assembled', {
@@ -336,6 +376,31 @@ export async function assembleContext(task: TaskContext): Promise<ContextResult>
   });
 
   return result;
+}
+
+/**
+ * Assemble context with fallback: primary = full 6-layer; fallback = minimal (annotations + patterns).
+ * Returns { result, fallbackUsed } for OODA trace logging.
+ */
+export async function assembleContextWithFallback(
+  task: TaskContext
+): Promise<{ result: ContextResult; fallbackUsed?: string }> {
+  const { runWithFallback } = await import('../fallback.js');
+  const { result, stepUsed } = await runWithFallback({
+    primary: () => assembleContext(task),
+    fallbacks: [{ name: 'minimal', fn: () => assembleMinimalContext(task) }],
+    onAllFailed: (errors) => {
+      logger.warn('Context assembly failed, using empty', { errors: errors.map((e) => e.message) });
+      return {
+        layers: {},
+        tokensUsed: 0,
+        tokenBudget: 0,
+        layersIncluded: [],
+        cachedFormatted: 'Context unavailable. Proceeding with message only.',
+      } as ContextResult;
+    },
+  });
+  return { result, fallbackUsed: stepUsed !== 'primary' ? stepUsed : undefined };
 }
 
 // ==========================================

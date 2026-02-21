@@ -39,6 +39,8 @@ export interface MetacognitiveInput {
 export interface MetacognitiveDecision {
   action: 'proceed' | 'clarify' | 'notice' | 'refuse';
   confidence: Confidence.ConfidenceScore;
+  riskLevel?: Confidence.RiskLevel;
+  uncertaintyReasons?: string[];
   reasoning?: Reasoning.ReasoningResult;
   clarification?: Clarification.ClarificationResult;
   simulation?: Simulation.SimulationResult;
@@ -186,6 +188,8 @@ export async function think(
     return {
       action: 'refuse',
       confidence: confidenceResult.score,
+      riskLevel: confidenceResult.riskLevel,
+      uncertaintyReasons: confidenceResult.uncertaintyReasons,
       response: confidenceResult.concerns.join('. ') || 'This appears to be a destructive operation. Please confirm.',
       processingTime: Date.now() - startTime,
       tokensUsed,
@@ -269,6 +273,8 @@ export async function think(
       return {
         action: 'clarify',
         confidence: confidenceResult.score,
+        riskLevel: confidenceResult.riskLevel,
+        uncertaintyReasons: confidenceResult.uncertaintyReasons,
         reasoning: reasoningResult,
         clarification: clarificationResult,
         questions: clarificationResult.questions,
@@ -305,6 +311,8 @@ export async function think(
       return {
         action: 'refuse',
         confidence: confidenceResult.score,
+        riskLevel: confidenceResult.riskLevel,
+        uncertaintyReasons: confidenceResult.uncertaintyReasons,
         reasoning: reasoningResult,
         simulation: simulationResult,
         response: `Cannot proceed:\n${simulationResult.blockers.map(b => `- ${b}`).join('\n')}`,
@@ -319,6 +327,8 @@ export async function think(
       return {
         action: 'notice',
         confidence: confidenceResult.score,
+        riskLevel: confidenceResult.riskLevel,
+        uncertaintyReasons: confidenceResult.uncertaintyReasons,
         reasoning: reasoningResult,
         simulation: simulationResult,
         plan: reasoningResult?.plan,
@@ -337,6 +347,8 @@ export async function think(
   return {
     action: confidenceResult.action === 'act_with_notice' ? 'notice' : 'proceed',
     confidence: confidenceResult.score,
+    riskLevel: confidenceResult.riskLevel,
+    uncertaintyReasons: confidenceResult.uncertaintyReasons,
     reasoning: reasoningResult,
     clarification: clarificationResult,
     simulation: simulationResult,

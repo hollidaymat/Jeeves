@@ -1033,18 +1033,58 @@ body::before {
   background: linear-gradient(135deg, rgba(168, 85, 247, 0.15) 0%, rgba(34, 211, 238, 0.1) 100%);
   border: 1px solid rgba(168, 85, 247, 0.3);
   border-radius: 6px;
-  padding: 0.75rem 1rem;
+  padding: 0;
   margin-bottom: 0.75rem;
   font-size: 0.85rem;
   color: var(--text-secondary);
+  overflow: hidden;
+}
+
+.thinking-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.thinking-header:hover {
+  background: rgba(168, 85, 247, 0.08);
 }
 
 .thinking-icon {
   font-size: 1rem;
   flex-shrink: 0;
+}
+
+.thinking-toggle {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  transition: transform 0.2s;
+}
+
+.thinking-block.expanded .thinking-toggle {
+  transform: rotate(180deg);
+}
+
+.thinking-content {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.25s ease-out;
+}
+
+.thinking-block.expanded .thinking-content {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.thinking-body {
+  padding: 0.75rem 1rem;
+  border-top: 1px solid rgba(168, 85, 247, 0.2);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* ============ TASK LABELS ============ */
@@ -2540,6 +2580,11 @@ body::before {
 .reasoning-timeline-wrap .reasoning-timeline-fill { height: 100%; background: var(--accent); }
 .reasoning-empty { padding: 12px; color: var(--text-secondary); font-size: 0.85rem; display: none; }
 .reasoning-empty.visible { display: block; }
+.reasoning-ooda-steps { font-size: 0.85rem; font-family: var(--font-mono), monospace; padding: 10px; background: var(--bg-secondary); border-radius: 4px; }
+.reasoning-ooda-row { display: flex; gap: 12px; margin-bottom: 6px; }
+.reasoning-ooda-row .phase { min-width: 64px; color: var(--accent); font-weight: 600; }
+.reasoning-ooda-row .val { color: var(--text-primary); }
+.reasoning-ooda-uncertainty { margin-top: 8px; padding: 8px; background: rgba(255,193,7,0.1); border-radius: 4px; font-size: 0.8rem; color: var(--text-secondary); }
 
 /* ============================================================================
    Notes Tab

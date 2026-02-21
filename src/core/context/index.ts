@@ -7,6 +7,7 @@
 
 export {
   assembleContext,
+  assembleContextWithFallback,
   formatContextForPrompt,
   recordSuccess,
   recordError,

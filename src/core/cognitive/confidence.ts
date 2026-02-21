@@ -44,12 +44,18 @@ export interface ConfidenceContext {
 
 export type ConfidenceAction = 'act_autonomous' | 'act_with_notice' | 'ask_first' | 'refuse';
 
+export type RiskLevel = 'low' | 'medium' | 'high';
+
 export interface ConfidenceResult {
   score: ConfidenceScore;
   action: ConfidenceAction;
   assumptions: string[];
   concerns: string[];
   suggestedQuestions: string[];
+  /** Risk level derived from score + concerns (for OODA trace / trust) */
+  riskLevel?: RiskLevel;
+  /** Reasons for uncertainty (e.g. ambiguous request, destructive op) */
+  uncertaintyReasons?: string[];
 }
 
 // ==========================================
@@ -249,6 +255,33 @@ function extractDomain(message: string): string {
 }
 
 // ==========================================
+// RISK DERIVATION (for OODA trace / trust)
+// ==========================================
+
+function deriveRiskFromResult(
+  overall: number,
+  concerns: string[],
+  context: ConfidenceContext
+): { riskLevel: RiskLevel; uncertaintyReasons: string[] } {
+  const reasons = [...concerns];
+  if (context.isAmbiguous && !reasons.includes('Request is ambiguous')) {
+    reasons.push('Request is ambiguous');
+  }
+  if (context.isDestructive && !reasons.some((r) => r.toLowerCase().includes('destructive'))) {
+    reasons.push('Destructive operation');
+  }
+
+  let riskLevel: RiskLevel = 'low';
+  if (overall < 0.5 || context.isDestructive) {
+    riskLevel = 'high';
+  } else if (overall < 0.85 || context.isAmbiguous || concerns.length > 0) {
+    riskLevel = 'medium';
+  }
+
+  return { riskLevel, uncertaintyReasons: reasons };
+}
+
+// ==========================================
 // QUICK SCORE (No LLM, pattern-based)
 // ==========================================
 
@@ -320,8 +353,9 @@ export function quickScore(message: string, context?: Partial<ConfidenceContext>
     concerns.push('This appears to be a destructive operation');
     suggestedQuestions.push('Are you sure you want to delete/remove this?');
   }
-  
-  return { score, action, assumptions, concerns, suggestedQuestions };
+
+  const { riskLevel, uncertaintyReasons } = deriveRiskFromResult(overall, concerns, analyzedContext);
+  return { score, action, assumptions, concerns, suggestedQuestions, riskLevel, uncertaintyReasons };
 }
 
 // ==========================================
@@ -428,12 +462,20 @@ Respond with ONLY valid JSON:
       action 
     });
     
+    const concerns = parsed.concerns || [];
+    const { riskLevel, uncertaintyReasons } = deriveRiskFromResult(
+      score.overall,
+      concerns,
+      analyzedContext
+    );
     return {
       score,
       action,
       assumptions: parsed.assumptions || [],
-      concerns: parsed.concerns || [],
-      suggestedQuestions: parsed.suggestedQuestions || []
+      concerns,
+      suggestedQuestions: parsed.suggestedQuestions || [],
+      riskLevel,
+      uncertaintyReasons,
     };
     
   } catch (error) {

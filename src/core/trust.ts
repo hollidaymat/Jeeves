@@ -215,6 +215,25 @@ export function getTrustPermissions(): TrustLevelPermissions {
 }
 
 /**
+ * Risk-adjusted approval check.
+ * Low confidence + high risk -> always ask.
+ * High confidence + low risk -> allow within trust bounds.
+ */
+export function shouldRequireApproval(
+  confidence: number,
+  riskLevel: 'low' | 'medium' | 'high',
+  trustLevel?: TrustLevelNumber
+): boolean {
+  const level = trustLevel ?? getTrustLevel();
+  const riskWeight = riskLevel === 'high' ? 1.5 : riskLevel === 'medium' ? 1.2 : 1;
+  const effectiveThreshold = 0.85 / riskWeight;
+  if (confidence < effectiveThreshold) return true;
+  const perms = TRUST_LEVELS[level];
+  if (perms.requiresApproval.includes('everything')) return true;
+  return false;
+}
+
+/**
  * Check if an action is allowed at current trust level
  */
 export function isActionAllowed(action: string): { allowed: boolean; reason?: string } {

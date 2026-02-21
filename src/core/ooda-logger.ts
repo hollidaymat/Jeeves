@@ -20,12 +20,15 @@ export interface OODATrace {
     confidenceScore: number;
     patternsMatched: string[];
     ambiguityDetected: boolean;
+    riskLevel?: 'low' | 'medium' | 'high';
+    uncertaintyReasons?: string[];
   };
   decide: {
     action: string;
     alternativesConsidered: string[];
     reasoning?: string;
     modelUsed: string;
+    fallbackUsed?: string;
   };
   act: {
     executionTime: number;
@@ -61,6 +64,9 @@ export interface OODARecordInput {
   error?: string;
   totalTime?: number;
   loopCount?: number;
+  fallbackUsed?: string;
+  riskLevel?: 'low' | 'medium' | 'high';
+  uncertaintyReasons?: string[];
 }
 
 /**
@@ -82,12 +88,15 @@ export function recordTrace(input: OODARecordInput): OODATrace {
       confidenceScore: input.confidenceScore ?? (input.routingPath === 'registry' ? 0.9 : 0.5),
       patternsMatched: input.patternsMatched ?? [],
       ambiguityDetected: input.ambiguityDetected ?? false,
+      riskLevel: input.riskLevel,
+      uncertaintyReasons: input.uncertaintyReasons,
     },
     decide: {
       action: input.action ?? input.routingPath,
       alternativesConsidered: input.alternativesConsidered ?? [],
       reasoning: input.reasoning,
       modelUsed: input.modelUsed ?? 'none',
+      fallbackUsed: input.fallbackUsed,
     },
     act: {
       executionTime: input.executionTime ?? 0,
@@ -110,6 +119,68 @@ export function recordTrace(input: OODARecordInput): OODATrace {
   import('./growth-tracker.js').then(({ persistTrace }) => persistTrace(trace)).catch(() => {});
 
   return trace;
+}
+
+/**
+ * Unified trace shape for API responses (Phase 6).
+ * Ensures /api/reasoning/traces and /api/debug/last-ooda return consistent structure.
+ */
+export interface UnifiedTraceResponse {
+  trace: OODATrace | ReasoningTrace;
+  steps: Array<{ phase: string; thought?: string; data?: unknown; confidence?: number; alternatives?: string[] }>;
+  confidence: number;
+  riskLevel?: 'low' | 'medium' | 'high';
+  uncertaintyReasons?: string[];
+  outcome: 'success' | 'failed' | 'in_progress';
+  reasoning?: string;
+  alternativesConsidered?: string[];
+  fallbackUsed?: string;
+  taskId?: string;
+}
+
+function oodaToUnified(t: OODATrace): UnifiedTraceResponse {
+  const steps = [
+    { phase: 'observe', thought: `Input: ${t.observe.rawInput.slice(0, 100)}...`, data: t.observe },
+    { phase: 'orient', thought: t.orient.classification, data: t.orient, confidence: t.orient.confidenceScore },
+    { phase: 'decide', thought: t.decide.reasoning, data: t.decide, alternatives: t.decide.alternativesConsidered },
+    { phase: 'act', data: t.act },
+  ];
+  return {
+    trace: t,
+    steps,
+    confidence: t.orient.confidenceScore,
+    riskLevel: t.orient.riskLevel,
+    uncertaintyReasons: t.orient.uncertaintyReasons,
+    outcome: t.act.success ? 'success' : 'failed',
+    reasoning: t.decide.reasoning,
+    alternativesConsidered: t.decide.alternativesConsidered,
+    fallbackUsed: t.decide.fallbackUsed,
+  };
+}
+
+function reasoningToUnified(t: ReasoningTrace): UnifiedTraceResponse {
+  return {
+    trace: t,
+    steps: t.steps.map((s) => ({
+      phase: s.phase,
+      thought: s.thought,
+      data: s.data,
+      confidence: s.confidence,
+      alternatives: s.alternatives,
+    })),
+    confidence: t.steps.find((s) => s.confidence != null)?.confidence ?? 0.5,
+    outcome: t.outcome === 'in_progress' ? 'in_progress' : t.outcome === 'success' ? 'success' : 'failed',
+    taskId: t.taskId,
+  };
+}
+
+export function getLastTraceUnified(): UnifiedTraceResponse | null {
+  const t = getLastTrace();
+  return t ? oodaToUnified(t) : null;
+}
+
+export function getRecentReasoningTracesUnified(limit: number): UnifiedTraceResponse[] {
+  return getRecentReasoningTraces(limit).map(reasoningToUnified);
 }
 
 /**

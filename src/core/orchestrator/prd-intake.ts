@@ -6,7 +6,7 @@
 import { generateText } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { config } from '../../config.js';
-import { assembleContext, formatContextForPrompt, agenticRetrieve } from '../context/index.js';
+import { assembleContextWithFallback, formatContextForPrompt, agenticRetrieve } from '../context/index.js';
 import type { PRDRequest } from './types.js';
 import { logger } from '../../utils/logger.js';
 
@@ -28,7 +28,7 @@ export async function analyzePRD(prd: PRDRequest): Promise<PRDIntakeResult> {
       });
       contextBlock = agentic.context;
     } else {
-      const result = await assembleContext({
+      const { result } = await assembleContextWithFallback({
         message: prd.description,
         action: 'agent_ask',
         projectPath: prd.projectPath,

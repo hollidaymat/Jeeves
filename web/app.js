@@ -1051,15 +1051,12 @@ class CommandCenter {
       
       this.streamElement.innerHTML = '';
       
-      let content = this.streamContent;
-      const thinkingMatch = content.match(/\[Thinking\]\s*([^\n]+(?:\n(?!\n)[^\n]+)*)/i);
+      const { thinking, rest } = this.extractThinkingContent(this.streamContent);
+      const content = rest;
       
-      if (thinkingMatch) {
-        const thinkingDiv = document.createElement('div');
-        thinkingDiv.className = 'thinking-block';
-        thinkingDiv.innerHTML = `<span class="thinking-icon">💭</span> ${this.escapeHtml(thinkingMatch[1])}`;
-        this.streamElement.appendChild(thinkingDiv);
-        content = content.replace(thinkingMatch[0], '').trim();
+      if (thinking) {
+        const thinkingBlock = this.createThinkingBlock(thinking);
+        this.streamElement.appendChild(thinkingBlock);
       }
       
       if (typeof marked !== 'undefined' && (content.includes('##') || content.includes('**') || content.includes('```'))) {
@@ -1343,6 +1340,46 @@ class CommandCenter {
     div.textContent = text;
     return div.innerHTML;
   }
+
+  /** Extract thinking content from DeepSeek-style <think> or [Thinking] format. Returns { thinking, rest }. */
+  extractThinkingContent(content) {
+    if (!content || typeof content !== 'string') return { thinking: null, rest: content || '' };
+    let thinking = null;
+    let rest = content;
+    const thinkMatch = rest.match(/<think>([\s\S]*?)<\/think>/i);
+    if (thinkMatch) {
+      thinking = thinkMatch[1].trim();
+      rest = rest.replace(thinkMatch[0], '').trim();
+    } else {
+      const bracketMatch = rest.match(/\[Thinking\]\s*([\s\S]*?)(?=\n\n|$)/i);
+      if (bracketMatch) {
+        thinking = bracketMatch[1].trim();
+        rest = rest.replace(bracketMatch[0], '').trim();
+      }
+    }
+    return { thinking, rest };
+  }
+
+  /** Create a collapsible thinking block DOM element. */
+  createThinkingBlock(thinkingText) {
+    const block = document.createElement('div');
+    block.className = 'thinking-block';
+    const header = document.createElement('div');
+    header.className = 'thinking-header';
+    header.innerHTML = '<span class="thinking-icon">💭</span><span>Thinking</span><span class="thinking-toggle">▼</span>';
+    const content = document.createElement('div');
+    content.className = 'thinking-content';
+    const body = document.createElement('div');
+    body.className = 'thinking-body';
+    body.textContent = thinkingText;
+    content.appendChild(body);
+    block.appendChild(header);
+    block.appendChild(content);
+    header.addEventListener('click', () => {
+      block.classList.toggle('expanded');
+    });
+    return block;
+  }
   
   autoResizeTextarea() {
     const textarea = this.elements.commandInput;
@@ -1469,26 +1506,16 @@ class CommandCenter {
     const messageSpan = document.createElement('span');
     messageSpan.className = 'message';
     
-    let processedMessage = message;
-    let thinkingContent = null;
-    
-    const thinkingMatch = message.match(/\[Thinking\]\s*(.*?)(?=\n\n|$)/s);
-    if (thinkingMatch) {
-      thinkingContent = thinkingMatch[1].trim();
-      processedMessage = message.replace(thinkingMatch[0], '').trim();
-    }
-    
-    processedMessage = this.processTaskLabels(processedMessage);
+    const { thinking: thinkingContent, rest } = this.extractThinkingContent(message);
+    let processedMessage = this.processTaskLabels(rest);
     
     const isMarkdown = type === 'response' && 
       (processedMessage.includes('##') || processedMessage.includes('**') || 
        processedMessage.includes('```') || processedMessage.length > 200);
     
     if (thinkingContent) {
-      const thinkingDiv = document.createElement('div');
-      thinkingDiv.className = 'thinking-block';
-      thinkingDiv.innerHTML = `<span class="thinking-icon">💭</span> ${this.escapeHtml(thinkingContent)}`;
-      messageSpan.appendChild(thinkingDiv);
+      const thinkingBlock = this.createThinkingBlock(thinkingContent);
+      messageSpan.appendChild(thinkingBlock);
     }
     
     if (isMarkdown && typeof marked !== 'undefined') {
@@ -2755,25 +2782,27 @@ class ReasoningPanel {
     const q = this.getDays();
     const suffix = q ? '?' + q : '';
     try {
-      const [metricsRes, tasksRes, confidenceRes, errorsRes, timelineRes] = await Promise.all([
+      const [metricsRes, tasksRes, confidenceRes, errorsRes, timelineRes, lastOodaRes] = await Promise.all([
         fetch('/api/reasoning/metrics' + suffix),
         fetch('/api/reasoning/tasks' + suffix),
         fetch('/api/reasoning/confidence' + suffix),
         fetch('/api/reasoning/errors' + suffix),
         fetch('/api/reasoning/timeline' + suffix),
+        fetch('/api/reasoning/last-ooda'),
       ]);
       const metrics = metricsRes.ok ? await metricsRes.json() : {};
       const tasks = tasksRes.ok ? await tasksRes.json() : [];
       const confidence = confidenceRes.ok ? await confidenceRes.json() : [];
       const errors = errorsRes.ok ? await errorsRes.json() : [];
       const timeline = timelineRes.ok ? await timelineRes.json() : [];
-      this.update(metrics, tasks, confidence, errors, timeline);
+      const lastOoda = lastOodaRes.ok ? await lastOodaRes.json() : null;
+      this.update(metrics, tasks, confidence, errors, timeline, lastOoda);
     } catch {
-      this.update({}, [], [], [], []);
+      this.update({}, [], [], [], [], null);
     }
   }
 
-  update(metrics, tasks, confidence, errors, timeline) {
+  update(metrics, tasks, confidence, errors, timeline, lastOoda) {
     const total = metrics.totalTasks ?? 0;
     const noData = total === 0;
 
@@ -2834,6 +2863,25 @@ class ReasoningPanel {
         errorsTbody.innerHTML = errors.map(e => `
           <tr><td>${this.esc(e.errorType)}</td><td>${e.firstSeen}</td><td>${e.occurrences}</td><td>${e.fixedByLearning ? 'Yes' : 'No'}</td><td>${e.lastSeen}</td></tr>
         `).join('');
+      }
+    }
+
+    // Last OODA trace (observe -> orient -> decide -> act)
+    const oodaEl = document.getElementById('reasoning-last-ooda');
+    if (oodaEl) {
+      if (!lastOoda || lastOoda.error) {
+        oodaEl.innerHTML = '<div class="reasoning-empty visible">No OODA trace recorded. Send a message to see routing.</div>';
+      } else {
+        const conf = Math.round((lastOoda.confidence || 0) * 100);
+        const risk = lastOoda.riskLevel ? ` • Risk: ${lastOoda.riskLevel}` : '';
+        let html = `<div class="reasoning-ooda-steps"><div class="reasoning-ooda-row"><span class="phase">observe</span><span class="val">${this.esc((lastOoda.trace?.observe?.rawInput || '').slice(0, 80))}…</span></div>`;
+        html += `<div class="reasoning-ooda-row"><span class="phase">orient</span><span class="val">${this.esc(lastOoda.trace?.orient?.classification || '')} (${conf}% confidence${risk})</span></div>`;
+        html += `<div class="reasoning-ooda-row"><span class="phase">decide</span><span class="val">${this.esc(lastOoda.trace?.decide?.action || '')}${lastOoda.trace?.decide?.fallbackUsed ? ' [fallback: ' + lastOoda.trace.decide.fallbackUsed + ']' : ''}</span></div>`;
+        html += `<div class="reasoning-ooda-row"><span class="phase">act</span><span class="val">${lastOoda.outcome === 'success' ? '✓ success' : '✗ failed'}</span></div></div>`;
+        if (lastOoda.uncertaintyReasons?.length) {
+          html += `<div class="reasoning-ooda-uncertainty"><strong>Uncertainty:</strong> ${this.esc(lastOoda.uncertaintyReasons.join('; '))}</div>`;
+        }
+        oodaEl.innerHTML = html;
       }
     }
 

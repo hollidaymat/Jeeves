@@ -140,13 +140,16 @@ export async function executeWithAider(spec: AntigravitySpec): Promise<Execution
 
     proc.on('error', (err) => {
       const duration_ms = Date.now() - start;
-      logger.warn('[orchestrator] Aider spawn failed', { task_id: spec.task_id, error: String(err) });
+      const errMsg = String(err);
+      logger.warn('[orchestrator] Aider spawn failed', { task_id: spec.task_id, error: errMsg });
+      const suggestHandoff =
+        'Orchestration unavailable (Aider spawn failed). Try again or use "send to aider: ..." for spec-only handoff.';
       resolve({
         task_id: spec.task_id,
         status: 'failed',
         test_results: {
           passed: false,
-          error: String(err),
+          error: `${errMsg}\n\n${suggestHandoff}`,
           output: stdout + stderr,
         },
         duration_ms,

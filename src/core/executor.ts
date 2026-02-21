@@ -567,8 +567,8 @@ export async function executeCommand(intent: ParsedIntent): Promise<ExecutionRes
       };
     }
     try {
-      const { orchestrate } = await import('../core/orchestrator/index.js');
-      const result = await orchestrate({
+      const { handlePRD } = await import('../handlers/orchestration-handler.js');
+      const result = await handlePRD({
         title: description.slice(0, 80),
         description,
       });

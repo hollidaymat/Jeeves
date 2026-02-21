@@ -16,4 +16,10 @@ export {
   type AssembledContext
 } from './assembler.js';
 
+export {
+  agenticRetrieve,
+  type AgenticRetrieveInput,
+  type AgenticRetrieveResult
+} from './agentic-retriever.js';
+
 export { getDb, closeDb, generateId, estimateTokens } from './db.js';

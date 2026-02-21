@@ -24,9 +24,9 @@ function getTaskDir(): string {
  */
 export async function generateSpec(
   prd: PRDRequest,
-  options?: { answers?: string[]; playbooks?: Playbook[] }
+  options?: { answers?: string[]; playbooks?: Playbook[]; agenticContext?: string; playbookTemplate?: string; taskId?: string }
 ): Promise<AntigravitySpec> {
-  const task_id = `ag-${generateId('t').replace(/[^a-z0-9-]/gi, '-')}`;
+  const task_id = options?.taskId ?? `ag-${generateId('t').replace(/[^a-z0-9-]/gi, '-')}`;
   const criteria = prd.acceptance_criteria ?? [];
   const playbookContext =
     options?.playbooks?.length &&
@@ -46,6 +46,8 @@ ACCEPTANCE CRITERIA:
 ${criteria.map((c) => `- ${c}`).join('\n')}
 ${options?.answers?.length ? `CLARIFYING ANSWERS:\n${options.answers.join('\n')}\n` : ''}
 ${playbookContext ? `LEARNINGS FROM SIMILAR TASKS:\n${playbookContext}\n` : ''}
+${options?.agenticContext ? `AGENTIC RETRIEVED CONTEXT:\n${options.agenticContext.slice(0, 3000)}\n` : ''}
+${options?.playbookTemplate ? `WINNING SPEC TEMPLATE FROM SIMILAR TASKS:\n${options.playbookTemplate.slice(0, 1500)}\n` : ''}
 
 Output a single JSON object with these exact keys (all strings except arrays):
 - task_id: "${task_id}"

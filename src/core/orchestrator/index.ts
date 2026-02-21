@@ -4,10 +4,10 @@
  */
 
 import { analyzePRD } from './prd-intake.js';
-import { generateSpec, writeSpecFile } from './spec-generator.js';
-import { executeWithAider, runTestsAfterAider } from './aider-executor.js';
-import { validateAndIterate } from './validator.js';
-import { getRelevantPlaybooks } from './learnings-applier.js';
+import { writeSpecFile } from './spec-generator.js';
+import { getRelevantPlaybooks, applyPlaybooks } from './learnings-applier.js';
+import { runPlanner, runExecutor, runValidator } from '../../agents/orchestrator.js';
+import { agenticRetrieve } from '../context/index.js';
 import { recordIteration, recordTask } from '../observer/interaction-recorder.js';
 import type { PRDRequest, AntigravitySpec, OrchestrationResult } from './types.js';
 import { logger } from '../../utils/logger.js';
@@ -25,6 +25,8 @@ export function getActiveOrchestrationTask(): typeof currentTask {
 export interface OrchestrateOptions {
   /** If true, stop after writing the spec file; do not run Antigravity. */
   handoffOnly?: boolean;
+  /** Pre-generated task ID for async orchestration (handler returns taskId immediately). */
+  taskId?: string;
 }
 
 /**
@@ -62,10 +64,16 @@ export async function orchestrate(prd: PRDRequest, options?: OrchestrateOptions)
     };
   }
 
-  currentTask = { task_id: '', phase: 'spec_generation', prd_title: prd.title };
+  const taskId = options?.taskId;
+  currentTask = { task_id: taskId ?? '', phase: 'spec_generation', prd_title: prd.title };
   emit('spec_generation', {});
   const playbooks = getRelevantPlaybooks(prd);
-  const spec = await generateSpec(prd, { playbooks });
+  const agenticContext =
+    process.env.AGENTIC_RAG_ENABLED === 'true'
+      ? (await agenticRetrieve({ taskDescription: `${prd.title}\n${prd.description}`, projectPath: prd.projectPath })).context
+      : undefined;
+  const playbookTemplate = applyPlaybooks(prd);
+  const spec = await runPlanner(prd, { playbooks, agenticContext, playbookTemplate: playbookTemplate ?? undefined, taskId });
   const specPath = writeSpecFile(spec);
   recordTask(spec.task_id, JSON.stringify(prd), 'in_progress');
   currentTask = { task_id: spec.task_id, phase: 'spec_ready', prd_title: prd.title };
@@ -88,19 +96,7 @@ export async function orchestrate(prd: PRDRequest, options?: OrchestrateOptions)
   while (iteration <= MAX_ITERATIONS) {
     currentTask = { task_id: spec.task_id, phase: 'aider_run', iteration, prd_title: prd.title };
     emit('aider_run', { iteration, task_id: spec.task_id });
-    let execution = await executeWithAider(lastSpec);
-    if (execution.test_results?.output !== 'stub' && (execution.status === 'completed' || !execution.test_results?.error)) {
-      const realTests = runTestsAfterAider(lastSpec);
-      execution = {
-        ...execution,
-        status: realTests.passed ? 'completed' : 'failed',
-        test_results: {
-          passed: realTests.passed,
-          error: realTests.error,
-          output: realTests.output,
-        },
-      };
-    }
+    const execution = await runExecutor(lastSpec);
     recordIteration({
       task_id: spec.task_id,
       iteration,
@@ -112,7 +108,7 @@ export async function orchestrate(prd: PRDRequest, options?: OrchestrateOptions)
     });
     emit('validation', { iteration, passed: execution.test_results.passed });
 
-    const validation = await validateAndIterate(lastSpec, execution, iteration);
+    const validation = await runValidator(lastSpec, execution, iteration);
     if (validation.status === 'success') {
       currentTask = null;
       recordTask(spec.task_id, JSON.stringify(prd), 'success', {

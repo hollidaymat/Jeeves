@@ -6,6 +6,16 @@ import { getDb } from '../context/db.js';
 import type { PRDRequest, Playbook } from './types.js';
 
 /**
+ * Get the best playbook template for a PRD to inject into planner.
+ * Returns template string or null if no high-confidence match.
+ */
+export function applyPlaybooks(prd: PRDRequest): string | null {
+  const playbooks = getRelevantPlaybooks(prd, 3);
+  const best = playbooks.find((p) => p.success_rate >= 0.8 && (p.winning_spec_template?.length ?? 0) > 50);
+  return best?.winning_spec_template ?? null;
+}
+
+/**
  * Get playbooks relevant to this PRD (keyword match on title + description).
  */
 export function getRelevantPlaybooks(prd: PRDRequest, limit = 5): Playbook[] {

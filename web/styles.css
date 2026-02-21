@@ -2581,3 +2581,10 @@ body::before {
 .orchestration-status.in_progress { background: rgba(34, 211, 238, 0.2); color: var(--accent-cyan); }
 .orchestration-recent-title { flex: 1; min-width: 0; color: var(--text-primary); }
 .orchestration-recent-date { font-size: 0.75rem; color: var(--text-dim); }
+.orchestration-stats { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0; font-size: 0.8rem; }
+.orchestration-stat { padding: 6px 10px; background: var(--bg-elevated); border-radius: 4px; }
+.orchestration-stat strong { color: var(--accent-cyan); margin-right: 6px; }
+.orchestration-logs { max-height: 120px; overflow-y: auto; font-size: 0.75rem; font-family: var(--mono); background: var(--bg-elevated); padding: 8px; border-radius: 4px; margin-bottom: 12px; }
+.orchestration-log-line { padding: 2px 0; color: var(--text-secondary); }
+.orchestration-escalated { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color); }
+.orchestration-escalated h3 { font-size: 0.9rem; color: var(--error); margin-bottom: 8px; }

@@ -2552,26 +2552,39 @@ class OrchestrationPanel {
     this.commandCenter = commandCenter;
     this.qaBrowserEl = document.getElementById('orchestration-qa-browser');
     this.activeEl = document.getElementById('orchestration-active');
+    this.statsEl = document.getElementById('orchestration-stats');
+    this.logsEl = document.getElementById('orchestration-logs');
     this.recentListEl = document.getElementById('orchestration-recent-list');
+    this.escalatedEl = document.getElementById('orchestration-escalated');
     this.serveWebUrl = null;
+    this._logs = [];
+    this._pollTimer = null;
   }
 
   esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
 
   async init() {
     try {
-      const res = await fetch('/api/orchestration');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.serve_web_url) this.serveWebUrl = data.serve_web_url;
-        this.render(data.active, data.recent || []);
-      }
-    } catch { this.render(null, []); }
+      const [orchestrationRes, statusRes, tasksRes, playbooksRes] = await Promise.all([
+        fetch('/api/orchestration'),
+        fetch('/api/orchestration/status'),
+        fetch('/api/orchestration/tasks?days=7'),
+        fetch('/api/orchestration/playbooks').catch(() => null),
+      ]);
+      const data = orchestrationRes.ok ? await orchestrationRes.json() : {};
+      if (data.serve_web_url) this.serveWebUrl = data.serve_web_url;
+      const status = statusRes.ok ? await statusRes.json() : {};
+      const tasks = tasksRes.ok ? await tasksRes.json() : {};
+      const playbooks = playbooksRes?.ok ? await playbooksRes.json() : null;
+      this.render(data.active, data.recent || [], { status, tasks, playbooks });
+    } catch { this.render(null, [], {}); }
   }
 
   handleEvent(payload) {
     if (payload && payload.serve_web_url) this.serveWebUrl = payload.serve_web_url;
     if (payload && payload.phase) {
+      this._logs.unshift(`[${new Date().toLocaleTimeString()}] ${payload.phase}${payload.task_id ? ' | ' + payload.task_id : ''}${payload.iteration ? ' | iter ' + payload.iteration : ''}`);
+      if (this._logs.length > 20) this._logs.pop();
       if (this.activeEl) {
         this.activeEl.innerHTML = `<div class="orchestration-phase"><strong>Phase:</strong> ${payload.phase}${payload.task_id ? ' | Task: ' + payload.task_id : ''}${payload.iteration ? ' | Iteration ' + payload.iteration : ''}</div>`;
       }
@@ -2589,7 +2602,7 @@ class OrchestrationPanel {
     }
   }
 
-  render(active, recent) {
+  render(active, recent, { status = {}, tasks = {}, playbooks = null } = {}) {
     if (this.qaBrowserEl) {
       if (this.serveWebUrl) {
         this.qaBrowserEl.style.display = 'block';
@@ -2608,16 +2621,38 @@ class OrchestrationPanel {
         this.activeEl.innerHTML = '<div class="orchestration-idle">No active orchestration. Use the console: e.g. "build add hello endpoint" or "orchestrate add rate limiting".</div>';
       }
     }
+    if (this.statsEl) {
+      const t = tasks.total ?? 0;
+      const c = tasks.completed ?? 0;
+      const e = tasks.escalated ?? 0;
+      const pb = playbooks?.total ?? 0;
+      this.statsEl.innerHTML = `<span class="orchestration-stat"><strong>Tasks (7d):</strong> ${t}</span><span class="orchestration-stat"><strong>Completed:</strong> ${c}</span><span class="orchestration-stat"><strong>Escalated:</strong> ${e}</span><span class="orchestration-stat"><strong>Playbooks:</strong> ${pb}</span>`;
+    }
+    if (this.logsEl) {
+      const lines = this._logs.length ? this._logs.map(l => `<div class="orchestration-log-line">${this.esc(l)}</div>`).join('') : '<div class="orchestration-log-line">No agent logs yet. Start a build to see phases.</div>';
+      this.logsEl.innerHTML = lines;
+    }
     if (this.recentListEl) {
       if (!recent.length) {
         this.recentListEl.innerHTML = '<li class="orchestration-empty">No tasks yet.</li>';
-        return;
+      } else {
+        this.recentListEl.innerHTML = recent.map(t => {
+          const date = t.created_at ? new Date(t.created_at * 1000).toLocaleString() : '—';
+          const title = this.formatTaskTitle(t.prd);
+          return `<li class="orchestration-recent-item"><span class="orchestration-status ${t.status}">${t.status}</span> <span class="orchestration-recent-title">${this.esc(title)}</span> <span class="orchestration-recent-date">${date}</span></li>`;
+        }).join('');
       }
-      this.recentListEl.innerHTML = recent.map(t => {
-        const date = t.created_at ? new Date(t.created_at * 1000).toLocaleString() : '—';
-        const title = this.formatTaskTitle(t.prd);
-        return `<li class="orchestration-recent-item"><span class="orchestration-status ${t.status}">${t.status}</span> <span class="orchestration-recent-title">${this.esc(title)}</span> <span class="orchestration-recent-date">${date}</span></li>`;
-      }).join('');
+    }
+    const escalated = (recent || []).filter(t => t.status === 'escalated');
+    if (this.escalatedEl) {
+      if (!escalated.length) {
+        this.escalatedEl.innerHTML = '';
+      } else {
+        this.escalatedEl.innerHTML = `<h3>Escalated (${escalated.length})</h3><ul class="orchestration-recent-list">${escalated.map(t => {
+          const date = t.created_at ? new Date(t.created_at * 1000).toLocaleString() : '—';
+          return `<li class="orchestration-recent-item"><span class="orchestration-status escalated">${t.status}</span> ${this.esc(this.formatTaskTitle(t.prd))} <span class="orchestration-recent-date">${date}</span></li>`;
+        }).join('')}</ul>`;
+      }
     }
   }
 }

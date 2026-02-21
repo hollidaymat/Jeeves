@@ -435,7 +435,72 @@ export class WebInterface implements MessageInterface {
       }
     });
 
-    // API: Aider orchestration task detail (includes Aider chat/output per iteration) — must be before /api/orchestration
+    // API: Orchestration sub-routes (must be before /api/orchestration/:taskId)
+    this.app.get('/api/orchestration/status', async (_req: Request, res: Response) => {
+      try {
+        const { getActiveOrchestrationTask } = await import('../core/orchestrator/index.js');
+        const active = getActiveOrchestrationTask();
+        res.json(active ? { task_id: active.task_id, agent: active.phase, step: active.phase, iteration: active.iteration, status: 'running' } : { status: 'idle' });
+      } catch {
+        res.json({ status: 'idle' });
+      }
+    });
+    this.app.get('/api/orchestration/tasks', async (req: Request, res: Response) => {
+      try {
+        const { getDb } = await import('../core/context/db.js');
+        const db = getDb();
+        const days = parseInt((req.query.days as string) || '7', 10) || 7;
+        const since = Math.floor(Date.now() / 1000) - days * 86400;
+        const rows = db.prepare('SELECT status FROM orchestrator_tasks WHERE created_at >= ?').all(since) as Array<{ status: string }>;
+        const completed = rows.filter((r) => r.status === 'success').length;
+        const escalated = rows.filter((r) => r.status === 'escalated').length;
+        res.json({ total: rows.length, completed, escalated, avg_iterations: 0, avg_duration_ms: 0 });
+      } catch {
+        res.json({ total: 0, completed: 0, escalated: 0, avg_iterations: 0, avg_duration_ms: 0 });
+      }
+    });
+    this.app.get('/api/orchestration/playbooks', async (_req: Request, res: Response) => {
+      try {
+        const { getDb } = await import('../core/context/db.js');
+        const db = getDb();
+        const rows = db.prepare('SELECT pattern, success_rate, last_updated FROM orchestrator_playbooks ORDER BY success_rate DESC').all() as Array<{ pattern: string; success_rate: number; last_updated: number }>;
+        res.json({ total: rows.length, by_task_type: rows, success_rates: Object.fromEntries(rows.map((r) => [r.pattern, r.success_rate])), recently_added: rows.slice(0, 5) });
+      } catch {
+        res.json({ total: 0, by_task_type: [], success_rates: {}, recently_added: [] });
+      }
+    });
+    this.app.get('/api/orchestration/agents', async (_req: Request, res: Response) => {
+      res.json([
+        { name: 'planner', completed_tasks: 0, error_rate: 0, avg_iterations: 0 },
+        { name: 'executor', completed_tasks: 0, error_rate: 0, avg_iterations: 0 },
+        { name: 'validator', completed_tasks: 0, error_rate: 0, avg_iterations: 0 },
+      ]);
+    });
+    this.app.get('/api/orchestration/logs/:taskId', async (req: Request, res: Response) => {
+      try {
+        const { getInteractionRecord } = await import('../core/observer/interaction-recorder.js');
+        const record = getInteractionRecord(req.params.taskId);
+        if (!record) return res.status(404).json({ error: 'Task not found' });
+        res.json(record);
+      } catch (error) {
+        res.status(500).json({ error: String(error) });
+      }
+    });
+    this.app.post('/api/orchestration/cancel/:taskId', async (req: Request, res: Response) => {
+      try {
+        const { getActiveOrchestrationTask } = await import('../core/orchestrator/index.js');
+        const active = getActiveOrchestrationTask();
+        if (active && active.task_id === req.params.taskId) {
+          res.json({ ok: true, message: 'Task will escalate on next validation. No immediate cancel hook.' });
+        } else {
+          res.json({ ok: false, message: 'Task not active or not found' });
+        }
+      } catch {
+        res.status(500).json({ error: 'Cancel failed' });
+      }
+    });
+
+    // API: Aider orchestration task detail (includes Aider chat/output per iteration)
     this.app.get('/api/orchestration/:taskId', async (req: Request, res: Response) => {
       try {
         const { getInteractionRecord } = await import('../core/observer/interaction-recorder.js');
@@ -463,6 +528,7 @@ export class WebInterface implements MessageInterface {
         res.json({ active: null, recent: [] });
       }
     });
+
 
     // API: Vercel status
     this.app.get('/api/vercel/status', async (_req: Request, res: Response) => {

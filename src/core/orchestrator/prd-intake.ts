@@ -6,7 +6,7 @@
 import { generateText } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { config } from '../../config.js';
-import { assembleContext, formatContextForPrompt } from '../context/index.js';
+import { assembleContext, formatContextForPrompt, agenticRetrieve } from '../context/index.js';
 import type { PRDRequest } from './types.js';
 import { logger } from '../../utils/logger.js';
 
@@ -21,13 +21,21 @@ export interface PRDIntakeResult {
 export async function analyzePRD(prd: PRDRequest): Promise<PRDIntakeResult> {
   let contextBlock = '';
   try {
-    const result = await assembleContext({
-      message: prd.description,
-      action: 'agent_ask',
-      projectPath: prd.projectPath,
-      model: 'haiku',
-    });
-    contextBlock = result.cachedFormatted ?? formatContextForPrompt(result);
+    if (process.env.AGENTIC_RAG_ENABLED === 'true') {
+      const agentic = await agenticRetrieve({
+        taskDescription: `${prd.title}\n${prd.description}`,
+        projectPath: prd.projectPath,
+      });
+      contextBlock = agentic.context;
+    } else {
+      const result = await assembleContext({
+        message: prd.description,
+        action: 'agent_ask',
+        projectPath: prd.projectPath,
+        model: 'haiku',
+      });
+      contextBlock = result.cachedFormatted ?? formatContextForPrompt(result);
+    }
     if (contextBlock.length > 4000) contextBlock = contextBlock.slice(0, 4000) + '\n...[truncated]';
   } catch (e) {
     logger.debug('[orchestrator] PRD intake: no context assembled', { error: String(e) });

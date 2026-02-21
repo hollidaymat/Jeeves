@@ -397,6 +397,59 @@ function runMigrations(database: Database.Database): void {
           last_updated INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
         );
       `
+    },
+    {
+      name: '009_context_usage',
+      sql: `
+        CREATE TABLE IF NOT EXISTS context_usage (
+          id TEXT PRIMARY KEY,
+          task_id TEXT,
+          context_sources TEXT NOT NULL DEFAULT '[]',
+          retrieval_rounds INTEGER NOT NULL DEFAULT 0,
+          final_confidence REAL NOT NULL DEFAULT 0,
+          success INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_context_usage_task ON context_usage(task_id);
+        CREATE INDEX IF NOT EXISTS idx_context_usage_created ON context_usage(created_at);
+
+        CREATE TABLE IF NOT EXISTS retrieval_patterns (
+          id TEXT PRIMARY KEY,
+          task_type TEXT NOT NULL,
+          effective_sources TEXT NOT NULL DEFAULT '[]',
+          avg_retrieval_rounds REAL NOT NULL DEFAULT 0,
+          success_rate REAL NOT NULL DEFAULT 0,
+          last_updated INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+        );
+      `
+    },
+    {
+      name: '010_playbooks_enhanced',
+      sql: `
+        CREATE TABLE IF NOT EXISTS playbooks (
+          id TEXT PRIMARY KEY,
+          task_type TEXT NOT NULL,
+          success_pattern TEXT NOT NULL,
+          spec_template TEXT NOT NULL,
+          common_errors TEXT NOT NULL DEFAULT '[]',
+          solutions TEXT NOT NULL DEFAULT '[]',
+          success_rate REAL NOT NULL DEFAULT 0,
+          usage_count INTEGER NOT NULL DEFAULT 0,
+          last_updated INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_playbooks_task_type ON playbooks(task_type);
+        CREATE INDEX IF NOT EXISTS idx_playbooks_success_rate ON playbooks(success_rate);
+
+        CREATE TABLE IF NOT EXISTS playbook_matches (
+          id TEXT PRIMARY KEY,
+          task_id TEXT NOT NULL,
+          playbook_id TEXT NOT NULL,
+          matched INTEGER NOT NULL DEFAULT 0,
+          success INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_playbook_matches_task ON playbook_matches(task_id);
+      `
     }
   ];
 
